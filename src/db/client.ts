@@ -15,7 +15,7 @@ export type DbClient = SupabaseClient<Database>;
  * à la place, avec un message qui remonte jusqu'au client (voir
  * `ApiUnreachableError` côté SCSB, `src/lib/api/errors.ts`).
  */
-const SUPABASE_FETCH_TIMEOUT_MS = 8_000;
+const SUPABASE_FETCH_TIMEOUT_MS = 15_000;
 
 function timeoutFetch(timeoutMs: number): typeof fetch {
   return async (input, init) => {

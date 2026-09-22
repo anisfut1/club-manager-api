@@ -38,6 +38,26 @@ serveur à provisionner (§ contrainte fondamentale de cette migration).
 déploiement ; le `dist/` local n'est jamais déployé tel quel (voir
 `.gitignore`).
 
+**`"framework": null` dans `vercel.json` est délibéré, ne pas l'enlever.**
+Sans lui, Vercel détecte automatiquement ce projet comme "Hono" et
+applique un traitement spécifique à ce preset qui, en pratique (constaté
+au premier déploiement réel), **désactive l'empaquetage esbuild normal** :
+chaque fichier `.ts` est alors transpilé et exécuté individuellement au
+lieu d'être bundlé en un seul fichier. Deux conséquences constatées :
+1. Les imports relatifs multi-fichiers restent corrects, mais le nombre
+   de lectures/transpilations disque au démarrage à froid grimpe avec la
+   taille du projet — au point de dépasser le délai d'expiration des
+   appels réseau internes (voir `src/db/client.ts`) et de faire échouer
+   silencieusement toute requête pendant un démarrage à froid.
+2. Avant le passage à des imports relatifs (voir l'historique Git), les
+   alias `@/...` (résolus uniquement par TypeScript/tsconfig, jamais par
+   Node natif) faisaient carrément planter chaque requête avec
+   `ERR_MODULE_NOT_FOUND`.
+
+`"framework": null` force Vercel à traiter `api/index.ts` comme une
+Function Node.js standard (empaquetage esbuild réel), ce qui corrige les
+deux.
+
 ## Variables d'environnement requises
 
 | Variable | Rôle |
