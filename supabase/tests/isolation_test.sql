@@ -106,6 +106,41 @@ select pg_temp.assert_column_update_denied(
 update public.clubs set name = 'Club A renomme par user A' where id = 'aaaaaaaa-0000-0000-0000-000000000000';
 select pg_temp.assert_count('user A - UPDATE clubs.name (colonne accordee) reussit', 1, (select count(*) from public.clubs where id = 'aaaaaaaa-0000-0000-0000-000000000000' and name = 'Club A renomme par user A'));
 
+-- Correctif audit de securite (deploiement reel, 20260922090000) : RLS a
+-- ete activee tardivement sur club_memberships/membership_roles (policies
+-- deja presentes mais RLS jamais activee dans l'historique de migration
+-- original). Verifie ici en direct (SELECT sous authenticated), jamais
+-- seulement via has_club_role()/is_club_member() (SECURITY DEFINER, qui
+-- contournerait la RLS de ces tables par construction et ne l'aurait
+-- jamais detectee).
+select pg_temp.assert_count('user A - club_memberships : voit les 2 lignes de SON club (club_admin), aucune du club B', 2, (select count(*) from public.club_memberships));
+select pg_temp.assert_count('user A - club_memberships club B invisibles', 0, (select count(*) from public.club_memberships where club_id = 'bbbbbbbb-0000-0000-0000-000000000000'));
+select pg_temp.assert_count('user A - membership_roles : voit les 2 roles de SON club, aucun du club B', 2, (select count(*) from public.membership_roles));
+
+-- try_acquire_sync_lock/release_sync_lock (meme correctif) : SECURITY
+-- DEFINER mais reserve service_role desormais, meme principe que
+-- claim_next_fbi_job (20260921110040). Sans ce verrou, n'importe quel
+-- authenticated pouvait verrouiller/deverrouiller la sync d'un AUTRE club.
+do $$
+begin
+  perform public.try_acquire_sync_lock('bbbbbbbb-0000-0000-0000-000000000000', 'ffbb');
+  raise exception 'ECHEC [user A - try_acquire_sync_lock refuse] : aurait du etre refuse (permission denied)';
+exception
+  when insufficient_privilege then
+    raise notice 'OK [user A - try_acquire_sync_lock refuse] (permission refusee comme attendu)';
+end;
+$$;
+
+do $$
+begin
+  perform public.release_sync_lock('bbbbbbbb-0000-0000-0000-000000000000', 'ffbb');
+  raise exception 'ECHEC [user A - release_sync_lock refuse] : aurait du etre refuse (permission denied)';
+exception
+  when insufficient_privilege then
+    raise notice 'OK [user A - release_sync_lock refuse] (permission refusee comme attendu)';
+end;
+$$;
+
 -- Tentative de lecture DIRECTE par UUID connu du match B (meme en connaissant l'ID)
 select pg_temp.assert_count('user A - lecture directe match B par UUID refusee', 0, (select count(*) from public.matches where id = 'bbbbbbbb-0000-0000-0000-000000000006'));
 
