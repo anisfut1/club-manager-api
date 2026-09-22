@@ -2,7 +2,10 @@ import { Hono } from "hono";
 import type { AppEnv } from "@/auth/context";
 import { requireAuth, requireClubMembership } from "@/auth/middleware";
 import { badRequest, notFound } from "@/api-error";
-import type { MatchListItemDto, MatchDetailsDto } from "@/contracts/matches";
+import { MatchesQueryDtoSchema, type MatchListItemDto, type MatchDetailsDto } from "@/contracts/matches";
+import { computePeriodRange } from "@/util/timezone";
+import { sanitizeEmarqueError } from "@/integrations/emarque/sanitize-error";
+import type { QualityWarningDto } from "@/contracts/emarque";
 
 export const matchesRouter = new Hono<AppEnv>();
 
@@ -22,16 +25,52 @@ const EMARQUE_STATUS_LABELS: Record<string, string> = {
   needs_review: "needs_review",
 };
 
-/** GET /v1/clubs/:clubId/matches */
+/**
+ * GET /v1/clubs/:clubId/matches — filtres et pagination (gap 7 de la
+ * demande, voir `contracts/matches.ts#MatchesQueryDtoSchema`).
+ *
+ * `teamId` tenant-safe par construction (§20 de la demande) : la requête
+ * filtre déjà sur `club_id = ce club`, donc un `teamId` d'un AUTRE club ne
+ * peut jamais correspondre à une ligne `matches` de celui-ci — la réponse
+ * est alors simplement une liste vide, jamais une fuite ni un statut
+ * distinctif qui révélerait l'existence de l'équipe ailleurs.
+ */
 matchesRouter.get("/", async (c) => {
   const { club } = c.get("club");
   const supabase = c.get("supabase");
 
-  const { data, error } = await supabase
+  const query = MatchesQueryDtoSchema.safeParse(c.req.query());
+  if (!query.success) {
+    throw badRequest(query.error.issues.map((issue) => issue.message).join(" "));
+  }
+  const { period, teamId, homeAway, status, limit, offset } = query.data;
+  let { from, to } = query.data;
+
+  if (period && (from || to)) {
+    throw badRequest("period et from/to sont mutuellement exclusifs.");
+  }
+  if (period) {
+    const range = computePeriodRange(period, club.timezone);
+    from = range.from ?? undefined;
+    to = range.to ?? undefined;
+  }
+
+  let builder = supabase
     .from("matches")
-    .select("id, numero, journee, match_datetime, is_home, opponent_name, venue_raw_label, score_home, score_away, status, emarque_status, team_id")
-    .eq("club_id", club.id)
-    .order("match_datetime", { ascending: false });
+    .select("id, numero, journee, match_datetime, is_home, opponent_name, venue_raw_label, score_home, score_away, status, emarque_status, team_id", {
+      count: "exact",
+    })
+    .eq("club_id", club.id);
+
+  if (teamId) builder = builder.eq("team_id", teamId);
+  if (homeAway) builder = builder.eq("is_home", homeAway === "home");
+  if (status) builder = builder.eq("status", status);
+  if (from) builder = builder.gte("match_datetime", from);
+  if (to) builder = builder.lt("match_datetime", to);
+
+  const { data, error, count } = await builder
+    .order("match_datetime", { ascending: period !== "past" })
+    .range(offset, offset + limit - 1);
 
   if (error) throw new Error(`Lecture des matchs échouée : ${error.message}`);
 
@@ -56,7 +95,7 @@ matchesRouter.get("/", async (c) => {
     emarqueStatus: EMARQUE_STATUS_LABELS[m.emarque_status] ?? m.emarque_status,
   }));
 
-  return c.json({ matches });
+  return c.json({ matches, pagination: { limit, offset, total: count ?? matches.length } });
 });
 
 /** GET /v1/clubs/:clubId/matches/:matchId */
@@ -99,7 +138,7 @@ matchesRouter.get("/:matchId", async (c) => {
       supabase.from("match_documents").select("id, source, downloaded_at").eq("match_id", matchId).eq("club_id", club.id).order("downloaded_at", { ascending: false }),
       supabase
         .from("emarque_imports")
-        .select("quality_warnings")
+        .select("quality_warnings, parser_version, discovered_at, imported_at, last_error")
         .eq("match_id", matchId)
         .eq("club_id", club.id)
         .order("created_at", { ascending: false })
@@ -124,6 +163,11 @@ matchesRouter.get("/:matchId", async (c) => {
       source: documents && documents.length > 0 ? documents[0]!.source.toUpperCase() : null,
       lastRetrievedAt: documents?.[0]?.downloaded_at ?? null,
       qualityWarningCount: Array.isArray(latestImport?.quality_warnings) ? latestImport.quality_warnings.length : null,
+      parserVersion: latestImport?.parser_version ?? null,
+      discoveredAt: latestImport?.discovered_at ?? null,
+      importedAt: latestImport?.imported_at ?? null,
+      qualityWarnings: Array.isArray(latestImport?.quality_warnings) ? (latestImport.quality_warnings as QualityWarningDto[]) : [],
+      lastError: sanitizeEmarqueError(latestImport?.last_error ?? null),
     },
     participants: (participants ?? []).map((p) => ({
       id: p.id,

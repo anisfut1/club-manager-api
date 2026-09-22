@@ -1,9 +1,10 @@
 import { Hono } from "hono";
 import type { AppEnv } from "@/auth/context";
-import { requireAuth, requireClubMembership } from "@/auth/middleware";
+import { requireAuth, requireClubMembership, requireClubRole } from "@/auth/middleware";
 import { getClubCapabilities } from "@/tenancy/club-capabilities";
 import type { ClubRole } from "@/tenancy/roles";
-import type { ClubDto, TeamDto } from "@/contracts/clubs";
+import { UpdateClubDtoSchema, type ClubDto, type TeamDto } from "@/contracts/clubs";
+import { badRequest } from "@/api-error";
 
 export const clubsRouter = new Hono<AppEnv>();
 
@@ -16,7 +17,7 @@ clubsRouter.get("/", async (c) => {
 
   const { data: memberships, error } = await supabase
     .from("club_memberships")
-    .select("club_id, id, clubs(id, slug, name, short_name, logo_url, accent_color, timezone, status)")
+    .select("club_id, id, clubs(id, slug, name, short_name, logo_url, accent_color, timezone, status, ffbb_club_id)")
     .eq("user_id", user.id)
     .eq("status", "active");
 
@@ -48,6 +49,7 @@ clubsRouter.get("/", async (c) => {
         accentColor: club.accent_color,
         timezone: club.timezone,
         status: club.status,
+        ffbbClubCode: club.ffbb_club_id,
         roles: rolesByMembership.get(m.id) ?? [],
       },
     ];
@@ -68,8 +70,87 @@ clubsRouter.get("/:clubId", requireClubMembership, async (c) => {
     accentColor: club.accentColor,
     timezone: club.timezone,
     status: club.status,
+    ffbbClubCode: club.ffbbClubId,
     roles,
   };
+  return c.json(dto);
+});
+
+/**
+ * PATCH /v1/clubs/:clubId (gap 1 de la demande) — branding léger
+ * uniquement (name/shortName/timezone/logoUrl/accentColor). Utilise LE
+ * CLIENT "au nom de l'utilisateur" (`c.get("supabase")`), jamais la
+ * service role : c'est le privilège de colonne PostgreSQL restreint sur
+ * `clubs` (voir supabase/migrations/20260921100090_rls_multitenant_rewrite.sql,
+ * `grant update (name, short_name, logo_url, accent_color, timezone) on
+ * public.clubs to authenticated`) qui garantit structurellement qu'aucun
+ * autre champ (slug, status, ffbb_club_id, ffbb_enabled...) ne peut être
+ * modifié par cette route, même en cas de bug dans ce handler.
+ *
+ * Réservé à `club_admin` — pas de bypass `platform_admin` sans membership
+ * ici (cohérent avec TOUTES les autres routes `/v1/clubs/:clubId/*`, voir
+ * docs/MIGRATION.md "Frontend API gaps resolved" pour la justification).
+ */
+clubsRouter.patch("/:clubId", requireClubMembership, requireClubRole("club_admin"), async (c) => {
+  const { club, roles } = c.get("club");
+  const body = await c.req.json().catch(() => ({}));
+  const parsed = UpdateClubDtoSchema.safeParse(body);
+
+  if (!parsed.success) {
+    throw badRequest(parsed.error.issues.map((issue) => issue.message).join(" "));
+  }
+
+  const patch: Partial<{
+    name: string;
+    short_name: string | null;
+    timezone: string;
+    logo_url: string | null;
+    accent_color: string | null;
+  }> = {};
+  if (parsed.data.name !== undefined) patch.name = parsed.data.name;
+  if (parsed.data.shortName !== undefined) patch.short_name = parsed.data.shortName;
+  if (parsed.data.timezone !== undefined) patch.timezone = parsed.data.timezone;
+  if (parsed.data.logoUrl !== undefined) patch.logo_url = parsed.data.logoUrl;
+  if (parsed.data.accentColor !== undefined) patch.accent_color = parsed.data.accentColor;
+
+  let dto: ClubDto = {
+    id: club.id,
+    slug: club.slug,
+    name: club.name,
+    shortName: club.shortName,
+    logoUrl: club.logoUrl,
+    accentColor: club.accentColor,
+    timezone: club.timezone,
+    status: club.status,
+    ffbbClubCode: club.ffbbClubId,
+    roles,
+  };
+
+  if (Object.keys(patch).length > 0) {
+    const { data, error } = await c
+      .get("supabase")
+      .from("clubs")
+      .update(patch)
+      .eq("id", club.id)
+      .select("id, slug, name, short_name, logo_url, accent_color, timezone, status, ffbb_club_id")
+      .single();
+
+    if (error) throw new Error(`Mise à jour du club échouée : ${error.message}`);
+
+    dto = {
+      id: data.id,
+      slug: data.slug,
+      name: data.name,
+      shortName: data.short_name,
+      logoUrl: data.logo_url,
+      accentColor: data.accent_color,
+      timezone: data.timezone,
+      status: data.status,
+      ffbbClubCode: data.ffbb_club_id,
+      roles,
+    };
+  }
+
   return c.json(dto);
 });
 

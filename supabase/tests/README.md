@@ -10,16 +10,31 @@ que tous les tests sont passés.**
 
 ## Statut
 
-Cette suite a été écrite et **exécutée avec succès** (38/38 assertions,
+Cette suite a été écrite et **exécutée avec succès** (42/42 assertions,
 0 échec) contre une instance PostgreSQL 16 locale, en utilisant le shim
 ci-dessous (pas de Docker disponible dans cet environnement de
 développement) — d'abord 26 assertions lors de la migration multi-tenant,
 puis 12 de plus lors de l'intégration FBI/e-Marque (`fbi_jobs`,
-`match_documents`, voir `docs/JOBS.md`). Migrée telle quelle depuis SCSB
-(voir `docs/MIGRATION.md`) et rejouée avec succès depuis ce repository.
-Elle n'a pas encore été rejouée via la stack Supabase CLI complète
-(`supabase test db`) — les deux chemins d'exécution sont documentés
-ci-dessous.
+`match_documents`, voir `docs/JOBS.md`), puis 4 de plus lors de la
+résolution des gaps frontend (voir `docs/API.md`) pour verrouiller au
+niveau colonne le `PATCH /v1/clubs/:clubId`. Migrée telle quelle depuis
+SCSB (voir `docs/MIGRATION.md`) et rejouée avec succès depuis ce
+repository. Elle n'a pas encore été rejouée via la stack Supabase CLI
+complète (`supabase test db`) — les deux chemins d'exécution sont
+documentés ci-dessous.
+
+**Correctif shim (résolution des gaps frontend) :**
+`01_local_postgres_shim_after_migrations.sql` faisait un `grant select,
+insert, update, delete on all tables ...` large APRÈS les migrations, ce
+qui écrasait silencieusement le verrou colonne-par-colonne posé sur
+`public.clubs` par `20260921100090_rls_multitenant_rewrite.sql` (`revoke
+update ... / grant update (name, short_name, ...)`) — un test de sécurité
+sur ce verrou aurait donc pu passer à tort dans ce shim local. Corrigé
+pour ne plus ré-accorder `update` en large ici (déjà couvert par le
+`alter default privileges` du shim `00`, exécuté AVANT les migrations,
+donc pour toutes les tables qu'elles créent) ; voir le commentaire dans ce
+fichier pour le détail. Sans objet sur un vrai projet Supabase (les
+policies/grants du projet ne dépendent pas de ce shim).
 
 ## Scénarios couverts
 
@@ -51,6 +66,11 @@ ci-dessous.
 - Le `service_role` (utilisé par `/internal/*`), lui, peut réclamer les
   jobs des DEUX clubs sans jamais les mélanger (deux appels successifs
   réclament bien deux jobs différents, un par club).
+- Gap 1 (`PATCH /v1/clubs/:clubId`) : `authenticated` ne peut PAS modifier
+  `status`/`slug`/`ffbb_club_id` de son propre club (colonnes non
+  accordées, `permission denied` réelle), mais peut modifier `name`
+  (colonne accordée) — vérifié au niveau grant PostgreSQL, pas seulement
+  par la validation applicative Zod.
 
 ## Option A — Via Supabase CLI (stack locale complète, recommandé)
 

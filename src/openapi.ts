@@ -1,13 +1,23 @@
 import { OpenAPIRegistry, OpenApiGeneratorV3 } from "@asteasolutions/zod-to-openapi";
 import { z } from "@/contracts/zod";
-import { ClubDtoSchema, TeamDtoSchema } from "@/contracts/clubs";
-import { MatchListItemDtoSchema, MatchDetailsDtoSchema } from "@/contracts/matches";
-import { IntegrationStatusDtoSchema, SyncRunDtoSchema, SaveFbiCredentialsDtoSchema } from "@/contracts/integrations";
+import { ClubDtoSchema, TeamDtoSchema, UpdateClubDtoSchema } from "@/contracts/clubs";
+import { MatchListItemDtoSchema, MatchDetailsDtoSchema, MatchesQueryDtoSchema, MatchesPaginationDtoSchema } from "@/contracts/matches";
+import {
+  IntegrationStatusDtoSchema,
+  FbiIntegrationStatusDtoSchema,
+  SyncRunDtoSchema,
+  SaveFbiCredentialsDtoSchema,
+  SaveFbiCredentialsResponseDtoSchema,
+  PatchFbiIntegrationDtoSchema,
+  PatchFfbbIntegrationDtoSchema,
+} from "@/contracts/integrations";
 import { MatchDocumentDtoSchema } from "@/contracts/documents";
 import { IssueDtoSchema } from "@/contracts/issues";
 import { JobStatusDtoSchema } from "@/contracts/jobs";
 import { PlatformClubDtoSchema, CreateClubDtoSchema } from "@/contracts/platform";
 import { ClubCapabilitiesSchema, ErrorEnvelopeSchema } from "@/contracts/common";
+import { EmarqueImportDtoSchema, EmarqueImportsQueryDtoSchema } from "@/contracts/emarque";
+import { MeDtoSchema } from "@/contracts/me";
 
 /**
  * Spec OpenAPI assemblée à partir des MÊMES schémas zod que les DTO utilisés
@@ -36,13 +46,19 @@ const clubAndMatchIdParams = clubIdParam.extend({ matchId: z.string().uuid() });
 const clubAndJobParams = z.object({ jobId: z.string().uuid() });
 const clubAndMatchIssueParams = clubIdParam.extend({ matchId: z.string().uuid() });
 
-const errorResponses = { 401: jsonResponse("Non authentifié", ErrorEnvelopeSchema), 403: jsonResponse("Accès refusé", ErrorEnvelopeSchema), 404: jsonResponse("Introuvable", ErrorEnvelopeSchema) };
+const errorResponses = {
+  401: jsonResponse("Non authentifié", ErrorEnvelopeSchema),
+  403: jsonResponse("Accès refusé", ErrorEnvelopeSchema),
+  404: jsonResponse("Introuvable", ErrorEnvelopeSchema),
+};
+/** Ajouté aux routes qui valident un payload/query (zod) ou une précondition métier (ex: FBI_NOT_CONFIGURED). */
+const validationResponses = { 400: jsonResponse("Requête invalide", ErrorEnvelopeSchema), 409: jsonResponse("Conflit métier", ErrorEnvelopeSchema) };
 
 registry.registerPath({
   method: "get",
   path: "/v1/me",
   security: bearerAuth,
-  responses: { 200: jsonResponse("Utilisateur courant", z.object({ id: z.string().uuid(), email: z.string().nullable() })), ...errorResponses },
+  responses: { 200: jsonResponse("Utilisateur courant", MeDtoSchema), ...errorResponses },
 });
 
 registry.registerPath({
@@ -58,6 +74,14 @@ registry.registerPath({
   security: bearerAuth,
   request: { params: clubIdParam },
   responses: { 200: jsonResponse("Détail du club", ClubDtoSchema), ...errorResponses },
+});
+
+registry.registerPath({
+  method: "patch",
+  path: "/v1/clubs/{clubId}",
+  security: bearerAuth,
+  request: { params: clubIdParam, body: { content: { "application/json": { schema: UpdateClubDtoSchema } } } },
+  responses: { 200: jsonResponse("Club mis à jour (branding uniquement)", ClubDtoSchema), ...errorResponses, ...validationResponses },
 });
 
 registry.registerPath({
@@ -80,8 +104,12 @@ registry.registerPath({
   method: "get",
   path: "/v1/clubs/{clubId}/matches",
   security: bearerAuth,
-  request: { params: clubIdParam },
-  responses: { 200: jsonResponse("Matchs du club", z.object({ matches: z.array(MatchListItemDtoSchema) })), ...errorResponses },
+  request: { params: clubIdParam, query: MatchesQueryDtoSchema },
+  responses: {
+    200: jsonResponse("Matchs du club (filtrés, paginés)", z.object({ matches: z.array(MatchListItemDtoSchema), pagination: MatchesPaginationDtoSchema })),
+    ...errorResponses,
+    ...validationResponses,
+  },
 });
 
 registry.registerPath({
@@ -102,6 +130,18 @@ registry.registerPath({
 
 registry.registerPath({
   method: "get",
+  path: "/v1/clubs/{clubId}/emarque-imports",
+  security: bearerAuth,
+  request: { params: clubIdParam, query: EmarqueImportsQueryDtoSchema },
+  responses: {
+    200: jsonResponse("Imports e-Marque du club (filtrés, paginés)", z.object({ imports: z.array(EmarqueImportDtoSchema), pagination: MatchesPaginationDtoSchema })),
+    ...errorResponses,
+    ...validationResponses,
+  },
+});
+
+registry.registerPath({
+  method: "get",
   path: "/v1/clubs/{clubId}/integrations",
   security: bearerAuth,
   request: { params: clubIdParam },
@@ -113,7 +153,19 @@ registry.registerPath({
   path: "/v1/clubs/{clubId}/integrations/fbi",
   security: bearerAuth,
   request: { params: clubIdParam, body: { content: { "application/json": { schema: SaveFbiCredentialsDtoSchema } } } },
-  responses: { 200: jsonResponse("Identifiants enregistrés", z.object({ saved: z.boolean() })), ...errorResponses },
+  responses: { 200: jsonResponse("Identifiants enregistrés (jamais le mot de passe)", SaveFbiCredentialsResponseDtoSchema), ...errorResponses, ...validationResponses },
+});
+
+registry.registerPath({
+  method: "patch",
+  path: "/v1/clubs/{clubId}/integrations/fbi",
+  security: bearerAuth,
+  request: { params: clubIdParam, body: { content: { "application/json": { schema: PatchFbiIntegrationDtoSchema } } } },
+  responses: {
+    200: jsonResponse("Réglages FBI mis à jour", z.object({ fbi: FbiIntegrationStatusDtoSchema })),
+    ...errorResponses,
+    ...validationResponses,
+  },
 });
 
 registry.registerPath({
@@ -142,6 +194,21 @@ registry.registerPath({
   security: bearerAuth,
   request: { params: clubIdParam },
   responses: { 200: jsonResponse("Résultat de la synchronisation", z.object({ syncRunId: z.string().uuid(), status: z.string(), stats: z.record(z.string(), z.number()) })), ...errorResponses },
+});
+
+registry.registerPath({
+  method: "patch",
+  path: "/v1/clubs/{clubId}/integrations/ffbb",
+  security: bearerAuth,
+  request: { params: clubIdParam, body: { content: { "application/json": { schema: PatchFfbbIntegrationDtoSchema } } } },
+  responses: {
+    200: jsonResponse(
+      "Intégration FFBB mise à jour (jamais de suppression de l'historique déjà synchronisé)",
+      z.object({ clubCode: z.string(), enabled: z.boolean(), nextSyncAt: z.string().nullable() }),
+    ),
+    ...errorResponses,
+    ...validationResponses,
+  },
 });
 
 registry.registerPath({
@@ -196,7 +263,7 @@ export function generateOpenApiDocument() {
     openapi: "3.0.0",
     info: {
       title: "club-manager-api",
-      version: "0.1.0",
+      version: "0.2.0",
       description: "Backend REST du SaaS multi-clubs (FFBB/FBI/e-Marque). Voir docs/API.md.",
     },
     servers: [{ url: "/", description: "Ce déploiement" }],

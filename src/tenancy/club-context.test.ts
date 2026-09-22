@@ -11,6 +11,8 @@ interface FakeClub {
   timezone: string;
   status: "active" | "suspended";
   ffbb_club_id: string;
+  ffbb_enabled: boolean;
+  ffbb_next_sync_at: string | null;
 }
 
 interface FakeMembership {
@@ -83,6 +85,8 @@ const CLUB_A: FakeClub = {
   timezone: "Europe/Paris",
   status: "active",
   ffbb_club_id: "AAA0000001",
+  ffbb_enabled: true,
+  ffbb_next_sync_at: null,
 };
 
 const CLUB_B: FakeClub = { ...CLUB_A, id: "bbbbbbbb-0000-0000-0000-000000000000", slug: "club-b", name: "Club B Basket", ffbb_club_id: "BBB0000002" };

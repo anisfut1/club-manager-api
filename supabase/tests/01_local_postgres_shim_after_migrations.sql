@@ -4,4 +4,17 @@
 -- explicitement ici. À exécuter APRÈS les migrations, AVANT fixtures.sql.
 --
 -- Inutile sur un vrai projet Supabase : ces grants existent déjà.
-grant select, insert, update, delete on all tables in schema public to anon, authenticated, service_role;
+--
+-- IMPORTANT : UPDATE est délibérément exclu de ce grant "large". La
+-- `alter default privileges` du shim 00 (exécutée AVANT les migrations)
+-- couvre déjà toutes les tables créées par les migrations, y compris
+-- UPDATE — donc ce fichier n'a en réalité plus besoin de le redemander.
+-- Une re-grant table-large de UPDATE ici, APRÈS les migrations,
+-- écraserait silencieusement tout verrou colonne-par-colonne posé par une
+-- migration via `revoke update ... / grant update (col1, col2, ...) ...`
+-- (ex: `public.clubs` dans 20260921100090_rls_multitenant_rewrite.sql,
+-- gap 1 de la resolution des gaps frontend : authenticated ne doit
+-- JAMAIS pouvoir modifier `status`/`slug`/`ffbb_club_id`/`ffbb_enabled`
+-- via ce chemin, même en cas de bug applicatif) — un bug de ce shim de
+-- test aurait fait passer un test de sécurité qui aurait dû échouer.
+grant select, insert, delete on all tables in schema public to anon, authenticated, service_role;

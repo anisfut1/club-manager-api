@@ -125,6 +125,31 @@ role, après vérification du rôle `club_admin` par la RLS (voir
 `POST /v1/clubs/:clubId/integrations/fbi` enregistre `username` +
 `password` (chiffré) — le mot de passe n'est jamais renvoyé en réponse.
 
+## API frontend (gaps 4 et 8 résolus)
+
+`GET /v1/clubs/:clubId/integrations` expose le `username` FBI configuré
+**en clair** (jamais masqué) pour `club_admin`/`platform_admin` — utile
+pour que l'admin sache quel compte est configuré sans devoir le
+redemander — mais jamais `password`/ciphertext/IV/auth tag :
+
+```json
+{ "fbi": { "configured": true, "username": "club-a-fbi", "status": "connected", "autoImportEmarque": true, "lastSuccessfulLoginAt": "2026-09-01T10:00:00.000Z" } }
+```
+
+Activer/désactiver l'intégration ou l'auto-import sans jamais redemander
+username/password :
+
+```
+PATCH /v1/clubs/:clubId/integrations/fbi
+{ "enabled"?: boolean, "autoImportEmarque"?: boolean }
+```
+
+`club_admin` uniquement. `enabled: false` est toujours permis (même sans
+identifiants). Activer (`enabled: true` ou `autoImportEmarque: true`) sans
+identifiants déjà enregistrés renvoie `409 FBI_NOT_CONFIGURED` — jamais un
+409 générique, le frontend peut distinguer ce cas et rediriger vers le
+formulaire d'identifiants.
+
 ## Test de connexion
 
 `POST /v1/clubs/:clubId/integrations/fbi/test` teste réellement

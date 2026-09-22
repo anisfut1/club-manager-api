@@ -3,16 +3,16 @@
  * (src/app.ts) en réponse JSON uniforme `{ error: { code, message } }`
  * (voir docs/API.md). Ne jamais laisser fuiter une stack trace en
  * production — voir le handler d'erreur.
+ *
+ * `ApiErrorKind` fixe le statut HTTP (petit ensemble fermé). `code` (dans
+ * la réponse JSON) peut en revanche être un identifiant métier plus précis
+ * — ex: `conflict("...", "FBI_NOT_CONFIGURED")` — toujours à statut 409,
+ * mais distinguable côté frontend d'un autre conflit. Sans code explicite,
+ * `code` retombe sur le nom du statut générique (comportement inchangé).
  */
-export type ApiErrorCode =
-  | "UNAUTHORIZED"
-  | "FORBIDDEN"
-  | "NOT_FOUND"
-  | "BAD_REQUEST"
-  | "CONFLICT"
-  | "INTERNAL_ERROR";
+export type ApiErrorKind = "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "BAD_REQUEST" | "CONFLICT" | "INTERNAL_ERROR";
 
-const STATUS_BY_CODE: Record<ApiErrorCode, number> = {
+const STATUS_BY_KIND: Record<ApiErrorKind, number> = {
   UNAUTHORIZED: 401,
   FORBIDDEN: 403,
   NOT_FOUND: 404,
@@ -23,13 +23,13 @@ const STATUS_BY_CODE: Record<ApiErrorCode, number> = {
 
 export class ApiError extends Error {
   readonly status: number;
-  readonly code: ApiErrorCode;
+  readonly code: string;
 
-  constructor(code: ApiErrorCode, message: string) {
+  constructor(kind: ApiErrorKind, message: string, code?: string) {
     super(message);
     this.name = "ApiError";
-    this.code = code;
-    this.status = STATUS_BY_CODE[code];
+    this.code = code ?? kind;
+    this.status = STATUS_BY_KIND[kind];
   }
 }
 
@@ -45,6 +45,10 @@ export function notFound(message = "Ressource introuvable."): ApiError {
   return new ApiError("NOT_FOUND", message);
 }
 
-export function badRequest(message: string): ApiError {
-  return new ApiError("BAD_REQUEST", message);
+export function badRequest(message: string, code?: string): ApiError {
+  return new ApiError("BAD_REQUEST", message, code);
+}
+
+export function conflict(message: string, code?: string): ApiError {
+  return new ApiError("CONFLICT", message, code);
 }

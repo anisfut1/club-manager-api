@@ -98,6 +98,39 @@ API Next.js, seul l'import `@/types/database` → `@/db/types` a changé.
 jamais tous en une seule invocation (même philosophie que les crons FFBB
 et FBI, voir `docs/JOBS.md`).
 
+## API frontend (gaps 5 et 6 résolus)
+
+Liste tenant-scopée des imports e-Marque, filtrée et paginée (défaut 20,
+max 100, jamais un dump complet) :
+
+```
+GET /v1/clubs/:clubId/emarque-imports?matchId=&status=&from=&to=&limit=&offset=
+```
+
+Réponse : `EmarqueImportDto[]` (`id`, `matchId`, `status`, `source`,
+`parserVersion`, `discoveredAt`/`downloadedAt`/`importedAt`,
+`qualityWarnings`, `lastError`, `attemptCount`, `nextAttemptAt`) — jamais
+de chemin de stockage interne, de stack trace, ni le contenu brut d'un
+ZIP/PDF. Le détail d'un match (`GET .../matches/:matchId`) expose le même
+niveau de détail e-Marque directement dans sa section `emarque`.
+
+`lastError` est toujours **assaini** (`integrations/emarque/sanitize-error.ts`) :
+`emarque_imports.last_error`/`match_documents.last_error` peuvent contenir
+un message d'exception brut (`error.message` capturé tel quel côté job,
+voir `src/jobs/parse-downloaded-documents.ts`) — jamais renvoyé au
+frontend tel quel, uniquement une classification générique
+(`SanitizedErrorDto { code, message }`) sûre à afficher.
+
+`IssueDto` (`GET /v1/clubs/:clubId/issues`) est enrichi de la même
+philosophie : `type`/`severity`/`status`, un `message` utilisateur séparé
+de `technicalCode` (machine), `matchId`, `integration`, `qualityWarnings`,
+`createdAt`/`resolvedAt` — jamais une erreur interne brute exposée telle
+quelle. Exemple :
+
+```json
+{ "technicalCode": "EMARQUE_SCORE_MISMATCH", "message": "Le score e-Marque ne correspond pas au score FFBB." }
+```
+
 ## Ce qui n'est PAS fait
 
 Pas de module dérogations/tables de marque au sens FBI authentifié

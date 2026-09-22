@@ -1,4 +1,42 @@
 import { z } from "./zod";
+import { QualityWarningDtoSchema, SanitizedErrorDtoSchema } from "./emarque";
+
+const DEFAULT_MATCHES_LIMIT = 50;
+const MAX_MATCHES_LIMIT = 200;
+
+/**
+ * GET /v1/clubs/:clubId/matches — filtres et pagination (gap 7/§10-§12 de
+ * la demande). `period` couvre le besoin produit réel ("ce week-end/à
+ * venir/passés") en utilisant le fuseau horaire DU CLUB (voir
+ * src/util/timezone.ts) — le frontend n'a plus besoin de connaître ce
+ * fuseau. `from`/`to` restent disponibles pour une plage explicite ; les
+ * deux mécanismes sont mutuellement exclusifs (voir la route). Aucun
+ * champ redondant (`played`/`upcoming` séparés de `status`/`period`) —
+ * contrat volontairement minimal (§10 : "définis un contrat propre").
+ */
+export const MatchesQueryDtoSchema = z
+  .object({
+    period: z.enum(["weekend", "upcoming", "past"]).optional(),
+    from: z.string().datetime({ offset: true }).optional(),
+    to: z.string().datetime({ offset: true }).optional(),
+    teamId: z.string().uuid().optional(),
+    /** Domicile/extérieur DU CLUB tenant (jamais de l'adversaire), voir §10 de la demande. */
+    homeAway: z.enum(["home", "away"]).optional(),
+    status: z.enum(["scheduled", "played", "postponed", "cancelled", "forfeit"]).optional(),
+    limit: z.coerce.number().int().min(1).max(MAX_MATCHES_LIMIT).default(DEFAULT_MATCHES_LIMIT),
+    offset: z.coerce.number().int().min(0).default(0),
+  })
+  .openapi("MatchesQueryDto");
+
+export type MatchesQueryDto = z.infer<typeof MatchesQueryDtoSchema>;
+
+export const MatchesPaginationDtoSchema = z
+  .object({
+    limit: z.number(),
+    offset: z.number(),
+    total: z.number(),
+  })
+  .openapi("MatchesPaginationDto");
 
 export const MatchListItemDtoSchema = z
   .object({
@@ -75,7 +113,14 @@ export const EmarqueSummaryDtoSchema = z
     status: z.string(),
     source: z.string().nullable(),
     lastRetrievedAt: z.string().nullable(),
+    /** @deprecated Conservé pour compatibilité (§16 de la demande) — préférer `qualityWarnings.length`. */
     qualityWarningCount: z.number().nullable(),
+    /** Import e-Marque le plus récent de ce match (gap 5 de la demande) — `null` si aucun import n'a encore été tenté. */
+    parserVersion: z.string().nullable(),
+    discoveredAt: z.string().nullable(),
+    importedAt: z.string().nullable(),
+    qualityWarnings: z.array(QualityWarningDtoSchema),
+    lastError: SanitizedErrorDtoSchema.nullable(),
   })
   .openapi("EmarqueSummaryDto");
 

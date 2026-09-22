@@ -3,17 +3,38 @@ import type { AppEnv } from "@/auth/context";
 import { requireAuth, requireClubMembership, requireClubRole } from "@/auth/middleware";
 import { badRequest, notFound } from "@/api-error";
 import type { IssueDto } from "@/contracts/issues";
+import type { QualityWarningDto } from "@/contracts/emarque";
 
 export const issuesRouter = new Hono<AppEnv>();
 
 issuesRouter.use("*", requireAuth);
 issuesRouter.use("*", requireClubMembership);
 
-/** GET /v1/clubs/:clubId/issues — dérivé de matches.emarque_status (error/needs_review), aucune table dédiée. */
+const MESSAGE_BY_STATUS: Record<"error" | "needs_review", { message: string; technicalCode: string; severity: "warning" | "error" }> = {
+  error: {
+    message: "Une erreur est survenue lors du traitement du document e-Marque de ce match.",
+    technicalCode: "EMARQUE_IMPORT_ERROR",
+    severity: "error",
+  },
+  needs_review: {
+    message: "Le document e-Marque de ce match nécessite une vérification manuelle.",
+    technicalCode: "EMARQUE_NEEDS_REVIEW",
+    severity: "warning",
+  },
+};
+
+/**
+ * GET /v1/clubs/:clubId/issues — dérivé de `matches.emarque_status`
+ * (error/needs_review), enrichi (gap 6 de la demande) avec les
+ * avertissements qualité de l'import e-Marque le plus récent de chaque
+ * match. `message`/`technicalCode` sont TOUJOURS des textes prêts à
+ * afficher (jamais `emarque_imports.last_error` brut, §9 de la demande).
+ */
 issuesRouter.get("/", async (c) => {
   const { club } = c.get("club");
-  const { data, error } = await c
-    .get("supabase")
+  const supabase = c.get("supabase");
+
+  const { data: matches, error } = await supabase
     .from("matches")
     .select("id, numero, opponent_name, match_datetime, emarque_status")
     .eq("club_id", club.id)
@@ -22,13 +43,44 @@ issuesRouter.get("/", async (c) => {
 
   if (error) throw new Error(`Lecture des anomalies échouée : ${error.message}`);
 
-  const issues: IssueDto[] = (data ?? []).map((m) => ({
-    matchId: m.id,
-    numero: m.numero,
-    opponentName: m.opponent_name,
-    matchDatetime: m.match_datetime,
-    emarqueStatus: m.emarque_status as "error" | "needs_review",
-  }));
+  const matchIds = (matches ?? []).map((m) => m.id);
+
+  const { data: imports } = matchIds.length
+    ? await supabase
+        .from("emarque_imports")
+        .select("match_id, quality_warnings, created_at")
+        .eq("club_id", club.id)
+        .in("match_id", matchIds)
+        .order("created_at", { ascending: false })
+    : { data: [] };
+
+  const latestImportByMatchId = new Map<string, { quality_warnings: unknown; created_at: string }>();
+  for (const imp of imports ?? []) {
+    if (!latestImportByMatchId.has(imp.match_id)) latestImportByMatchId.set(imp.match_id, imp);
+  }
+
+  const issues: IssueDto[] = (matches ?? []).map((m) => {
+    const emarqueStatus = m.emarque_status as "error" | "needs_review";
+    const meta = MESSAGE_BY_STATUS[emarqueStatus];
+    const latestImport = latestImportByMatchId.get(m.id);
+    const qualityWarnings = Array.isArray(latestImport?.quality_warnings) ? (latestImport.quality_warnings as QualityWarningDto[]) : [];
+
+    return {
+      matchId: m.id,
+      numero: m.numero,
+      opponentName: m.opponent_name,
+      matchDatetime: m.match_datetime,
+      integration: "emarque",
+      type: emarqueStatus === "error" ? "emarque_import_error" : "emarque_needs_review",
+      severity: meta.severity,
+      status: "open",
+      message: meta.message,
+      technicalCode: meta.technicalCode,
+      qualityWarnings,
+      createdAt: latestImport?.created_at ?? null,
+      resolvedAt: null,
+    };
+  });
 
   return c.json({ issues });
 });

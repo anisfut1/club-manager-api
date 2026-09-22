@@ -50,3 +50,22 @@ limit 20  -- FFBB_SYNC_BATCH_SIZE, voir integrations/ffbb/config.ts
 Batch volontairement petit (§27/§29 de la demande) : le cron suivant
 reprend les clubs non traités, jamais une boucle qui traite tout en une
 seule invocation.
+
+## API frontend (gap 2 résolu)
+
+`ClubDto` expose le code club FFBB sous le nom explicite `ffbbClubCode`
+(jamais `ffbbClubId`, pour ne pas le confondre avec l'UUID interne du
+club). Le changer passe par une route dédiée, pas par
+`PATCH /v1/clubs/:clubId` :
+
+```
+PATCH /v1/clubs/:clubId/integrations/ffbb
+{ "clubCode"?: string, "enabled"?: boolean }
+```
+
+`club_admin` uniquement (service role côté serveur : `ffbb_club_id`/
+`ffbb_enabled`/`ffbb_next_sync_at` ne sont pas des colonnes accordées à
+`authenticated`, voir `docs/API.md`). Ne supprime jamais l'historique déjà
+synchronisé (aucun `DELETE` sur `matches`) ; un changement de code
+replanifie `ffbb_next_sync_at = now()` pour resynchroniser au prochain
+passage du cron. Voir `docs/API.md` pour le détail des 8 gaps résolus.

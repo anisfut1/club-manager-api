@@ -22,6 +22,8 @@ export interface ClubSummary {
   timezone: string;
   status: ClubStatus;
   ffbbClubId: string;
+  ffbbEnabled: boolean;
+  ffbbNextSyncAt: string | null;
 }
 
 export interface ClubContext {
@@ -42,6 +44,8 @@ function mapClubRow(row: {
   timezone: string;
   status: ClubStatus;
   ffbb_club_id: string;
+  ffbb_enabled: boolean;
+  ffbb_next_sync_at: string | null;
 }): ClubSummary {
   return {
     id: row.id,
@@ -52,6 +56,8 @@ function mapClubRow(row: {
     accentColor: row.accent_color,
     timezone: row.timezone,
     ffbbClubId: row.ffbb_club_id,
+    ffbbEnabled: row.ffbb_enabled,
+    ffbbNextSyncAt: row.ffbb_next_sync_at,
     status: row.status,
   };
 }
@@ -65,7 +71,7 @@ function mapClubRow(row: {
  * un non-membre).
  */
 export async function getClubContext(supabase: DbClient, clubIdOrSlug: string, userId: string): Promise<ClubContext | null> {
-  const query = supabase.from("clubs").select("id, slug, name, short_name, logo_url, accent_color, timezone, status, ffbb_club_id");
+  const query = supabase.from("clubs").select("id, slug, name, short_name, logo_url, accent_color, timezone, status, ffbb_club_id, ffbb_enabled, ffbb_next_sync_at");
   const { data: club, error: clubError } = UUID_PATTERN.test(clubIdOrSlug)
     ? await query.eq("id", clubIdOrSlug).maybeSingle()
     : await query.eq("slug", clubIdOrSlug).maybeSingle();

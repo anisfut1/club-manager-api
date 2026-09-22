@@ -18,8 +18,20 @@ Origine : repository `SCSB` (frontend historique), branche
   historique, jamais fusionnés en un `initial.sql` unique.
 - `supabase/tests/{00_local_postgres_shim_before_migrations.sql,
   01_local_postgres_shim_after_migrations.sql, fixtures.sql,
-  isolation_test.sql}` — 38 assertions PostgreSQL réelles, toutes encore
+  isolation_test.sql}` — 42 assertions PostgreSQL réelles (38 + 4 ajoutées
+  lors de la résolution des gaps frontend, voir plus bas), toutes encore
   vertes depuis ce repository.
+
+## Résolution des gaps API identifiés par le frontend (SCSB)
+
+Après la migration du frontend SCSB vers cette API (`docs/MIGRATION_TO_API.md`
+côté SCSB), 8 écarts API (`BACKEND_API_GAP`) ont été documentés puis
+comblés **uniquement dans ce repository**, sans toucher SCSB — voir
+`docs/API.md` (section "Frontend API gaps résolus") pour le détail des 8
+points, et `docs/FFBB.md`/`docs/FBI.md`/`docs/EMARQUE.md` pour les
+sections spécifiques à chaque intégration. La prochaine étape côté SCSB
+est de relancer `npm run api:generate` contre le nouvel `/openapi.json`
+généré par cette API — non fait depuis ce repository.
 
 ## Adapté (logique conservée, code déplacé/reconnecté)
 

@@ -18,12 +18,16 @@ n'existe que si elle correspond à un vrai service déjà construit — voir
 | GET | `/v1/me` | authentifié |
 | GET | `/v1/clubs` | authentifié (clubs dont il est membre) |
 | GET | `/v1/clubs/:clubId` | membre du club |
+| PATCH | `/v1/clubs/:clubId` | club_admin |
 | GET | `/v1/clubs/:clubId/capabilities` | membre du club |
 | GET | `/v1/clubs/:clubId/teams` | membre du club |
 | GET | `/v1/clubs/:clubId/matches` | membre du club |
 | GET | `/v1/clubs/:clubId/matches/:matchId` | membre du club |
 | GET | `/v1/clubs/:clubId/matches/:matchId/documents` | membre du club (URL de téléchargement réservée à club_admin) |
+| GET | `/v1/clubs/:clubId/emarque-imports` | membre du club |
 | GET | `/v1/clubs/:clubId/integrations` | membre du club |
+| PATCH | `/v1/clubs/:clubId/integrations/ffbb` | club_admin |
+| PATCH | `/v1/clubs/:clubId/integrations/fbi` | club_admin |
 | POST | `/v1/clubs/:clubId/integrations/fbi` | club_admin |
 | POST | `/v1/clubs/:clubId/integrations/fbi/test` | club_admin |
 | POST | `/v1/clubs/:clubId/integrations/ffbb/sync` | club_admin |
@@ -35,6 +39,66 @@ n'existe que si elle correspond à un vrai service déjà construit — voir
 | POST | `/v1/platform/clubs` | platform_admin |
 
 `:clubId` accepte un UUID ou un slug (voir `tenancy/club-context.ts`).
+
+## Frontend API gaps résolus
+
+Cette section documente les 8 écarts identifiés lors de la migration du
+frontend SCSB vers cette API (voir `docs/MIGRATION.md` côté SCSB), et
+comment chacun a été comblé. Objectif : **aucun gap connu** restant côté
+frontend après cette phase.
+
+1. **`PATCH /v1/clubs/:clubId`** — édition du branding club (`name`,
+   `shortName`, `timezone`, `logoUrl`, `accentColor`) par `club_admin`
+   uniquement. Ne peut jamais toucher `status`/`slug`/`ffbb_club_id`/
+   `ffbb_enabled` : verrouillé au niveau colonne PostgreSQL (`revoke
+   update on public.clubs from authenticated; grant update (name,
+   short_name, logo_url, accent_color, timezone) ...`,
+   `20260921100090_rls_multitenant_rewrite.sql`), pas seulement par le
+   DTO Zod — vérifié contre un vrai PostgreSQL (`supabase/tests/isolation_test.sql`).
+   `timezone` validé via `Intl.supportedValuesOf("timeZone")`.
+2. **`ffbbClubCode`** — `ClubDto` expose désormais le code club FFBB sous
+   ce nom explicite (jamais `ffbbClubId`, pour ne pas le confondre avec
+   l'UUID interne). Changement de ce code : route dédiée
+   `PATCH /v1/clubs/:clubId/integrations/ffbb` (`{clubCode, enabled}`),
+   qui ne supprime jamais l'historique déjà synchronisé et replanifie
+   `next_sync_at = now()` en cas de changement de code.
+3. **`GET /v1/me`** — retourne désormais `displayName` (avec repli propre
+   sur l'email si le profil n'a pas de nom, jamais d'identité inventée) en
+   plus de `id`/`email`/`isPlatformAdmin`.
+4. **`PATCH /v1/clubs/:clubId/integrations/fbi`** — active/désactive
+   `autoImportEmarque` ou l'intégration sans jamais redemander
+   username/password. Erreur métier `FBI_NOT_CONFIGURED` (409) si on tente
+   d'activer sans identifiants déjà enregistrés ; `enabled: false` reste
+   toujours permis.
+5. **`GET /v1/clubs/:clubId/emarque-imports`** — liste tenant-scopée des
+   imports e-Marque (filtres `matchId`/`status`/`from`/`to`, pagination
+   `limit`/`offset`, défaut 20, max 100). Le détail de match
+   (`GET .../matches/:matchId`)
+   expose aussi `parserVersion`/`discoveredAt`/`importedAt`/
+   `qualityWarnings`/`lastError` — `lastError` toujours assaini
+   (`sanitizeEmarqueError`, jamais le message brut de l'exception).
+6. **`IssueDto`** — enrichi avec `type`/`severity`/`status`/`message`
+   (utilisateur) séparé de `technicalCode` (machine), `matchId`,
+   `integration`, `qualityWarnings`, `createdAt`/`resolvedAt`. Jamais de
+   stack trace ni de détail interne brut.
+7. **`GET /v1/clubs/:clubId/matches`** — filtres serveur (`from`/`to` ISO
+   8601, `teamId`, `homeAway` relatif au club du tenant, `status`) et
+   raccourci `period=weekend` (calcul DST-safe dans le fuseau horaire du
+   club, `src/util/timezone.ts`). `period` et `from`/`to` sont mutuellement
+   exclusifs (400 sinon). `teamId` d'un autre club ne fuit jamais
+   (résultat vide, jamais une erreur).
+8. **Username FBI** — `GET /v1/clubs/:clubId/integrations` (et la réponse
+   de `PATCH .../fbi`) exposent le username FBI configuré en clair
+   (jamais masqué) pour `club_admin`/`platform_admin`, mais jamais le
+   mot de passe, le ciphertext, l'IV ou l'auth tag.
+
+## Pagination
+
+`GET /v1/clubs/:clubId/matches` (défaut 50, max 200) et
+`GET /v1/clubs/:clubId/emarque-imports` (défaut 20, max 100) ne renvoient
+jamais un dump complet non borné : pagination `limit`/`offset` sur les
+deux, limite par défaut et maximum documentés dans le schéma OpenAPI
+(`MatchesQueryDtoSchema`, `EmarqueImportsQueryDtoSchema`).
 
 ## Routes `/internal`
 

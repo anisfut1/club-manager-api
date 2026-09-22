@@ -26,7 +26,7 @@ documentsRouter.get("/", async (c) => {
 
   const { data, error } = await supabase
     .from("match_documents")
-    .select("id, type, filename, status, downloaded_at, storage_path")
+    .select("id, type, filename, mime_type, status, discovered_at, downloaded_at, storage_path")
     .eq("match_id", matchId)
     .eq("club_id", club.id)
     .order("downloaded_at", { ascending: false });
@@ -45,7 +45,9 @@ documentsRouter.get("/", async (c) => {
       id: doc.id,
       type: doc.type,
       filename: doc.filename,
+      mimeType: doc.mime_type,
       status: doc.status,
+      discoveredAt: doc.discovered_at,
       downloadedAt: doc.downloaded_at,
       downloadUrl: serviceSupabase ? await createEmarqueSignedUrl(serviceSupabase, doc.storage_path) : null,
     })),

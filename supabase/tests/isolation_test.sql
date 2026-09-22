@@ -68,6 +68,44 @@ select pg_temp.assert_count('user A - UPDATE fbi_jobs (meme son propre club) ref
 update public.match_documents set status = 'error' where club_id = 'bbbbbbbb-0000-0000-0000-000000000000';
 select pg_temp.assert_count('user A - UPDATE match_documents club B affecte 0 ligne', 0, (select count(*) from public.match_documents where club_id = 'bbbbbbbb-0000-0000-0000-000000000000' and status = 'error'));
 
+-- Gap 1 (PATCH /v1/clubs/:clubId, resolution des gaps frontend) : la
+-- lockdown colonne-par-colonne posee par
+-- 20260921100090_rls_multitenant_rewrite.sql (`revoke update on
+-- public.clubs from authenticated; grant update (name, short_name,
+-- logo_url, accent_color, timezone) ...`) doit reellement empecher
+-- authenticated de modifier status/slug/ffbb_club_id/ffbb_enabled — meme
+-- pour SON PROPRE club, meme en cas de bug applicatif qui laisserait
+-- passer ces champs. La route ne les expose pas dans son DTO, mais c'est
+-- cette GRANT/REVOKE au niveau colonne qui le garantit structurellement.
+create or replace function pg_temp.assert_column_update_denied(label text, stmt text) returns void
+language plpgsql as $$
+begin
+  execute stmt;
+  raise exception 'ECHEC [%] : cette mise a jour de colonne aurait du etre refusee (permission denied)', label;
+exception
+  when insufficient_privilege then
+    raise notice 'OK [%] (permission refusee comme attendu)', label;
+end;
+$$;
+
+select pg_temp.assert_column_update_denied(
+  'user A - UPDATE clubs.status refuse (colonne non accordee a authenticated)',
+  $stmt$update public.clubs set status = 'suspended' where id = 'aaaaaaaa-0000-0000-0000-000000000000'$stmt$
+);
+select pg_temp.assert_column_update_denied(
+  'user A - UPDATE clubs.ffbb_club_id refuse (colonne non accordee a authenticated)',
+  $stmt$update public.clubs set ffbb_club_id = 'HACKED0001' where id = 'aaaaaaaa-0000-0000-0000-000000000000'$stmt$
+);
+select pg_temp.assert_column_update_denied(
+  'user A - UPDATE clubs.slug refuse (colonne non accordee a authenticated)',
+  $stmt$update public.clubs set slug = 'pirate-slug' where id = 'aaaaaaaa-0000-0000-0000-000000000000'$stmt$
+);
+
+-- Les colonnes accordees (branding + fuseau horaire) restent, elles,
+-- modifiables par le club_admin de son propre club.
+update public.clubs set name = 'Club A renomme par user A' where id = 'aaaaaaaa-0000-0000-0000-000000000000';
+select pg_temp.assert_count('user A - UPDATE clubs.name (colonne accordee) reussit', 1, (select count(*) from public.clubs where id = 'aaaaaaaa-0000-0000-0000-000000000000' and name = 'Club A renomme par user A'));
+
 -- Tentative de lecture DIRECTE par UUID connu du match B (meme en connaissant l'ID)
 select pg_temp.assert_count('user A - lecture directe match B par UUID refusee', 0, (select count(*) from public.matches where id = 'bbbbbbbb-0000-0000-0000-000000000006'));
 
