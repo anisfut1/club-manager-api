@@ -59,15 +59,27 @@ qu'en cours de requête.
 
 ```json
 "crons": [
-  { "path": "/internal/cron/ffbb", "schedule": "*/15 * * * *" },
-  { "path": "/internal/cron/fbi-enqueue", "schedule": "0 * * * *" },
-  { "path": "/internal/cron/fbi-jobs", "schedule": "*/5 * * * *" },
-  { "path": "/internal/cron/emarque-parse", "schedule": "*/10 * * * *" }
+  { "path": "/internal/cron/ffbb", "schedule": "0 3 * * *" },
+  { "path": "/internal/cron/fbi-enqueue", "schedule": "15 3 * * *" },
+  { "path": "/internal/cron/fbi-jobs", "schedule": "30 3 * * *" },
+  { "path": "/internal/cron/emarque-parse", "schedule": "45 3 * * *" }
 ]
 ```
 
 Rien à configurer côté Vercel au-delà de l'import — les crons sont créés
 automatiquement au déploiement à partir de ce fichier.
+
+**Plan Vercel Hobby (gratuit) : limité à un cron par jour maximum.** Les
+fréquences d'origine (`*/15 * * * *`, `0 * * * *`, `*/5 * * * *`,
+`*/10 * * * *`) font échouer le déploiement sur ce plan ("Hobby accounts
+are limited to daily cron jobs"). Les 4 crons ci-dessus tournent donc une
+seule fois par jour, décalés de 15 minutes chacun pour respecter l'ordre
+du pipeline (FFBB sync → empile les jobs FBI → les traite → parse les
+documents téléchargés) — la synchronisation reste fonctionnelle, mais les
+nouveaux matchs/scores/documents e-Marque n'apparaissent qu'une fois par
+jour au lieu de quasi temps réel. Sur un plan Pro (ou supérieur), remettre
+les fréquences d'origine ci-dessus (en commentaire) pour retrouver une
+synchronisation toutes les 5 à 15 minutes.
 
 ## Ce que ce déploiement NE fait PAS
 
