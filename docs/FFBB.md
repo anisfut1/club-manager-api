@@ -93,12 +93,40 @@ requêtes. Deux corrections complémentaires :
    (`lastKnownGoodField`) plutôt que de repartir de l'ordre fixe — moins de
    requêtes en rafale si la cause est bien un throttling passager.
 
-Si le prochain déclenchement échoue encore avec 401 sur tous les
-candidats malgré ces espacements, ce ne sera alors plus la piste
-throttling qui tient — direction : jetons réellement scopés par
-collection (`key_directus_competitions` pour les compétitions au sens
-large, `key_dh` seulement pour certaines collections...), à confirmer par
-les logs du prochain essai.
+**Troisième déclenchement réel (même jour, après déploiement des
+espacements) : échec IDENTIQUE** — `key_dh` confirmé sur `organismes`,
+puis 401 sur les 4 candidats pour `rencontres`, malgré des appels
+strictement séquentiels (plus de `Promise.all`, confirmé par la stack
+trace qui ne mentionne plus `Promise.all`) et des délais de 200 ms/300 ms
+entre chaque tentative. **La piste throttling est donc écartée** : un
+throttling passager n'aurait pas dû résister à trois tentatives espacées
+de plusieurs secondes chacune. Le 401 sur `items/ffbbserver_rencontres`
+est reproductible et spécifique à cette collection/requête, pas à une
+histoire de cadence.
+
+Hypothèse retenue, non encore confirmée (réseau `api.ffbb.app` toujours
+inaccessible depuis tous les environnements de développement disponibles) :
+`listMatchesForOrganisme` est le seul appel à demander des champs de
+relation imbriqués sur 2 niveaux (`salle.commune.libelle`, voir
+`RENCONTRE_FIELDS`) et un filtre `_or` combinant deux conditions — tous
+les autres appels (`organismes`, `engagements`, `competitions`, `poules`)
+utilisent des champs plats et un filtre `_eq`/`_in` simple. Le système de
+permissions Directus est fin (par champ, par relation) : il est plausible
+que le rôle public associé à ces jetons n'autorise pas la traversée de
+relation `salle → commune → libelle`, et que Directus rejette alors TOUTE
+la requête plutôt que d'omettre silencieusement le champ non autorisé.
+
+**Corrigé en conséquence** (`directus-client.ts`, `request()`) : le corps
+de la réponse d'erreur Directus (400 premiers caractères) est maintenant
+inclus dans le message de `FfbbApiError`, et chaque candidat rejeté est
+loggé individuellement (`logInfo("Jeton API FFBB candidat rejeté", {
+fieldName, errorMessage })`) — Directus renvoie quasi toujours
+`errors[].message`/`extensions.code` qui nomme explicitement la vraie
+cause (permission refusée sur tel champ, filtre non autorisé, jeton
+invalide...). **Ceci est la seule vraie inconnue restante** : le prochain
+déclenchement donnera enfin le texte d'erreur réel de Directus au lieu
+d'un simple code 401 — à lire en priorité avant toute nouvelle
+supposition sur les champs/filtre.
 
 ## Cron
 

@@ -220,6 +220,11 @@ export class FfbbDirectusClient {
       } catch (error) {
         if (isAuthError(error)) {
           lastAuthError = error;
+          // Loggé à chaque candidat (pas seulement le dernier) : si les 4 échouent,
+          // c'est le SEUL moyen de voir le corps d'erreur Directus de chacun — la
+          // vraie raison ("FORBIDDEN" sur ce champ/collection précis, jeton
+          // invalide, rate-limit...) y est presque toujours explicite.
+          logInfo("Jeton API FFBB candidat rejeté", { fieldName, errorMessage: error.message });
           continue;
         }
         throw error;
@@ -246,8 +251,17 @@ export class FfbbDirectusClient {
     }
 
     if (!response.ok) {
+      // Le corps d'une réponse d'erreur Directus contient quasi toujours
+      // errors[].message / extensions.code (permission refusée sur un champ
+      // précis, jeton invalide, requête malformée...) — capturé ici pour de
+      // bon plutôt que de re-deviner à l'aveugle (voir docs/FFBB.md, l'échec
+      // silencieux sur items/ffbbserver_rencontres du 2026-09-22).
+      const bodySnippet = await response.text().then(
+        (text) => text.slice(0, 400),
+        () => "<corps illisible>",
+      );
       throw new FfbbApiError(
-        `Requête FFBB : réponse HTTP ${response.status} (${endpoint})`,
+        `Requête FFBB : réponse HTTP ${response.status} (${endpoint}) : ${bodySnippet}`,
         "REQUEST_FAILED",
         undefined,
         response.status,

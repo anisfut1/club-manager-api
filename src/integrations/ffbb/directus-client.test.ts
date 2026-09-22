@@ -91,6 +91,29 @@ describe("FfbbDirectusClient", () => {
     });
   });
 
+  it("inclut le corps de la réponse Directus dans le message d'erreur (diagnostic, pas juste le statut HTTP)", async () => {
+    // Directus renvoie quasi toujours errors[].message/extensions.code dans le
+    // corps — capturer ce texte est ce qui permet de savoir POURQUOI un jeton
+    // est refusé (permission sur un champ précis, filtre non autorisé...) sans
+    // re-deviner à l'aveugle à chaque échec en production (voir docs/FFBB.md).
+    const { FfbbDirectusClient: FreshClient } = await import("./directus-client.js");
+    const fetchImpl = vi.fn(async (url: string | URL) => {
+      const href = url.toString();
+      if (href.includes("items/configuration")) {
+        return jsonResponse(200, CONFIGURATION_BODY);
+      }
+      return jsonResponse(403, {
+        errors: [{ message: "You don't have permission to access this.", extensions: { code: "FORBIDDEN" } }],
+      });
+    });
+
+    const client = new FreshClient({ fetchImpl: fetchImpl as unknown as typeof fetch, candidateRetryDelayMs: 0 });
+
+    await expect(client.listItems("items/ffbbserver_rencontres")).rejects.toMatchObject({
+      message: expect.stringContaining("You don't have permission to access this."),
+    });
+  });
+
   it("signale une réponse de configuration non-JSON (page de blocage WAF probable) sans planter", async () => {
     const { FfbbDirectusClient: FreshClient } = await import("./directus-client.js");
     const fetchImpl = vi.fn(
