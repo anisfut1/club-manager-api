@@ -19,6 +19,20 @@ const AUTHENTICATED_PAGE_HTML = `<html><body><h1>Accueil FBI</h1><a href="/fbi/d
 
 const AUTHENTICATED_DIRECT_HTML = `<html><body><h1>Bienvenue</h1><a href="/fbi/deconnexion.fbi">Déconnexion</a></body></html>`;
 
+const LOGIN_PAGE_WITH_ERROR_HTML = `
+  <html>
+    <head><title>FBI - Identification</title><link href="https://fonts.googleapis.com/css2?family=Roboto" rel="stylesheet"></head>
+    <body>
+      <p class="error">Identifiant ou mot de passe incorrect</p>
+      <form action="/fbi/j_security_check" method="post">
+        <input type="hidden" name="csrfToken" value="tok-123" />
+        <input type="text" name="identifiant" />
+        <input type="password" name="motDePasse" />
+      </form>
+    </body>
+  </html>
+`;
+
 function makeResponse(body: string, init: { status?: number; headers?: Record<string, string>; url?: string } = {}) {
   const headers = new Headers(init.headers ?? {});
   const response = new Response(body, { status: init.status ?? 200, headers });
@@ -186,6 +200,30 @@ describe("HttpFbiClient.login", () => {
     const provider = new HttpFbiClient({ baseUrl: BASE_URL, fetchImpl: fetchImpl as unknown as typeof fetch });
 
     await expect(provider.login({ username: "x", password: "mauvais" })).rejects.toMatchObject({ code: "LOGIN_FAILED" });
+  });
+
+  it("le diagnostic montre le TEXTE VISIBLE du corps de la page (ex: le message d'erreur FBI réel), jamais le balisage <head> générique", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/connexion.fbi")) {
+        return makeResponse(LOGIN_PAGE_HTML, { headers: { "set-cookie": "JSESSIONID=abc123; Path=/fbi" } });
+      }
+      if (url.endsWith("/j_security_check")) {
+        return makeResponse(LOGIN_PAGE_WITH_ERROR_HTML);
+      }
+      throw new Error(`URL inattendue dans le test : ${url}`);
+    });
+
+    const provider = new HttpFbiClient({ baseUrl: BASE_URL, fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    try {
+      await provider.login({ username: "x", password: "mauvais" });
+      throw new Error("devait lever une FbiError");
+    } catch (error) {
+      const message = (error as FbiError).message;
+      expect(message).toContain("Identifiant ou mot de passe incorrect");
+      expect(message).not.toContain("fonts.googleapis.com");
+    }
   });
 
   it("lève LOGIN_PAGE_UNREACHABLE si la page de connexion est injoignable", async () => {

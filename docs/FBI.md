@@ -215,6 +215,27 @@ formulaire de connexion dans le corps de LA RÉPONSE DE SOUMISSION
 elle-même. **Non encore reconfirmé en direct** après ce correctif — à
 valider au prochain "Tester la connexion".
 
+**Troisième déclenchement réel : correctif confirmé actif, mais toujours
+`LOGIN_FAILED`.** Le titre de la page d'atterrissage est bien `FBI -
+Identification` cette fois (preuve que c'est désormais le corps RÉEL de
+la réponse au POST, plus un second GET parasite) — mais le diagnostic
+n'affichait que les 500 premiers caractères du `<head>` brut (balises
+`<meta>`/`<link>` de mise en page, quasi identiques sur TOUTE page FBI,
+succès ou échec) : aucune valeur diagnostique, le vrai contenu (message
+d'erreur, ou à l'inverse le nom du club si connecté) est dans `<body>`,
+jamais atteint dans les 500 premiers caractères de balisage brut.
+
+**Corrigé** (`http-client.ts`) : `visibleBodyText()` remplace
+`truncateHtml()` — extrait le texte VISIBLE de `<body>` (balises
+retirées via cheerio, déjà utilisé pour le parsing) plutôt que le
+balisage brut, avant troncature à 500 caractères. Couvert par un nouveau
+test qui vérifie qu'un message d'erreur placé dans le corps ressort bien
+dans le diagnostic, et que le `<head>` (ex: `fonts.googleapis.com`) n'y
+apparaît plus. **Non encore reconfirmé en direct** — prochain "Tester la
+connexion" à lire en priorité : le texte visible dira enfin s'il s'agit
+d'un vrai refus d'identifiants, d'un jeton CSRF manquant, ou d'autre
+chose.
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque

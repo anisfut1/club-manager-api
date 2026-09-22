@@ -24,15 +24,25 @@ import type { EmarqueDocumentRef, FbiAutomationClient, FbiCredentialsInput } fro
 
 export const FBI_DEFAULT_BASE_URL = "https://extranet.ffbb.com/fbi";
 
-/**
- * Borne tout extrait HTML journalisé (diagnostic de login, voir
- * `HttpFbiClient.login`) — jamais la page entière dans un message d'erreur
- * ou un log, et les retours à la ligne sont aplatis pour rester lisibles
- * dans un log JSON une ligne.
- */
-function truncateHtml(html: string, maxLength = 500): string {
-  const flattened = html.replace(/\s+/g, " ").trim();
+/** Aplatit les espaces/retours à la ligne pour rester lisible dans un log JSON une ligne, et borne la longueur. */
+function truncateFlat(text: string, maxLength: number): string {
+  const flattened = text.replace(/\s+/g, " ").trim();
   return flattened.length > maxLength ? `${flattened.slice(0, maxLength)}…` : flattened;
+}
+
+/**
+ * Extrait le TEXTE VISIBLE (`<body>`, balises retirées) d'une page HTML,
+ * pour le diagnostic de login (voir `HttpFbiClient.login`) — jamais le
+ * balisage brut : les 500 premiers caractères d'un `<head>` sont un
+ * boilerplate quasi identique sur toute page FBI (succès ou échec, voir
+ * docs/FBI.md), donc sans valeur diagnostique. Le texte visible du corps
+ * (ex: "Identifiant ou mot de passe incorrect", ou au contraire le nom du
+ * club connecté) est ce qui distingue réellement un échec d'un succès.
+ * Jamais la page entière dans un message d'erreur ou un log.
+ */
+function visibleBodyText(html: string, maxLength = 500): string {
+  const $ = cheerio.load(html);
+  return truncateFlat($("body").text(), maxLength);
 }
 
 export interface HttpFbiSession {
@@ -110,13 +120,15 @@ export class HttpFbiClient implements FbiAutomationClient<HttpFbiSession> {
    * Ce chemin n'a JAMAIS été confirmé contre le vrai FBI (voir docs/FBI.md,
    * statut PREPARED — contrairement à FFBB, passé par plusieurs cycles de
    * diagnostic réel avant de fonctionner). Chaque échec embarque donc un
-   * diagnostic borné (champs de formulaire détectés, statut HTTP, extrait
-   * HTML tronqué — JAMAIS le mot de passe, un cookie de session ou un jeton)
-   * directement dans le message de l'erreur : `logError` (logger.ts) ne
-   * capture que `error.message`/`.stack`, jamais `.cause`, donc c'est le
+   * diagnostic borné (champs de formulaire détectés, statut HTTP, TEXTE
+   * VISIBLE de la page concernée — jamais son balisage brut, voir
+   * `visibleBodyText` ; jamais le mot de passe, un cookie de session ou un
+   * jeton) directement dans le message de l'erreur : `logError` (logger.ts)
+   * ne capture que `error.message`/`.stack`, jamais `.cause`, donc c'est le
    * seul endroit où ce détail survit jusqu'aux logs Vercel — même
    * discipline que `directus-client.ts` côté FFBB (`request()`), qui a
-   * permis de corriger 4 bugs réels via `vercel logs` plutôt que deviner.
+   * permis de corriger plusieurs bugs réels via `vercel logs` plutôt que
+   * deviner.
    */
   async login(credentials: FbiCredentialsInput): Promise<HttpFbiSession> {
     const cookieJar = new SimpleCookieJar();
@@ -140,7 +152,7 @@ export class HttpFbiClient implements FbiAutomationClient<HttpFbiSession> {
     if (!form) {
       throw new FbiError(
         "Formulaire de connexion FBI non reconnu (la structure de la page a peut-être changé). " +
-          `Extrait de la page reçue : ${truncateHtml(html)}`,
+          `Extrait de la page reçue : ${visibleBodyText(html)}`,
         "LOGIN_FORM_NOT_RECOGNIZED",
       );
     }
@@ -204,7 +216,7 @@ export class HttpFbiClient implements FbiAutomationClient<HttpFbiSession> {
     if (this.looksLikeLoginPage(landingHtml)) {
       throw new FbiError(
         `Connexion FBI refusée (identifiants incorrects, ou formulaire modifié depuis l'écriture de ce code) — ${formDiagnostic}. ` +
-          `Extrait de la page d'atterrissage : ${truncateHtml(landingHtml)}`,
+          `Extrait de la page d'atterrissage : ${visibleBodyText(landingHtml)}`,
         "LOGIN_FAILED",
       );
     }
