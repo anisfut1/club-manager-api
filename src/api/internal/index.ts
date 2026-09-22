@@ -7,10 +7,21 @@ import { syncAllDueClubs } from "../../integrations/ffbb/scheduler.js";
 import { FfbbPublicProvider } from "../../integrations/ffbb/public-provider.js";
 import { enqueueEmarqueDiscoveryJobsForAllClubs } from "../../jobs/enqueue-emarque.js";
 import { claimNextJob } from "../../jobs/claim.js";
-import { processDiscoverEmarqueJob } from "../../jobs/process-discover-emarque.js";
-import { processTestConnectionJob } from "../../jobs/process-test-connection.js";
-import { parseDownloadedEmarqueDocuments } from "../../jobs/parse-downloaded-documents.js";
 import { logError, logInfo } from "../../logger.js";
+
+/**
+ * `processDiscoverEmarqueJob`/`processTestConnectionJob` (via
+ * browser-launcher.ts) et `parseDownloadedEmarqueDocuments` (via le
+ * pipeline OCR/PDF) tirent playwright-core/@sparticuz/chromium/tesseract.js/
+ * @napi-rs/canvas — des dépendances natives volumineuses. Ce fichier
+ * n'utilisant PAS de bundler sur Vercel (chaque .ts est transpilé et
+ * exécuté individuellement par le runtime, voir docs/DEPLOYMENT.md),
+ * un `import` statique ici les chargerait à CHAQUE démarrage à froid de la
+ * fonction — y compris pour `/health` ou `/v1/clubs`, qui ne les utilisent
+ * jamais — au point de dépasser le temps d'exécution du plan Vercel Hobby.
+ * Import dynamique : le coût n'est payé que par les invocations qui
+ * traitent réellement un job FBI/e-Marque.
+ */
 
 /**
  * Traitements automatiques — JAMAIS sous `/v1` (§8 de la demande). Protégé
@@ -77,8 +88,10 @@ internalRouter.get("/cron/fbi-jobs", async (c) => {
 
     try {
       if (job.type === "test_connection") {
+        const { processTestConnectionJob } = await import("../../jobs/process-test-connection.js");
         await processTestConnectionJob(supabase, job);
       } else {
+        const { processDiscoverEmarqueJob } = await import("../../jobs/process-discover-emarque.js");
         await processDiscoverEmarqueJob(supabase, job);
       }
       succeeded += 1;
@@ -96,6 +109,7 @@ internalRouter.get("/cron/fbi-jobs", async (c) => {
 internalRouter.get("/cron/emarque-parse", async (c) => {
   const supabase = createServiceSupabaseClient();
   try {
+    const { parseDownloadedEmarqueDocuments } = await import("../../jobs/parse-downloaded-documents.js");
     const result = await parseDownloadedEmarqueDocuments(supabase);
     return c.json(result);
   } catch (error) {
