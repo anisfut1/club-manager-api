@@ -24,6 +24,17 @@ import type { EmarqueDocumentRef, FbiAutomationClient, FbiCredentialsInput } fro
 
 export const FBI_DEFAULT_BASE_URL = "https://extranet.ffbb.com/fbi";
 
+/**
+ * Borne tout extrait HTML journalisé (diagnostic de login, voir
+ * `HttpFbiClient.login`) — jamais la page entière dans un message d'erreur
+ * ou un log, et les retours à la ligne sont aplatis pour rester lisibles
+ * dans un log JSON une ligne.
+ */
+function truncateHtml(html: string, maxLength = 500): string {
+  const flattened = html.replace(/\s+/g, " ").trim();
+  return flattened.length > maxLength ? `${flattened.slice(0, maxLength)}…` : flattened;
+}
+
 export interface HttpFbiSession {
   cookieJar: SimpleCookieJar;
 }
@@ -95,6 +106,17 @@ export class HttpFbiClient implements FbiAutomationClient<HttpFbiSession> {
    * explicite plutôt que de faire semblant de réussir — voir
    * `classifyFbiLoginStatus` (./errors.ts) pour la traduction en statut
    * exploitable par l'UI/le worker.
+   *
+   * Ce chemin n'a JAMAIS été confirmé contre le vrai FBI (voir docs/FBI.md,
+   * statut PREPARED — contrairement à FFBB, passé par plusieurs cycles de
+   * diagnostic réel avant de fonctionner). Chaque échec embarque donc un
+   * diagnostic borné (champs de formulaire détectés, statut HTTP, extrait
+   * HTML tronqué — JAMAIS le mot de passe, un cookie de session ou un jeton)
+   * directement dans le message de l'erreur : `logError` (logger.ts) ne
+   * capture que `error.message`/`.stack`, jamais `.cause`, donc c'est le
+   * seul endroit où ce détail survit jusqu'aux logs Vercel — même
+   * discipline que `directus-client.ts` côté FFBB (`request()`), qui a
+   * permis de corriger 4 bugs réels via `vercel logs` plutôt que deviner.
    */
   async login(credentials: FbiCredentialsInput): Promise<HttpFbiSession> {
     const cookieJar = new SimpleCookieJar();
@@ -117,7 +139,8 @@ export class HttpFbiClient implements FbiAutomationClient<HttpFbiSession> {
     const form = this.parseLoginForm(html, loginPage.url || loginUrl);
     if (!form) {
       throw new FbiError(
-        "Formulaire de connexion FBI non reconnu (la structure de la page a peut-être changé)",
+        "Formulaire de connexion FBI non reconnu (la structure de la page a peut-être changé). " +
+          `Extrait de la page reçue : ${truncateHtml(html)}`,
         "LOGIN_FORM_NOT_RECOGNIZED",
       );
     }
@@ -144,6 +167,10 @@ export class HttpFbiClient implements FbiAutomationClient<HttpFbiSession> {
 
     cookieJar.applySetCookieHeaders(submitResponse.headers);
 
+    const formDiagnostic =
+      `formulaire détecté (action=${form.action}, champ identifiant=${form.usernameField}, ` +
+      `champ mot de passe=${form.passwordField}), réponse de soumission HTTP ${submitResponse.status}`;
+
     const redirectLocation = submitResponse.headers.get("location");
     const landingUrl = redirectLocation ? new URL(redirectLocation, form.action).toString() : form.action;
 
@@ -152,17 +179,28 @@ export class HttpFbiClient implements FbiAutomationClient<HttpFbiSession> {
       const landing = await this.fetchImpl(landingUrl, { headers: { cookie: cookieJar.cookieHeader } });
       cookieJar.applySetCookieHeaders(landing.headers);
       landingHtml = await landing.text();
+    } else {
+      // Ni redirection ni 2xx sur la soumission : la connexion a
+      // probablement échoué AVANT même d'atteindre une page de connexion
+      // reconnaissable (ex: 403/500 applicatif) — un `landingHtml` vide
+      // ne doit jamais être silencieusement traité comme "page de
+      // connexion absente donc succès" (piège précédent, corrigé ici).
+      throw new FbiError(
+        `Connexion FBI refusée sans redirection ni réponse OK (${formDiagnostic}).`,
+        "LOGIN_FAILED",
+      );
     }
 
     if (this.looksLikeLoginPage(landingHtml)) {
       throw new FbiError(
-        "Connexion FBI refusée (identifiants incorrects, ou formulaire modifié depuis l'écriture de ce code)",
+        `Connexion FBI refusée (identifiants incorrects, ou formulaire modifié depuis l'écriture de ce code) — ${formDiagnostic}. ` +
+          `Extrait de la page d'atterrissage : ${truncateHtml(landingHtml)}`,
         "LOGIN_FAILED",
       );
     }
 
     if (cookieJar.size === 0) {
-      throw new FbiError("Aucun cookie de session reçu après connexion FBI", "LOGIN_FAILED");
+      throw new FbiError(`Aucun cookie de session reçu après connexion FBI (${formDiagnostic}).`, "LOGIN_FAILED");
     }
 
     return { cookieJar };

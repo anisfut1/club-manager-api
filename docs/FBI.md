@@ -159,6 +159,36 @@ formulaire d'identifiants.
 empilé en secours et son id renvoyé (`202`) pour suivi via
 `GET /v1/jobs/:jobId` — voir `docs/API.md` §Async.
 
+**Premier test réel, identifiants corrects côté club, échoue avec
+`LOGIN_FAILED` ("identifiant ou mot de passe incorrect").** Comme pour
+FFBB (voir docs/FFBB.md), ce chemin n'avait jamais été exécuté contre le
+vrai FBI depuis aucun environnement de développement — un `LOGIN_FAILED`
+avec de vrais identifiants est donc a priori un mauvais diagnostic du
+code (mauvais champ détecté, redirection non suivie, page intermédiaire
+non anticipée), pas forcément un mauvais mot de passe.
+
+**Diagnostic ajouté** (`http-client.ts`, `login()`) : chaque `FbiError`
+(`LOGIN_FORM_NOT_RECOGNIZED`, `LOGIN_FAILED`) embarque désormais dans son
+message les champs de formulaire réellement détectés (action, nom du
+champ identifiant, nom du champ mot de passe), le statut HTTP de la
+réponse de soumission, et un extrait borné (500 caractères, aplati) de la
+page HTML concernée — jamais le mot de passe, un cookie ou un jeton.
+Nécessaire car `logError` (`logger.ts`) ne capture que
+`error.message`/`.stack`, jamais `.cause` : c'est le seul moyen pour ce
+détail de survivre jusqu'aux logs Vercel (`vercel logs ... --json | grep
+"fbi/test"`), même méthode que `directus-client.ts` côté FFBB. Corrigé au
+passage : une réponse de soumission ni redirigée ni 2xx (ex. 403
+applicatif) était silencieusement traitée comme un succès potentiel
+(`landingHtml` vide → `looksLikeLoginPage("")` → `false`) — lève
+maintenant `LOGIN_FAILED` explicitement. Couvert par 2 nouveaux tests
+(`http-client.test.ts`).
+
+**Prochaine étape** : relancer "Tester la connexion" depuis
+`/admin/intégrations/fbi`, puis lire le message complet dans les logs
+Vercel de club-manager-api pour voir exactement quel formulaire/champ a
+été détecté et pourquoi le site l'a refusé — jamais deviner un nouveau
+nom de champ sans ce retour, comme pour FFBB.
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque

@@ -102,6 +102,49 @@ describe("HttpFbiClient.login", () => {
     await expect(provider.login({ username: "x", password: "mauvais" })).rejects.toMatchObject({ code: "LOGIN_FAILED" });
   });
 
+  it("le message LOGIN_FAILED embarque les champs de formulaire détectés (diagnostic exploitable via les logs, jamais le mot de passe)", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/connexion.fbi")) return makeResponse(LOGIN_PAGE_HTML);
+      if (url.endsWith("/j_security_check")) {
+        return makeResponse("", { status: 302, headers: { location: "/fbi/connexion.fbi?invalidate=true" } });
+      }
+      return makeResponse(LOGIN_PAGE_HTML);
+    });
+
+    const provider = new HttpFbiClient({ baseUrl: BASE_URL, fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    try {
+      await provider.login({ username: "club1234", password: "s3cret-mot-de-passe" });
+      throw new Error("devait lever une FbiError");
+    } catch (error) {
+      const message = (error as FbiError).message;
+      expect(message).toContain("champ identifiant=identifiant");
+      expect(message).toContain("champ mot de passe=motDePasse");
+      expect(message).toContain("HTTP 302");
+      expect(message).not.toContain("s3cret-mot-de-passe");
+    }
+  });
+
+  it("lève LOGIN_FAILED (jamais un faux succès) quand la soumission ne redirige pas et ne renvoie pas 2xx", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/connexion.fbi")) {
+        return makeResponse(LOGIN_PAGE_HTML, { headers: { "set-cookie": "JSESSIONID=abc123; Path=/fbi" } });
+      }
+      if (url.endsWith("/j_security_check")) {
+        // Ni redirection, ni 2xx : un 403 applicatif par exemple — ne doit
+        // jamais être interprété comme "pas de page de connexion, donc succès".
+        return makeResponse("Forbidden", { status: 403 });
+      }
+      throw new Error(`URL inattendue dans le test : ${url}`);
+    });
+
+    const provider = new HttpFbiClient({ baseUrl: BASE_URL, fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    await expect(provider.login({ username: "x", password: "y" })).rejects.toMatchObject({ code: "LOGIN_FAILED" });
+  });
+
   it("lève LOGIN_PAGE_UNREACHABLE si la page de connexion est injoignable", async () => {
     const fetchImpl = vi.fn(async () => {
       throw new Error("network down");
