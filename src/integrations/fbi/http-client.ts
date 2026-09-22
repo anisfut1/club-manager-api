@@ -172,13 +172,23 @@ export class HttpFbiClient implements FbiAutomationClient<HttpFbiSession> {
       `champ mot de passe=${form.passwordField}), réponse de soumission HTTP ${submitResponse.status}`;
 
     const redirectLocation = submitResponse.headers.get("location");
-    const landingUrl = redirectLocation ? new URL(redirectLocation, form.action).toString() : form.action;
 
-    let landingHtml = "";
-    if (redirectLocation || submitResponse.ok) {
+    let landingHtml: string;
+    if (redirectLocation) {
+      const landingUrl = new URL(redirectLocation, form.action).toString();
       const landing = await this.fetchImpl(landingUrl, { headers: { cookie: cookieJar.cookieHeader } });
       cookieJar.applySetCookieHeaders(landing.headers);
       landingHtml = await landing.text();
+    } else if (submitResponse.ok) {
+      // Pas de redirection : le corps de LA RÉPONSE DE SOUMISSION EST déjà
+      // la page de résultat (pattern classique d'une appli Java qui rend
+      // directement le résultat du POST plutôt que de rediriger). Refaire
+      // un GET séparé vers la même URL d'action, hors contexte du POST,
+      // renvoyait le formulaire de connexion vierge et faisait échouer
+      // TOUTE connexion avec LOGIN_FAILED, identifiants corrects ou pas —
+      // bug réel constaté en production (2026-09-22, voir docs/FBI.md),
+      // corrigé ici.
+      landingHtml = await submitResponse.text();
     } else {
       // Ni redirection ni 2xx sur la soumission : la connexion a
       // probablement échoué AVANT même d'atteindre une page de connexion

@@ -189,6 +189,32 @@ Vercel de club-manager-api pour voir exactement quel formulaire/champ a
 été détecté et pourquoi le site l'a refusé — jamais deviner un nouveau
 nom de champ sans ce retour, comme pour FFBB.
 
+**Deuxième déclenchement réel : cause trouvée grâce au diagnostic
+ci-dessus.** Le formulaire est correctement détecté (`action=
+https://extranet.ffbb.com/fbi/identification.fbi;jsessionid=...`, champs
+`identificationForm.identificationBean.identifiant`/`...mdp` — noms
+typiques d'un bean Struts, cohérents), et la soumission répond `HTTP 200`
+**directement, sans redirection**. Le bug était dans notre propre code,
+pas côté FBI : quand la soumission ne redirige pas, `login()` faisait un
+SECOND appel GET vers CETTE MÊME URL d'action pour lire "la page
+d'atterrissage" — hors contexte du POST, sans session encore établie côté
+serveur pour cette requête. Pour une appli Java classique qui rend le
+résultat directement dans la réponse du POST (au lieu de rediriger après
+un login réussi), ce second GET renvoie le formulaire de connexion vierge
+de départ, **quels que soient les identifiants**, un ou de mauvais — CE
+GET, jamais notre POST, était la cause du `LOGIN_FAILED` systématique.
+
+**Corrigé** (`http-client.ts`) : quand la soumission répond `200` sans
+`Location`, `login()` lit maintenant le corps de LA RÉPONSE DE SOUMISSION
+ELLE-MÊME (`submitResponse.text()`) au lieu de relancer un GET séparé — un
+second GET n'est fait QUE quand le serveur redirige réellement (3xx +
+`Location`), pour suivre cette redirection. Couvert par 2 nouveaux tests
+(`http-client.test.ts`) : succès en 200 direct (vérifie qu'aucun second
+appel réseau n'est fait vers la même URL), et échec en 200 direct avec le
+formulaire de connexion dans le corps de LA RÉPONSE DE SOUMISSION
+elle-même. **Non encore reconfirmé en direct** après ce correctif — à
+valider au prochain "Tester la connexion".
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque

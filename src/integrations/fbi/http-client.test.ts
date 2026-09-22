@@ -17,6 +17,8 @@ const LOGIN_PAGE_HTML = `
 
 const AUTHENTICATED_PAGE_HTML = `<html><body><h1>Accueil FBI</h1><a href="/fbi/deconnexion.fbi">Déconnexion</a></body></html>`;
 
+const AUTHENTICATED_DIRECT_HTML = `<html><body><h1>Bienvenue</h1><a href="/fbi/deconnexion.fbi">Déconnexion</a></body></html>`;
+
 function makeResponse(body: string, init: { status?: number; headers?: Record<string, string>; url?: string } = {}) {
   const headers = new Headers(init.headers ?? {});
   const response = new Response(body, { status: init.status ?? 200, headers });
@@ -143,6 +145,47 @@ describe("HttpFbiClient.login", () => {
     const provider = new HttpFbiClient({ baseUrl: BASE_URL, fetchImpl: fetchImpl as unknown as typeof fetch });
 
     await expect(provider.login({ username: "x", password: "y" })).rejects.toMatchObject({ code: "LOGIN_FAILED" });
+  });
+
+  it("réussit une connexion quand la soumission répond 200 directement (pas de redirection) — lit le corps du POST, jamais un second GET sur la même URL", async () => {
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.endsWith("/connexion.fbi")) {
+        return makeResponse(LOGIN_PAGE_HTML, { headers: { "set-cookie": "JSESSIONID=abc123; Path=/fbi" } });
+      }
+      if (url.endsWith("/j_security_check")) {
+        // 200 direct, pas de Location : le corps EST déjà la page de résultat.
+        return makeResponse(AUTHENTICATED_DIRECT_HTML);
+      }
+      throw new Error(`URL inattendue dans le test (un second GET vers /j_security_check serait le bug corrigé) : ${url}`);
+    });
+
+    const provider = new HttpFbiClient({ baseUrl: BASE_URL, fetchImpl: fetchImpl as unknown as typeof fetch });
+    const session = await provider.login({ username: "club1234", password: "secret" });
+
+    expect(session.cookieJar.has("JSESSIONID")).toBe(true);
+    expect(calls).toEqual([`${BASE_URL}/connexion.fbi`, `${BASE_URL}/j_security_check`]);
+  });
+
+  it("lève LOGIN_FAILED quand la soumission répond 200 directement avec le formulaire de connexion dans SON PROPRE corps (identifiants refusés) — bug réel constaté en production le 2026-09-22, voir docs/FBI.md", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/connexion.fbi")) {
+        return makeResponse(LOGIN_PAGE_HTML, { headers: { "set-cookie": "JSESSIONID=abc123; Path=/fbi" } });
+      }
+      if (url.endsWith("/j_security_check")) {
+        // 200 direct : le site rend directement le formulaire de connexion
+        // (mot de passe refusé), sans redirection.
+        return makeResponse(LOGIN_PAGE_HTML);
+      }
+      throw new Error(`URL inattendue dans le test : ${url}`);
+    });
+
+    const provider = new HttpFbiClient({ baseUrl: BASE_URL, fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    await expect(provider.login({ username: "x", password: "mauvais" })).rejects.toMatchObject({ code: "LOGIN_FAILED" });
   });
 
   it("lève LOGIN_PAGE_UNREACHABLE si la page de connexion est injoignable", async () => {
