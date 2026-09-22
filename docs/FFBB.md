@@ -39,18 +39,38 @@ open source indépendantes dans ce même document, jamais observés en direct.
 
 Premier déclenchement réel du cron `/internal/cron/ffbb` en production :
 échec avec `FfbbApiError: Jeton API absent de la réponse de configuration
-FFBB` — `items/configuration` ne renvoie pas (ou pas sous le nom de champ
-attendu `data.api_bearer_token`) le jeton. `directus-client.ts` a été
-renforcé en conséquence (`getApiToken`) : lecture du corps en texte brut
-avant tentative de parse JSON (pour distinguer une vraie page de blocage
-WAF/CDN d'un souci de schéma, voir §10 de la recherche), et recherche du
-jeton par motif de clé (`api_bearer_token` en priorité, puis un filet de
-secours `bearer_token`/`access_token`/`token`) au lieu d'un seul chemin
-figé `data.api_bearer_token`. Le prochain échec produira dans les logs
-Vercel soit un extrait du corps non-JSON, soit la liste des clés
-réellement présentes dans `data` — l'information manquante pour corriger
-définitivement le nom de champ, jamais observable avant un vrai
-déploiement réseau non bloqué.
+FFBB`. Un premier renforcement diagnostique (lecture du corps en texte brut
+avant `JSON.parse`, recherche par motif de clé) a confirmé, via les logs
+Vercel du déclenchement suivant, que **`data.api_bearer_token` n'existe
+tout simplement pas** dans la vraie réponse de `items/configuration`. Les
+clés réellement présentes (2026-09-22, en production) :
+
+```text
+date_created, date_updated, id, key_dh, key_ms, user_created, user_updated,
+ios_version, android_version, key_directus_website, key_directus_competitions,
+force_ms_reindex
+```
+
+Aucune ne contient littéralement le mot "token" — la forme documentée dans
+`docs/FFBB_ECOSYSTEM_RESEARCH.md` §3.2 (déduite par recoupement de 3
+bibliothèques clientes tierces) ne correspond pas au contrat réel actuel.
+`key_ms` est manifestement le jeton Meilisearch (hors périmètre
+`items/*`) ; les 3 autres candidats plausibles pour l'authentification des
+collections `items/ffbbserver_*` sont `key_dh` ("Data Hub", terme employé
+dans la recherche §2), `key_directus_website` et `key_directus_competitions`
+— sans certitude sur lequel est le bon pour quelle collection.
+
+**Solution retenue : découverte automatique, pas une nouvelle supposition
+figée.** `FfbbDirectusClient.listItems` essaie chaque candidat
+(`key_directus_competitions`, `key_dh`, `key_directus_website`, `key_ms`,
+dans cet ordre) **contre le vrai endpoint demandé** jusqu'à obtenir un
+succès HTTP, met en cache le champ gagnant (`logInfo("Jeton API FFBB
+confirmé", { fieldName })` — à chercher dans les logs pour confirmer
+lequel fonctionne réellement), et retente une découverte complète si le
+jeton en cache se met soudain à échouer en 401/403 (rotation côté FFBB).
+Si aucun candidat n'authentifie, l'erreur reste exploitable (dernière
+erreur HTTP rencontrée). Voir `directus-client.test.ts` pour la couverture
+de cette logique (mock de `fetchImpl`, aucun accès réseau réel).
 
 ## Cron
 

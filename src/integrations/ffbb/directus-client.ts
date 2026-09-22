@@ -1,10 +1,12 @@
 import { FFBB_API_BASE_URL, FFBB_ENDPOINTS, FFBB_USER_AGENT } from "./config.js";
+import { logInfo } from "../../logger.js";
 
 export class FfbbApiError extends Error {
   constructor(
     message: string,
     readonly code: "CONFIG_FETCH_FAILED" | "REQUEST_FAILED" | "UNEXPECTED_RESPONSE",
     readonly cause?: unknown,
+    readonly status?: number,
   ) {
     super(message);
     this.name = "FfbbApiError";
@@ -15,53 +17,37 @@ interface FfbbConfigurationResponse {
   data?: unknown;
 }
 
-interface CachedToken {
+interface CachedConfig {
+  data: Record<string, unknown>;
+  fetchedAt: number;
+}
+
+interface CachedAuth {
+  fieldName: string;
   token: string;
   fetchedAt: number;
 }
 
-let cachedApiToken: CachedToken | null = null;
+let cachedConfig: CachedConfig | null = null;
+let cachedAuth: CachedAuth | null = null;
 const TOKEN_TTL_MS = 15 * 60 * 1000;
 
-const EXACT_TOKEN_KEY = /^api[_-]?bearer[_-]?token$/i;
 /**
- * Filet de sécurité si le nom de champ exact (confirmé uniquement par
- * recoupement de code source tiers, jamais observé en direct — voir
- * docs/FFBB_ECOSYSTEM_RESEARCH.md §3.2) diffère de ce qui est réellement
- * renvoyé en production (casse différente, préfixe/suffixe...).
+ * `items/configuration` ne renvoie AUCUN champ nommé "...token..." en
+ * réalité (constaté en production le 2026-09-22 — voir docs/FFBB.md, la
+ * forme supposée dans docs/FFBB_ECOSYSTEM_RESEARCH.md §3.2, déduite par
+ * recoupement de bibliothèques clientes tierces, ne correspond pas). Les
+ * champs réellement présents : `key_dh` (probablement "Data Hub", le terme
+ * employé dans FFBB_ECOSYSTEM_RESEARCH.md §2), `key_directus_website`,
+ * `key_directus_competitions`, `key_ms` (Meilisearch, recherche
+ * uniquement — hors périmètre `items/*`). Comme aucun n'est confirmé,
+ * chaque candidat est essayé dans cet ordre CONTRE LE VRAI ENDPOINT
+ * demandé (voir `FfbbDirectusClient.listItems`) jusqu'à ce qu'un renvoie
+ * un succès HTTP — c'est l'API elle-même qui tranche, jamais une nouvelle
+ * supposition. Le nom du champ gagnant est loggé pour ne plus jamais avoir
+ * à re-deviner.
  */
-const FALLBACK_TOKEN_KEY = /^(api[_-]?bearer[_-]?token|bearer[_-]?token|access[_-]?token|api[_-]?token|token)$/i;
-
-/**
- * Cherche une valeur string dont la clé correspond à `pattern`, en
- * descendant dans les objets/tableaux imbriqués (profondeur bornée). Rend
- * la lecture du jeton tolérante à une forme de réponse inattendue (tableau
- * au lieu d'objet, clé imbriquée d'un niveau...) sans deviner une forme
- * précise non observée en direct.
- */
-function findStringByKeyPattern(value: unknown, pattern: RegExp, depth = 0): string | undefined {
-  if (value == null || depth > 3) return undefined;
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const found = findStringByKeyPattern(item, pattern, depth + 1);
-      if (found) return found;
-    }
-    return undefined;
-  }
-  if (typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>);
-    for (const [key, val] of entries) {
-      if (typeof val === "string" && val.length > 0 && pattern.test(key)) {
-        return val;
-      }
-    }
-    for (const [, val] of entries) {
-      const found = findStringByKeyPattern(val, pattern, depth + 1);
-      if (found) return found;
-    }
-  }
-  return undefined;
-}
+const CANDIDATE_TOKEN_FIELDS = ["key_directus_competitions", "key_dh", "key_directus_website", "key_ms"] as const;
 
 function describeShape(value: unknown): string {
   if (Array.isArray(value)) return `tableau de ${value.length} élément(s)`;
@@ -69,15 +55,17 @@ function describeShape(value: unknown): string {
   return `type ${typeof value}`;
 }
 
+function isAuthError(error: unknown): error is FfbbApiError {
+  return error instanceof FfbbApiError && error.code === "REQUEST_FAILED" && (error.status === 401 || error.status === 403);
+}
+
 /**
- * Récupère le jeton public de l'API FFBB (voir docs/FFBB_ECOSYSTEM_RESEARCH.md
- * §3.2) : endpoint non authentifié, jeton mis en cache en mémoire quelques
- * minutes pour éviter un aller-retour à chaque appel dans un même run de
- * synchronisation.
+ * Récupère et met en cache le contenu de `items/configuration` (endpoint
+ * public, non authentifié — voir docs/FFBB_ECOSYSTEM_RESEARCH.md §3.2).
  */
-async function getApiToken(fetchImpl: typeof fetch): Promise<string> {
-  if (cachedApiToken && Date.now() - cachedApiToken.fetchedAt < TOKEN_TTL_MS) {
-    return cachedApiToken.token;
+async function getConfigurationData(fetchImpl: typeof fetch): Promise<Record<string, unknown>> {
+  if (cachedConfig && Date.now() - cachedConfig.fetchedAt < TOKEN_TTL_MS) {
+    return cachedConfig.data;
   }
 
   const url = `${FFBB_API_BASE_URL}${FFBB_ENDPOINTS.configuration}`;
@@ -93,6 +81,8 @@ async function getApiToken(fetchImpl: typeof fetch): Promise<string> {
     throw new FfbbApiError(
       `Endpoint de configuration FFBB : réponse HTTP ${response.status}`,
       "CONFIG_FETCH_FAILED",
+      undefined,
+      response.status,
     );
   }
 
@@ -111,17 +101,15 @@ async function getApiToken(fetchImpl: typeof fetch): Promise<string> {
   }
 
   const data = parsed.data;
-  const token = findStringByKeyPattern(data, EXACT_TOKEN_KEY) ?? findStringByKeyPattern(data, FALLBACK_TOKEN_KEY);
-
-  if (!token) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
     throw new FfbbApiError(
-      `Jeton API absent de la réponse de configuration FFBB (data = ${describeShape(data)})`,
+      `Réponse de configuration FFBB inattendue (data = ${describeShape(data)})`,
       "UNEXPECTED_RESPONSE",
     );
   }
 
-  cachedApiToken = { token, fetchedAt: Date.now() };
-  return token;
+  cachedConfig = { data: data as Record<string, unknown>, fetchedAt: Date.now() };
+  return cachedConfig.data;
 }
 
 export interface DirectusListParams {
@@ -162,10 +150,59 @@ export class FfbbDirectusClient {
   }
 
   async listItems<T>(endpoint: string, params: DirectusListParams = {}): Promise<T[]> {
-    const token = await getApiToken(this.fetchImpl);
     const query = buildQuery(params);
     const url = `${FFBB_API_BASE_URL}${endpoint}${query ? `?${query}` : ""}`;
 
+    if (cachedAuth && Date.now() - cachedAuth.fetchedAt < TOKEN_TTL_MS) {
+      try {
+        return await this.request<T>(url, endpoint, cachedAuth.token);
+      } catch (error) {
+        if (!isAuthError(error)) throw error;
+        // Le jeton mis en cache a cessé de fonctionner (rotation côté FFBB) — on
+        // retente une découverte complète plutôt que d'échouer immédiatement.
+        cachedAuth = null;
+      }
+    }
+
+    const data = await getConfigurationData(this.fetchImpl);
+    const candidates: Array<[string, string]> = [];
+    for (const field of CANDIDATE_TOKEN_FIELDS) {
+      const value = data[field];
+      if (typeof value === "string" && value.length > 0) {
+        candidates.push([field, value]);
+      }
+    }
+
+    if (candidates.length === 0) {
+      throw new FfbbApiError(
+        `Aucun champ candidat pour le jeton API dans la configuration FFBB (data = ${describeShape(data)})`,
+        "UNEXPECTED_RESPONSE",
+      );
+    }
+
+    let lastAuthError: FfbbApiError | undefined;
+    for (const [fieldName, token] of candidates) {
+      try {
+        const items = await this.request<T>(url, endpoint, token);
+        cachedAuth = { fieldName, token, fetchedAt: Date.now() };
+        logInfo("Jeton API FFBB confirmé", { fieldName });
+        return items;
+      } catch (error) {
+        if (isAuthError(error)) {
+          lastAuthError = error;
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    throw (
+      lastAuthError ??
+      new FfbbApiError(`Tous les jetons candidats de la configuration FFBB ont échoué (${endpoint})`, "REQUEST_FAILED")
+    );
+  }
+
+  private async request<T>(url: string, endpoint: string, token: string): Promise<T[]> {
     let response: Response;
     try {
       response = await this.fetchImpl(url, {
@@ -179,7 +216,12 @@ export class FfbbDirectusClient {
     }
 
     if (!response.ok) {
-      throw new FfbbApiError(`Requête FFBB : réponse HTTP ${response.status} (${endpoint})`, "REQUEST_FAILED");
+      throw new FfbbApiError(
+        `Requête FFBB : réponse HTTP ${response.status} (${endpoint})`,
+        "REQUEST_FAILED",
+        undefined,
+        response.status,
+      );
     }
 
     const body = (await response.json()) as { data?: T[] };
