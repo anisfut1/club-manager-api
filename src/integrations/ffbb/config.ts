@@ -40,3 +40,19 @@ export const FFBB_SYNC_INTERVAL_MINUTES = 15;
  * Les clubs non traités restent dus et seront pris au tick suivant.
  */
 export const FFBB_SYNC_BATCH_SIZE = 20;
+
+/**
+ * Profondeur d'historique synchronisée pour `items/ffbbserver_rencontres`
+ * (mois avant aujourd'hui). Constaté en production le 2026-09-22 : sans
+ * filtre de date, `listAllItems` doit paginer sur l'historique COMPLET
+ * d'un club (des milliers de rencontres remontant à plusieurs années),
+ * chacune traitée séquentiellement (upsert compétition/poule/venue/match +
+ * détection de changement) — dépasse le budget de 300s d'une invocation
+ * Vercel (`FUNCTION_INVOCATION_TIMEOUT` constaté). Or seule la saison en
+ * cours compte réellement pour l'usage du club (confirmé explicitement :
+ * les saisons passées peuvent être ignorées). 6 mois de marge avant
+ * aujourd'hui pour ne jamais manquer une rencontre reportée/rattrapée de
+ * fin de saison précédente ; aucune borne supérieure (les rencontres
+ * futures, calendrier de la saison en cours, doivent toutes remonter).
+ */
+export const FFBB_MATCH_HISTORY_MONTHS = 6;

@@ -274,6 +274,30 @@ est incomplète, garde-fou anti-boucle-infinie) et 1 dans
 `public-provider.test.ts` (confirme que `listMatchesForOrganisme` va bien
 chercher une deuxième page).
 
+**Sixième déclenchement réel, avec la pagination déployée :
+`FUNCTION_INVOCATION_TIMEOUT` après 300s.** La pagination fonctionnait
+(elle allait chercher l'historique COMPLET du club, des milliers de
+rencontres sur plusieurs années), mais traiter chaque rencontre
+séquentiellement (upsert compétition/poule/salle/match, détection de
+changement, un aller-retour Supabase à la fois — voir `sync.ts`)
+dépassait largement le budget d'une invocation Vercel. Or seule la saison
+en cours compte réellement pour l'usage du club (confirmé explicitement
+par le club — les saisons passées peuvent être ignorées).
+
+**Corrigé** (`config.ts`, `public-provider.ts`) : `listMatchesForOrganisme`
+filtre désormais sur `date_rencontre: {_gte: <6 mois avant aujourd'hui>}`
+(`FFBB_MATCH_HISTORY_MONTHS`), combiné à la condition club existante via
+`_and`. Aucune borne supérieure : toutes les rencontres futures (le
+calendrier de la saison en cours, au fur et à mesure de sa publication par
+la FFBB) remontent toujours. 6 mois de marge avant aujourd'hui pour ne
+jamais manquer une rencontre reportée/rattrapée de fin de saison
+précédente. `listAllItems` reste en place (garde-fou si une fenêtre de 6
+mois dépassait quand même une page — improbable mais pas impossible en
+période de forte activité). Couvert par un nouveau test
+(`public-provider.test.ts`) : vérifie que le filtre `date_rencontre._gte`
+est bien envoyé (format `YYYY-MM-DD`) et qu'aucune borne supérieure
+(`_lte`) n'est ajoutée par erreur.
+
 ## Cron
 
 `GET /internal/cron/ffbb` (toutes les 15 minutes, voir `vercel.json`) :

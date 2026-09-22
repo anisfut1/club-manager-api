@@ -51,6 +51,35 @@ describe("FfbbPublicProvider.listMatchesForOrganisme", () => {
     },
   );
 
+  it(
+    "filtre sur une fenêtre de date récente plutôt que de paginer tout l'historique du club " +
+      "(FUNCTION_INVOCATION_TIMEOUT constaté en production le 2026-09-22 sans ce filtre — voir docs/FFBB.md)",
+    async () => {
+      let requestedUrl: string | undefined;
+      const fetchImpl = vi.fn(async (url: string | URL) => {
+        const href = url.toString();
+        if (href.includes("items/configuration")) {
+          return jsonResponse(200, CONFIGURATION_BODY);
+        }
+        requestedUrl = href;
+        return jsonResponse(200, { data: [] });
+      });
+
+      const provider = new FfbbPublicProvider({
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        candidateRetryDelayMs: 0,
+      });
+      await provider.listMatchesForOrganisme("org-1");
+
+      const filter = JSON.parse(new URL(requestedUrl!).searchParams.get("filter") ?? "{}");
+      const dateClause = filter._and?.find((clause: unknown) => (clause as { date_rencontre?: unknown }).date_rencontre);
+      expect(dateClause?.date_rencontre?._gte).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      // Aucune borne supérieure : les rencontres futures (calendrier de la
+      // saison en cours) doivent toutes remonter, jamais tronquées par date.
+      expect(dateClause?.date_rencontre?._lte).toBeUndefined();
+    },
+  );
+
   it("normalise une salle renvoyée comme identifiant brut (FK non étendue) sans planter", async () => {
     const fetchImpl = vi.fn(async (url: string | URL) => {
       const href = url.toString();

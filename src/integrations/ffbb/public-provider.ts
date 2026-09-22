@@ -1,4 +1,4 @@
-import { FFBB_ENDPOINTS } from "./config.js";
+import { FFBB_ENDPOINTS, FFBB_MATCH_HISTORY_MONTHS } from "./config.js";
 import { FfbbApiError, FfbbDirectusClient, type DirectusClientOptions } from "./directus-client.js";
 import type {
   FfbbClubSnapshot,
@@ -15,6 +15,13 @@ const FFBB_REQUEST_SPACING_MS = 200;
 
 function sleep(ms: number): Promise<void> {
   return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
+}
+
+/** Date ISO (YYYY-MM-DD) `monthsBack` mois avant maintenant — voir FFBB_MATCH_HISTORY_MONTHS. */
+function historyCutoffDate(monthsBack: number): string {
+  const cutoff = new Date();
+  cutoff.setUTCMonth(cutoff.getUTCMonth() - monthsBack);
+  return cutoff.toISOString().slice(0, 10);
 }
 
 // Formes brutes attendues côté Directus (voir docs/FFBB_ECOSYSTEM_RESEARCH.md
@@ -291,10 +298,19 @@ export class FfbbPublicProvider {
   }
 
   async listMatchesForOrganisme(organismeFfbbId: string): Promise<NormalizedMatch[]> {
+    // Sans filtre de date, on paginerait sur l'historique COMPLET du club
+    // (des milliers de rencontres sur plusieurs années) — dépasse le budget
+    // de 300s d'une invocation Vercel (constaté en production le
+    // 2026-09-22, voir docs/FFBB.md) et n'apporte rien : seule la saison en
+    // cours compte pour l'usage réel du club (confirmé explicitement).
+    // Pas de borne supérieure : toutes les rencontres futures remontent.
     const rows = await this.client.listAllItems<RawRencontre>(FFBB_ENDPOINTS.rencontres, {
       fields: RENCONTRE_FIELDS,
       filter: {
-        _or: [{ idOrganismeEquipe1: { _eq: organismeFfbbId } }, { idOrganismeEquipe2: { _eq: organismeFfbbId } }],
+        _and: [
+          { _or: [{ idOrganismeEquipe1: { _eq: organismeFfbbId } }, { idOrganismeEquipe2: { _eq: organismeFfbbId } }] },
+          { date_rencontre: { _gte: historyCutoffDate(FFBB_MATCH_HISTORY_MONTHS) } },
+        ],
       },
       sort: ["date_rencontre"],
     });
