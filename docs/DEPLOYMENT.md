@@ -58,6 +58,17 @@ lieu d'être bundlé en un seul fichier. Deux conséquences constatées :
 Function Node.js standard (empaquetage esbuild réel), ce qui corrige les
 deux.
 
+**Deux conséquences directes de `"framework": null`, déjà traitées :**
+- Sans preset détecté, Vercel invoque la Function à l'ancienne
+  (`(req: IncomingMessage, res: ServerResponse)`) plutôt qu'avec un objet
+  `Request` standard Web tout fait — d'où `api/index.ts` qui utilise
+  `getRequestListener` de `@hono/node-server`, pas `handle` de
+  `hono/vercel` (qui suppose ce `Request` déjà construit).
+- Vercel attend par défaut un dossier de sortie statique nommé `public`
+  après le build ("Other"/générique) et fait échouer le déploiement s'il
+  est absent — d'où le dossier `public/` (vide, un simple `README.md`
+  explicatif) : jamais servi tel quel, `rewrites` route tout vers l'API.
+
 ## Variables d'environnement requises
 
 | Variable | Rôle |
