@@ -30,7 +30,25 @@ interface CachedAuth {
 
 let cachedConfig: CachedConfig | null = null;
 let cachedAuth: CachedAuth | null = null;
+/**
+ * Contrairement à `cachedAuth` (borné par TOKEN_TTL_MS, invalidé au premier
+ * 401/403), ce champ n'expire jamais et sert uniquement à RÉORDONNER les
+ * candidats lors d'une redécouverte : le champ qui a fonctionné le plus
+ * récemment est retenté en premier plutôt que de repartir de l'ordre fixe
+ * `CANDIDATE_TOKEN_FIELDS` — réduit le nombre de requêtes en rafale quand la
+ * cause d'un 401 est un simple throttling passager plutôt qu'un vrai jeton
+ * invalide (voir le constat du 2026-09-22 dans docs/FFBB.md : `key_dh` a
+ * authentifié `items/ffbbserver_organismes` puis échoué juste après sur
+ * `items/ffbbserver_rencontres`, immédiatement après deux appels concurrents
+ * — cohérent avec un throttling déclenché par la rafale, pas un jeton faux).
+ */
+let lastKnownGoodField: string | null = null;
 const TOKEN_TTL_MS = 15 * 60 * 1000;
+const DEFAULT_CANDIDATE_RETRY_DELAY_MS = 300;
+
+function sleep(ms: number): Promise<void> {
+  return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
+}
 
 /**
  * `items/configuration` ne renvoie AUCUN champ nommé "...token..." en
@@ -135,6 +153,8 @@ function buildQuery(params: DirectusListParams): string {
 export interface DirectusClientOptions {
   /** Injection pour les tests — jamais utilisé en production. */
   fetchImpl?: typeof fetch;
+  /** Délai entre deux tentatives de jeton candidat (ms). Mis à 0 dans les tests. */
+  candidateRetryDelayMs?: number;
 }
 
 /**
@@ -144,9 +164,11 @@ export interface DirectusClientOptions {
  */
 export class FfbbDirectusClient {
   private readonly fetchImpl: typeof fetch;
+  private readonly candidateRetryDelayMs: number;
 
   constructor(options: DirectusClientOptions = {}) {
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.candidateRetryDelayMs = options.candidateRetryDelayMs ?? DEFAULT_CANDIDATE_RETRY_DELAY_MS;
   }
 
   async listItems<T>(endpoint: string, params: DirectusListParams = {}): Promise<T[]> {
@@ -158,15 +180,20 @@ export class FfbbDirectusClient {
         return await this.request<T>(url, endpoint, cachedAuth.token);
       } catch (error) {
         if (!isAuthError(error)) throw error;
-        // Le jeton mis en cache a cessé de fonctionner (rotation côté FFBB) — on
-        // retente une découverte complète plutôt que d'échouer immédiatement.
+        // Le jeton mis en cache a cessé de fonctionner (rotation côté FFBB, ou
+        // throttling passager) — on retente une découverte complète plutôt que
+        // d'échouer immédiatement.
         cachedAuth = null;
       }
     }
 
     const data = await getConfigurationData(this.fetchImpl);
+    const orderedFields = lastKnownGoodField
+      ? [lastKnownGoodField, ...CANDIDATE_TOKEN_FIELDS.filter((field) => field !== lastKnownGoodField)]
+      : CANDIDATE_TOKEN_FIELDS;
+
     const candidates: Array<[string, string]> = [];
-    for (const field of CANDIDATE_TOKEN_FIELDS) {
+    for (const field of orderedFields) {
       const value = data[field];
       if (typeof value === "string" && value.length > 0) {
         candidates.push([field, value]);
@@ -181,10 +208,13 @@ export class FfbbDirectusClient {
     }
 
     let lastAuthError: FfbbApiError | undefined;
-    for (const [fieldName, token] of candidates) {
+    for (let i = 0; i < candidates.length; i++) {
+      const [fieldName, token] = candidates[i]!;
+      if (i > 0) await sleep(this.candidateRetryDelayMs);
       try {
         const items = await this.request<T>(url, endpoint, token);
         cachedAuth = { fieldName, token, fetchedAt: Date.now() };
+        lastKnownGoodField = fieldName;
         logInfo("Jeton API FFBB confirmé", { fieldName });
         return items;
       } catch (error) {

@@ -41,7 +41,7 @@ describe("FfbbDirectusClient", () => {
       return jsonResponse(403, { errors: [{ message: "Forbidden" }] });
     });
 
-    const client = new FreshClient({ fetchImpl: fetchImpl as unknown as typeof fetch });
+    const client = new FreshClient({ fetchImpl: fetchImpl as unknown as typeof fetch, candidateRetryDelayMs: 0 });
     const items = await client.listItems("items/ffbbserver_rencontres");
 
     expect(items).toEqual([{ id: "rencontre-1" }]);
@@ -66,7 +66,7 @@ describe("FfbbDirectusClient", () => {
       return jsonResponse(401, { errors: [{ message: "Unauthorized" }] });
     });
 
-    const client = new FreshClient({ fetchImpl: fetchImpl as unknown as typeof fetch });
+    const client = new FreshClient({ fetchImpl: fetchImpl as unknown as typeof fetch, candidateRetryDelayMs: 0 });
     const items = await client.listItems("items/ffbbserver_organismes");
 
     expect(items).toEqual([{ id: "org-1" }]);
@@ -83,7 +83,7 @@ describe("FfbbDirectusClient", () => {
       return jsonResponse(403, { errors: [{ message: "Forbidden" }] });
     });
 
-    const client = new FreshClient({ fetchImpl: fetchImpl as unknown as typeof fetch });
+    const client = new FreshClient({ fetchImpl: fetchImpl as unknown as typeof fetch, candidateRetryDelayMs: 0 });
 
     await expect(client.listItems("items/ffbbserver_rencontres")).rejects.toMatchObject({
       name: "FfbbApiError",
@@ -98,7 +98,7 @@ describe("FfbbDirectusClient", () => {
         new Response("<html>Forbidden by WAF</html>", { status: 200, headers: { "content-type": "text/html" } }),
     );
 
-    const client = new FreshClient({ fetchImpl: fetchImpl as unknown as typeof fetch });
+    const client = new FreshClient({ fetchImpl: fetchImpl as unknown as typeof fetch, candidateRetryDelayMs: 0 });
 
     await expect(client.listItems("items/ffbbserver_rencontres")).rejects.toMatchObject({
       name: "FfbbApiError",
@@ -115,7 +115,7 @@ describe("FfbbDirectusClient", () => {
       throw new Error("ne devrait jamais être appelé sans jeton");
     });
 
-    const client = new FreshClient({ fetchImpl: fetchImpl as unknown as typeof fetch });
+    const client = new FreshClient({ fetchImpl: fetchImpl as unknown as typeof fetch, candidateRetryDelayMs: 0 });
 
     await expect(client.listItems("items/ffbbserver_rencontres")).rejects.toMatchObject({
       code: "UNEXPECTED_RESPONSE",
@@ -136,11 +136,58 @@ describe("FfbbDirectusClient", () => {
       return jsonResponse(200, { data: [{ id: "item" }] });
     });
 
-    const client = new FreshClient({ fetchImpl: fetchImpl as unknown as typeof fetch });
+    const client = new FreshClient({ fetchImpl: fetchImpl as unknown as typeof fetch, candidateRetryDelayMs: 0 });
     await client.listItems("items/ffbbserver_rencontres");
     await client.listItems("items/ffbbserver_poules");
 
     expect(configFetches).toBe(1);
     expect(authHeaders).toEqual(["Bearer competitions-token", "Bearer competitions-token"]);
+  });
+
+  it("retente en priorité le dernier champ qui a fonctionné, avant l'ordre fixe des candidats", async () => {
+    // Reproduit le scénario constaté en production le 2026-09-22 (voir
+    // docs/FFBB.md) : "key_dh" authentifie items/ffbbserver_organismes, puis
+    // items/ffbbserver_rencontres échoue en 401 avec le jeton en cache
+    // (throttling suspecté). La redécouverte doit retenter "key_dh" en
+    // PREMIER plutôt que de repartir de "key_directus_competitions" —
+    // moins de requêtes en rafale si la cause est un throttling passager.
+    const { FfbbDirectusClient: FreshClient } = await import("./directus-client.js");
+    const attempted: string[] = [];
+    let dhAttemptsForRencontres = 0;
+    const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const href = url.toString();
+      if (href.includes("items/configuration")) {
+        return jsonResponse(200, CONFIGURATION_BODY);
+      }
+      const auth = (init?.headers as Record<string, string>).authorization;
+      const collection = href.includes("organismes") ? "organismes" : "rencontres";
+      attempted.push(`${collection}:${auth}`);
+
+      if (collection === "organismes") {
+        return auth === "Bearer dh-token"
+          ? jsonResponse(200, { data: [{ id: "org-1" }] })
+          : jsonResponse(401, { errors: [{ message: "Unauthorized" }] });
+      }
+
+      // rencontres : "dh-token" échoue une première fois (throttling simulé),
+      // puis réussit au deuxième essai. Tout autre jeton échoue toujours.
+      if (auth === "Bearer dh-token") {
+        dhAttemptsForRencontres += 1;
+        if (dhAttemptsForRencontres >= 2) {
+          return jsonResponse(200, { data: [{ id: "rencontre-1" }] });
+        }
+      }
+      return jsonResponse(401, { errors: [{ message: "Unauthorized" }] });
+    });
+
+    const client = new FreshClient({ fetchImpl: fetchImpl as unknown as typeof fetch, candidateRetryDelayMs: 0 });
+    await client.listItems("items/ffbbserver_organismes");
+    const rencontres = await client.listItems("items/ffbbserver_rencontres");
+
+    expect(rencontres).toEqual([{ id: "rencontre-1" }]);
+    const rencontresAttempts = attempted.filter((a) => a.startsWith("rencontres:"));
+    // Exactement 2 tentatives, toutes deux avec "dh-token" : la redécouverte
+    // n'est jamais repartie sur "competitions-token" (ordre fixe) en premier.
+    expect(rencontresAttempts).toEqual(["rencontres:Bearer dh-token", "rencontres:Bearer dh-token"]);
   });
 });

@@ -11,6 +11,12 @@ import type {
   NormalizedVenue,
 } from "./types.js";
 
+const FFBB_REQUEST_SPACING_MS = 200;
+
+function sleep(ms: number): Promise<void> {
+  return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
+}
+
 // Formes brutes attendues côté Directus (voir docs/FFBB_ECOSYSTEM_RESEARCH.md
 // §3.3/§3.4). Champs optionnels par prudence : cette API n'est pas
 // officiellement documentée et peut évoluer sans préavis (voir le même
@@ -302,12 +308,24 @@ export class FfbbPublicProvider {
     });
   }
 
+  /**
+   * Appels strictement séquentiels, jamais en parallèle (`Promise.all`
+   * supprimé — voir docs/FFBB.md, constat du 2026-09-22) : une rafale de
+   * requêtes concurrentes juste après l'authentification a fait échouer
+   * `items/ffbbserver_rencontres` avec 401 sur TOUS les jetons candidats,
+   * alors qu'un seul de ces jetons venait de fonctionner à l'instant pour
+   * `items/ffbbserver_organismes` — signature typique d'un throttling
+   * passager (WAF/CDN, voir docs/FFBB_ECOSYSTEM_RESEARCH.md §10 : "aucune
+   * documentation de rate-limit trouvée ; à traiter défensivement") plutôt
+   * que d'un vrai jeton invalide. `FFBB_REQUEST_SPACING_MS` espace même les
+   * appels séquentiels rapides.
+   */
   async fetchClubSnapshot(clubCode: string): Promise<FfbbClubSnapshot> {
     const organisme = await this.findOrganismeByCode(clubCode);
-    const [engagements, matches] = await Promise.all([
-      this.listEngagements(organisme.ffbbId),
-      this.listMatchesForOrganisme(organisme.ffbbId),
-    ]);
+    await sleep(FFBB_REQUEST_SPACING_MS);
+    const engagements = await this.listEngagements(organisme.ffbbId);
+    await sleep(FFBB_REQUEST_SPACING_MS);
+    const matches = await this.listMatchesForOrganisme(organisme.ffbbId);
 
     const competitionIds = [
       ...new Set([
@@ -322,10 +340,10 @@ export class FfbbPublicProvider {
       ]),
     ];
 
-    const [competitions, pools] = await Promise.all([
-      this.listCompetitions(competitionIds),
-      this.listPools(poolIds),
-    ]);
+    await sleep(FFBB_REQUEST_SPACING_MS);
+    const competitions = await this.listCompetitions(competitionIds);
+    await sleep(FFBB_REQUEST_SPACING_MS);
+    const pools = await this.listPools(poolIds);
 
     return { organisme, engagements, competitions, pools, matches };
   }

@@ -72,6 +72,34 @@ Si aucun candidat n'authentifie, l'erreur reste exploitable (dernière
 erreur HTTP rencontrée). Voir `directus-client.test.ts` pour la couverture
 de cette logique (mock de `fetchImpl`, aucun accès réseau réel).
 
+**Deuxième déclenchement réel (même jour) : `key_dh` confirmé sur
+`items/ffbbserver_organismes`, puis 401 sur TOUS les candidats pour
+`items/ffbbserver_rencontres` immédiatement après** (log `"Jeton API FFBB
+confirmé"` avec `fieldName: "key_dh"` suivi, moins d'une seconde plus tard,
+de l'échec total de `listMatchesForOrganisme`). Signature typique d'un
+throttling passager (voir §10 de la recherche : "aucune documentation de
+rate-limit trouvée") plutôt qu'un vrai jeton invalide — le jeton qui vient
+de réussir ne peut pas être structurellement interdit sur une collection
+sœur une seconde plus tard. Cause la plus probable : `fetchClubSnapshot`
+lançait `listEngagements` et `listMatchesForOrganisme` en **parallèle**
+(`Promise.all`) juste après l'appel `organismes`, créant une rafale de
+requêtes. Deux corrections complémentaires :
+1. `fetchClubSnapshot` (public-provider.ts) n'utilise plus `Promise.all` —
+   tous les appels sont désormais strictement séquentiels, espacés de
+   `FFBB_REQUEST_SPACING_MS` (200 ms).
+2. `listItems` espace ses tentatives de candidats successives
+   (`candidateRetryDelayMs`, 300 ms par défaut) et, lors d'une
+   redécouverte, retente en PREMIER le dernier champ qui a fonctionné
+   (`lastKnownGoodField`) plutôt que de repartir de l'ordre fixe — moins de
+   requêtes en rafale si la cause est bien un throttling passager.
+
+Si le prochain déclenchement échoue encore avec 401 sur tous les
+candidats malgré ces espacements, ce ne sera alors plus la piste
+throttling qui tient — direction : jetons réellement scopés par
+collection (`key_directus_competitions` pour les compétitions au sens
+large, `key_dh` seulement pour certaines collections...), à confirmer par
+les logs du prochain essai.
+
 ## Cron
 
 `GET /internal/cron/ffbb` (toutes les 15 minutes, voir `vercel.json`) :
