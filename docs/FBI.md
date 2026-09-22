@@ -252,11 +252,40 @@ corrects. À confirmer par le prochain texte visible, script exclu.
 `<script>`/`<style>` (`$("script, style").remove()`) avant d'extraire le
 texte — jamais de code JS/CSS à la place du texte réellement visible.
 Couvert par un nouveau test (page avec message d'erreur ET `<script>`
-volumineux, vérifie que seul le message ressort). **Non encore
-reconfirmé en direct** — prochain "Tester la connexion" à lire en
-priorité : cette fois le texte visible devrait enfin permettre de trancher
-entre un vrai refus d'identifiants et une étape de sélection de compte
-non gérée.
+volumineux, vérifie que seul le message ressort).
+
+**Cinquième déclenchement réel : le texte visible confirme un vrai
+message FBI, texte français lisible.** Diagnostic complet obtenu :
+*"FBI 2026-2027 [...] Identifiant ou e-mail Mot de passe **Vos
+identifiants ne sont pas corrects** CONNEXION Mot de passe oublié ?
+[...]"*. La piste "sélection de compte" (déclenchement précédent) est
+écartée : c'est bien le message de refus standard FBI, retourné
+directement dans le corps du POST (confirmé par le diagnostic
+maintenant fiable de bout en bout). Le club confirme avoir re-saisi et
+réenregistré le mot de passe juste avant ce test — donc soit les
+identifiants sont réellement incorrects côté FBI, soit notre POST omet
+encore quelque chose que le navigateur envoie.
+
+**Piste retenue** : le bouton de soumission n'était jusqu'ici PAS inclus
+dans le POST — seuls les champs `hidden`/texte/mot de passe l'étaient.
+Beaucoup d'applis Java (Struts/JSF, cohérent avec les noms de champs
+`identificationForm.identificationBean.*` déjà observés) exigent le
+couple nom/valeur du bouton cliqué (ex: `method:connexion=Connexion`)
+dans le corps du POST pour router vers la bonne action côté serveur —
+sans lui, le serveur peut traiter la requête comme incomplète et
+retomber sur le message de refus générique, quels que soient les
+identifiants envoyés.
+
+**Corrigé** (`http-client.ts`) : `parseLoginForm` détecte maintenant
+aussi `button[type="submit"]`/`input[type="submit"]` dans le formulaire
+et, s'il porte un `name`, son couple nom/valeur est ajouté au corps du
+POST (et au diagnostic, pour voir si aucun bouton nommé n'est trouvé).
+Couvert par un nouveau test. **Non encore reconfirmé en direct** —
+prochain "Tester la connexion" à lire en priorité : si `LOGIN_FAILED`
+persiste avec ce correctif, la piste "identifiants réellement
+incorrects côté FBI" (mot de passe expiré, compte verrouillé après
+plusieurs tentatives, etc. — à vérifier alors directement sur
+extranet.ffbb.com/fbi) devient la plus probable.
 
 ## Dérogations / licenciés FBI
 

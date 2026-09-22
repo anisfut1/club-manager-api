@@ -112,6 +112,36 @@ describe("HttpFbiClient.login", () => {
     expect(params.get("csrfToken")).toBe("tok-123");
   });
 
+  it("inclut le nom/valeur du bouton de soumission dans le POST quand il en a un (Struts/JSF exigent souvent ce couple pour router vers l'action de connexion)", async () => {
+    const loginPageWithNamedButton = `
+      <html><body>
+        <form action="/fbi/j_security_check" method="post">
+          <input type="text" name="identifiant" />
+          <input type="password" name="motDePasse" />
+          <button type="submit" name="method:connexion" value="Connexion">Connexion</button>
+        </form>
+      </body></html>
+    `;
+    let capturedBody = "";
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/connexion.fbi")) {
+        return makeResponse(loginPageWithNamedButton, { headers: { "set-cookie": "JSESSIONID=abc123; Path=/fbi" } });
+      }
+      if (url.endsWith("/j_security_check")) {
+        capturedBody = String(init?.body ?? "");
+        return makeResponse("", { status: 302, headers: { location: "/fbi/accueil.fbi" } });
+      }
+      return makeResponse(AUTHENTICATED_PAGE_HTML);
+    });
+
+    const provider = new HttpFbiClient({ baseUrl: BASE_URL, fetchImpl: fetchImpl as unknown as typeof fetch });
+    await provider.login({ username: "club1234", password: "s3cret" });
+
+    const params = new URLSearchParams(capturedBody);
+    expect(params.get("method:connexion")).toBe("Connexion");
+  });
+
   it("lève LOGIN_FORM_NOT_RECOGNIZED si aucun champ mot de passe n'est trouvé", async () => {
     const fetchImpl = vi.fn(async () => makeResponse("<html><body>Page inattendue</body></html>"));
     const provider = new HttpFbiClient({ baseUrl: BASE_URL, fetchImpl: fetchImpl as unknown as typeof fetch });

@@ -60,6 +60,16 @@ interface LoginForm {
   usernameField: string;
   passwordField: string;
   hiddenFields: Record<string, string>;
+  /**
+   * Bouton de soumission (`<button name=... value=...>`/`<input
+   * type="submit" name=... value=...>`), s'il en a un nommé. Beaucoup
+   * d'applis Java (Struts/JSF) exigent ce couple nom/valeur dans le POST
+   * pour router vers l'action "connexion" — l'omettre peut faire retomber
+   * silencieusement le serveur sur la page de login avec un message
+   * générique, quels que soient les identifiants envoyés (constaté en
+   * production, voir docs/FBI.md).
+   */
+  submitButton: { name: string; value: string } | null;
 }
 
 export interface HttpFbiClientOptions {
@@ -106,10 +116,14 @@ export class HttpFbiClient implements FbiAutomationClient<HttpFbiSession> {
       if (name) hiddenFields[name] = $(el).attr("value") ?? "";
     });
 
+    const submitControl = form.find('button[type="submit"], input[type="submit"]').first();
+    const submitName = submitControl.attr("name");
+    const submitButton = submitName ? { name: submitName, value: submitControl.attr("value") ?? "" } : null;
+
     const actionAttr = form.attr("action") || pageUrl;
     const action = new URL(actionAttr, pageUrl).toString();
 
-    return { action, usernameField, passwordField, hiddenFields };
+    return { action, usernameField, passwordField, hiddenFields, submitButton };
   }
 
   private looksLikeLoginPage(html: string): boolean {
@@ -167,6 +181,7 @@ export class HttpFbiClient implements FbiAutomationClient<HttpFbiSession> {
     for (const [name, value] of Object.entries(form.hiddenFields)) body.set(name, value);
     body.set(form.usernameField, credentials.username);
     body.set(form.passwordField, credentials.password);
+    if (form.submitButton) body.set(form.submitButton.name, form.submitButton.value);
 
     let submitResponse: Response;
     try {
@@ -187,7 +202,9 @@ export class HttpFbiClient implements FbiAutomationClient<HttpFbiSession> {
 
     const formDiagnostic =
       `formulaire détecté (action=${form.action}, champ identifiant=${form.usernameField}, ` +
-      `champ mot de passe=${form.passwordField}), réponse de soumission HTTP ${submitResponse.status}`;
+      `champ mot de passe=${form.passwordField}, bouton de soumission=` +
+      `${form.submitButton ? `${form.submitButton.name}=${form.submitButton.value}` : "aucun trouvé"}), ` +
+      `réponse de soumission HTTP ${submitResponse.status}`;
 
     const redirectLocation = submitResponse.headers.get("location");
 
