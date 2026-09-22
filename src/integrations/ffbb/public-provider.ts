@@ -76,10 +76,19 @@ interface RawEngagement {
   idOrganisme?: number | string;
 }
 
+/**
+ * `nom`/`commune.libelle` (docs/FFBB_ECOSYSTEM_RESEARCH.md §3.4, jamais
+ * vérifié en direct) se sont révélés être les MAUVAIS noms de champs — le
+ * 403 FORBIDDEN constaté en production le 2026-09-22 ("... or it does not
+ * exist") était probablement dû à ça, pas à une vraie restriction de
+ * permission (voir docs/FFBB.md). Confirmé par le modèle typé du SDK tiers
+ * `ffbb-data-client` (`models/get_salle_response.py`) : `id`, `numero`,
+ * `libelle`, `adresse` — pas de commune séparée, une adresse consolidée.
+ */
 interface RawSalle {
   id?: number | string;
-  nom?: string;
-  commune?: { libelle?: string };
+  libelle?: string;
+  adresse?: string;
 }
 
 interface RawRencontre {
@@ -133,16 +142,15 @@ const RENCONTRE_FIELDS = [
   "idOrganismeEquipe1",
   "idOrganismeEquipe2",
   "idPoule",
-  // PAS "salle.id"/"salle.nom"/"salle.commune.libelle" : confirmé en
-  // production (2026-09-22, voir docs/FFBB.md) que le rôle public FFBB
-  // renvoie 403 FORBIDDEN sur TOUTE la requête dès que la relation "salle"
-  // est étendue ("You don't have permission to access field \"nom\" in
-  // collection \"ffbbserver_salles\"..."), quel que soit le jeton candidat.
-  // "salle" seul renvoie l'identifiant brut de la relation (FK) sans
-  // l'étendre — normalizeVenue() gère déjà ce cas (dégrade proprement :
-  // ffbbId renseigné, name/commune à null) plutôt que de faire échouer tout
-  // syncFfbb pour un problème de permission sur un champ annexe.
-  "salle",
+  // "salle.nom"/"salle.commune.libelle" (403 FORBIDDEN "... or it does not
+  // exist" constaté en production le 2026-09-22, voir docs/FFBB.md)
+  // étaient les MAUVAIS noms de champs, pas une permission refusée — voir
+  // RawSalle. Les vrais champs, confirmés par le modèle typé du SDK tiers
+  // ffbb-data-client : "libelle" (nom) et "adresse" (adresse consolidée,
+  // pas de commune séparée).
+  "salle.id",
+  "salle.libelle",
+  "salle.adresse",
 ];
 
 function toIdString(value: number | string | null | undefined): string | null {
@@ -168,14 +176,14 @@ function normalizeVenue(salle: RawRencontre["salle"]): NormalizedVenue | null {
   if (typeof salle === "object") {
     return {
       ffbbId: toIdString(salle.id),
-      name: salle.nom ?? null,
-      commune: salle.commune?.libelle ?? null,
+      name: salle.libelle ?? null,
+      address: salle.adresse ?? null,
       raw: salle,
     };
   }
 
   // Cas où la relation n'a pas pu être résolue par l'API (id brut seulement).
-  return { ffbbId: toIdString(salle), name: null, commune: null, raw: salle };
+  return { ffbbId: toIdString(salle), name: null, address: null, raw: salle };
 }
 
 export type FfbbPublicProviderOptions = DirectusClientOptions;

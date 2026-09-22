@@ -177,13 +177,13 @@ async function upsertEngagements(
   return teamIdByEngagementFfbbId;
 }
 
-async function upsertVenue(supabase: Client, ffbbVenueId: string | null, name: string | null, commune: string | null): Promise<string | null> {
+async function upsertVenue(supabase: Client, ffbbVenueId: string | null, name: string | null, address: string | null): Promise<string | null> {
   if (!ffbbVenueId) return null;
 
   const { data, error } = await supabase
     .from("venues")
     .upsert(
-      { ffbb_venue_id: ffbbVenueId, name, commune, ffbb_last_seen_at: new Date().toISOString() },
+      { ffbb_venue_id: ffbbVenueId, name, address, ffbb_last_seen_at: new Date().toISOString() },
       { onConflict: "ffbb_venue_id" },
     )
     .select("id")
@@ -257,7 +257,7 @@ export async function syncFfbb(supabase: Client, provider: FfbbPublicProvider, c
 
     for (const match of snapshot.matches) {
       try {
-        const venueId = await upsertVenue(supabase, match.venue?.ffbbId ?? null, match.venue?.name ?? null, match.venue?.commune ?? null);
+        const venueId = await upsertVenue(supabase, match.venue?.ffbbId ?? null, match.venue?.name ?? null, match.venue?.address ?? null);
 
         const row = mapNormalizedMatchToRow(match, {
           clubId: club.id,

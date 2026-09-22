@@ -24,7 +24,7 @@ function buildNormalizedMatch(overrides: Partial<NormalizedMatch> = {}): Normali
     scoreHome: null,
     scoreAway: null,
     status: "scheduled",
-    venue: { ffbbId: "venue-ffbb-1", name: "Gymnase Sète", commune: "Sète", raw: {} },
+    venue: { ffbbId: "venue-ffbb-1", name: "Gymnase Sète", address: "12 rue du Stade, 34200 Sète", raw: {} },
     raw: { source: "synthetic-fixture" },
     ...overrides,
   };
@@ -47,7 +47,7 @@ function buildExistingRow(overrides: Partial<MatchRow> = {}): MatchRow {
     opponent_name: "BC Thuirinois",
     opponent_ffbb_organisme_id: "org-2",
     venue_id: "venue-1",
-    venue_raw_label: "Gymnase Sète",
+    venue_raw_label: "Gymnase Sète — 12 rue du Stade, 34200 Sète",
     score_home: null,
     score_away: null,
     status: "scheduled",
@@ -80,7 +80,7 @@ describe("mapNormalizedMatchToRow", () => {
       opponent_name: "BC Thuirinois",
       opponent_ffbb_organisme_id: "org-2",
       venue_id: "venue-1",
-      venue_raw_label: "Gymnase Sète",
+      venue_raw_label: "Gymnase Sète — 12 rue du Stade, 34200 Sète",
       match_datetime: "2025-09-27T19:00:00.000Z",
       score_home: null,
       score_away: null,
@@ -99,6 +99,38 @@ describe("mapNormalizedMatchToRow", () => {
 
   it("n'invente jamais un nom de salle : absence de venue -> venue_raw_label null", () => {
     const row = mapNormalizedMatchToRow(buildNormalizedMatch({ venue: null }), CONTEXT);
+    expect(row.venue_raw_label).toBeNull();
+  });
+
+  it("combine nom ET adresse dans venue_raw_label (seul champ salle exposé par l'API aujourd'hui)", () => {
+    const row = mapNormalizedMatchToRow(
+      buildNormalizedMatch({ venue: { ffbbId: "v1", name: "Gymnase Sète", address: "12 rue du Stade", raw: {} } }),
+      CONTEXT,
+    );
+    expect(row.venue_raw_label).toBe("Gymnase Sète — 12 rue du Stade");
+  });
+
+  it("venue_raw_label ne garde que le nom quand l'adresse est absente (pas de tiret orphelin)", () => {
+    const row = mapNormalizedMatchToRow(
+      buildNormalizedMatch({ venue: { ffbbId: "v1", name: "Gymnase Sète", address: null, raw: {} } }),
+      CONTEXT,
+    );
+    expect(row.venue_raw_label).toBe("Gymnase Sète");
+  });
+
+  it("venue_raw_label ne garde que l'adresse quand le nom est absent", () => {
+    const row = mapNormalizedMatchToRow(
+      buildNormalizedMatch({ venue: { ffbbId: "v1", name: null, address: "12 rue du Stade", raw: {} } }),
+      CONTEXT,
+    );
+    expect(row.venue_raw_label).toBe("12 rue du Stade");
+  });
+
+  it("venue_raw_label est null quand la relation salle n'a renvoyé que l'identifiant brut (name et address absents)", () => {
+    const row = mapNormalizedMatchToRow(
+      buildNormalizedMatch({ venue: { ffbbId: "v1", name: null, address: null, raw: "v1" } }),
+      CONTEXT,
+    );
     expect(row.venue_raw_label).toBeNull();
   });
 });

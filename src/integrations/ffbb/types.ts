@@ -47,7 +47,8 @@ export interface NormalizedTeamEngagement {
 export interface NormalizedVenue {
   ffbbId: string | null;
   name: string | null;
-  commune: string | null;
+  /** Adresse complète (ffbbserver_salles.adresse) — l'API FFBB ne découpe pas rue/code postal/commune séparément. */
+  address: string | null;
   raw: unknown;
 }
 

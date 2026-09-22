@@ -20,8 +20,8 @@ const CONFIGURATION_BODY = {
 
 describe("FfbbPublicProvider.listMatchesForOrganisme", () => {
   it(
-    "ne demande jamais les champs imbriqués de la relation salle (403 FORBIDDEN confirmé en " +
-      "production le 2026-09-22, voir docs/FFBB.md)",
+    "demande salle.libelle/salle.adresse, pas salle.nom/salle.commune.libelle (mauvais noms de " +
+      "champs à l'origine du 403 du 2026-09-22 — confirmé par le modèle du SDK tiers ffbb-data-client, voir docs/FFBB.md)",
     async () => {
       let requestedUrl: string | undefined;
       const fetchImpl = vi.fn(async (url: string | URL) => {
@@ -40,14 +40,12 @@ describe("FfbbPublicProvider.listMatchesForOrganisme", () => {
       await provider.listMatchesForOrganisme("org-1");
 
       expect(requestedUrl).toBeDefined();
-      const fields = new URL(requestedUrl!).searchParams.get("fields") ?? "";
-      // Le rôle public FFBB renvoie 403 sur TOUTE la requête rencontres dès que
-      // la relation "salle" est étendue (nom, commune.libelle...) — seul le
-      // champ plat "salle" (FK brute) est autorisé.
+      const fields = (new URL(requestedUrl!).searchParams.get("fields") ?? "").split(",");
+      expect(fields).toContain("salle.id");
+      expect(fields).toContain("salle.libelle");
+      expect(fields).toContain("salle.adresse");
       expect(fields).not.toContain("salle.nom");
-      expect(fields).not.toContain("salle.commune");
-      expect(fields).not.toContain("salle.id");
-      expect(fields.split(",")).toContain("salle");
+      expect(fields).not.toContain("salle.commune.libelle");
     },
   );
 
@@ -106,7 +104,36 @@ describe("FfbbPublicProvider.listMatchesForOrganisme", () => {
     const matches = await provider.listMatchesForOrganisme("org-1");
 
     expect(matches).toHaveLength(1);
-    expect(matches[0]!.venue).toEqual({ ffbbId: "4242", name: null, commune: null, raw: 4242 });
+    expect(matches[0]!.venue).toEqual({ ffbbId: "4242", name: null, address: null, raw: 4242 });
+  });
+
+  it("normalise une salle étendue (libelle/adresse) vers name/address", async () => {
+    const fetchImpl = vi.fn(async (url: string | URL) => {
+      const href = url.toString();
+      if (href.includes("items/configuration")) {
+        return jsonResponse(200, CONFIGURATION_BODY);
+      }
+      return jsonResponse(200, {
+        data: [
+          {
+            id: "match-1",
+            idOrganismeEquipe1: "org-1",
+            idOrganismeEquipe2: "org-2",
+            nomEquipe2: "BC Adverse",
+            salle: { id: "4242", libelle: "Gymnase Municipal", adresse: "12 rue du Stade, 34200 Sète" },
+          },
+        ],
+      });
+    });
+
+    const provider = new FfbbPublicProvider({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      candidateRetryDelayMs: 0,
+    });
+    const matches = await provider.listMatchesForOrganisme("org-1");
+
+    expect(matches[0]!.venue?.name).toBe("Gymnase Municipal");
+    expect(matches[0]!.venue?.address).toBe("12 rue du Stade, 34200 Sète");
   });
 
   it(

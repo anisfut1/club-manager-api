@@ -30,6 +30,18 @@ export interface MatchMappingContext {
   venueId: string | null;
 }
 
+/**
+ * `matches.venue_raw_label` est la SEULE information de salle exposée par
+ * l'API aujourd'hui (voir `contracts/matches.ts` : `venueLabel`, pas de
+ * champ adresse séparé) — combine nom et adresse plutôt que de perdre
+ * l'adresse (stockée séparément dans `venues.address`, mais pas encore
+ * exposée par l'API) faute d'un DTO dédié.
+ */
+function formatVenueLabel(name: string | null | undefined, address: string | null | undefined): string | null {
+  const parts = [name, address].filter((part): part is string => Boolean(part && part.trim().length > 0));
+  return parts.length > 0 ? parts.join(" — ") : null;
+}
+
 /** Convertit un match normalisé FFBB en ligne prête pour upsert dans `matches`. */
 export function mapNormalizedMatchToRow(match: NormalizedMatch, context: MatchMappingContext): MatchInsert {
   return {
@@ -46,7 +58,7 @@ export function mapNormalizedMatchToRow(match: NormalizedMatch, context: MatchMa
     opponent_name: match.opponentName,
     opponent_ffbb_organisme_id: match.opponentOrganismeFfbbId,
     venue_id: context.venueId,
-    venue_raw_label: match.venue?.name ?? null,
+    venue_raw_label: formatVenueLabel(match.venue?.name, match.venue?.address),
     match_datetime: match.matchDateTime,
     score_home: match.scoreHome,
     score_away: match.scoreAway,

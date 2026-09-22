@@ -298,6 +298,34 @@ période de forte activité). Couvert par un nouveau test
 est bien envoyé (format `YYYY-MM-DD`) et qu'aucune borne supérieure
 (`_lte`) n'est ajoutée par erreur.
 
+**Septième correctif : le 403 sur la relation `salle` (6ᵉ déclenchement)
+était en fait un mauvais nom de champ, pas une permission refusée.**
+`salle.nom`/`salle.commune.libelle` (déduits de
+`docs/FFBB_ECOSYSTEM_RESEARCH.md` §3.4, jamais vérifiés en direct) ont été
+retirés de `RENCONTRE_FIELDS` par prudence après le 403. Relecture du
+modèle typé du SDK tiers `ffbb-data-client`
+(`models/get_salle_response.py`, lu comme référence — rien copié) :
+`ffbbserver_salles` expose en réalité `id`, `numero`, `libelle` (pas
+`nom`), `adresse` (chaîne consolidée, PAS de commune séparée). Le message
+d'erreur Directus disait explicitement *"... or it does not exist"* —
+c'était probablement ça depuis le début.
+
+**Corrigé** : `RENCONTRE_FIELDS` demande maintenant `salle.id`,
+`salle.libelle`, `salle.adresse`. `RawSalle`/`NormalizedVenue` mis à jour
+(`commune` renommé `address`, migration
+`20260922100000_venues_address_field.sql`, appliquée). `venues.address`
+stocke l'adresse complète. Faute d'un DTO d'API dédié pour l'adresse
+(`contracts/matches.ts` n'expose que `venueLabel`, un seul champ),
+`matches.venue_raw_label` combine nom et adresse
+(`"Gymnase X — 12 rue Y, 34200 Sète"`, voir `formatVenueLabel` dans
+`mapping.ts`) plutôt que de perdre l'adresse. **Non vérifié en direct**
+(réseau `api.ffbb.app` toujours inaccessible depuis tous les
+environnements de développement disponibles) — à confirmer par le
+prochain cron réel : soit les salles remontent enfin avec nom/adresse,
+soit `libelle`/`adresse` sont aussi de mauvais noms et le vrai message
+d'erreur Directus (capturé depuis le sixième correctif, voir
+`request()`) dira lequel.
+
 ## Cron
 
 `GET /internal/cron/ffbb` (toutes les 15 minutes, voir `vercel.json`) :

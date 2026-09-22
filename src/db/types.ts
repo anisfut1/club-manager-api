@@ -248,7 +248,7 @@ export interface Database {
           id: string;
           ffbb_venue_id: string | null;
           name: string | null;
-          commune: string | null;
+          address: string | null;
           raw_ffbb_payload: unknown;
           ffbb_last_seen_at: string;
           created_at: string;
@@ -258,7 +258,7 @@ export interface Database {
           id?: string;
           ffbb_venue_id?: string | null;
           name?: string | null;
-          commune?: string | null;
+          address?: string | null;
           raw_ffbb_payload?: unknown;
           ffbb_last_seen_at?: string;
           created_at?: string;
