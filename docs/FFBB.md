@@ -26,9 +26,15 @@ classements si disponibles. Aucune erreur parce que FBI est absent — voir
 
 ## Statut
 
-**PREPARED, corrigé après 4 déclenchements réels en production (à
-reconfirmer par un cron réussi)** — la logique de mapping/diff/idempotence
-est testée unitairement
+**LIVE — premier cron réel en production réussi le 2026-09-22**
+(`{"clubsDue":1,"clubsSynced":1,"clubsSkippedLocked":0,"clubsFailed":0}`),
+après correction successive de 3 bugs réels trouvés uniquement par
+l'exécution en production (jamais reproductibles avant, réseau
+`api.ffbb.app` bloqué dans tous les environnements de développement
+disponibles) : nom de champ du jeton API, relation Directus `salle`
+interdite en lecture, champ `publicationInternet` reçu comme chaîne au
+lieu d'un booléen — voir l'historique détaillé ci-dessous, conservé tel
+quel. La logique de mapping/diff/idempotence est testée unitairement
 (`integrations/ffbb/mapping.test.ts`, 100% pur, aucun accès réseau), mais
 aucun appel réel contre `api.ffbb.app` n'a pu être fait depuis un
 environnement de développement (réseau `*.ffbb.app` bloqué dans tous les
