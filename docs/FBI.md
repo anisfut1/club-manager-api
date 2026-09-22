@@ -309,11 +309,34 @@ requête vers FBI (login, landing, `isSessionValid`,
 user-agent au fil d'une session étant elle-même un signal de détection
 courant. Couvert par un nouveau test qui vérifie qu'un User-Agent
 contenant "Chrome" est envoyé sur les 3 requêtes d'un login réussi.
-**Non encore reconfirmé en direct** — prochain "Tester la connexion" à
-lire en priorité : si `LOGIN_FAILED` persiste malgré un vrai mot de
-passe confirmé et un User-Agent de navigateur, il faudra probablement
-passer par `BrowserFbiClient` (Playwright, déjà prévu comme stratégie de
-secours) pour ce club, HTTP direct semblant insuffisant.
+
+**Septième déclenchement réel : `LOGIN_FAILED` persiste, identique au
+mot près, MALGRÉ le User-Agent de navigateur.** Le bandeau "navigateur
+non recommandé" reste affiché même avec un User-Agent Chrome — affaiblit
+la piste "détection par User-Agent seul" : soit le bandeau est statique
+(toujours affiché, pas une vraie détection), soit la détection va plus
+loin qu'un simple en-tête (empreinte TLS/JA3, exécution JS, fingerprinting
+navigateur) — rien qu'un `fetch()` Node ne peut reproduire. Round-trip de
+chiffrement écarté indépendamment (voir plus haut). Avec des identifiants
+confirmés deux fois par le club (login manuel réussi), l'explication la
+plus probable devient une protection anti-bot qu'un client HTTP direct ne
+peut structurellement pas franchir.
+
+**Corrigé** (`routes.ts`) : le repli vers `BrowserFbiClient` (job
+`test_connection`, `BROWSER_FBI_ENABLED=true`) se déclenchait
+uniquement sur `LOGIN_FORM_NOT_RECOGNIZED` — jamais sur `LOGIN_FAILED`,
+alors que c'est exactement le code d'erreur rencontré ici. Élargi aux
+deux codes : un vrai Chromium a une empreinte de navigateur qu'un
+`fetch` ne peut pas imiter, donc plus susceptible de franchir cette
+protection si c'en est une ; un `LOGIN_FAILED` du navigateur reste
+possible (vraiment mauvais identifiants), mais devient alors un signal
+nettement plus fiable que celui du client HTTP seul. **Nécessite
+`BROWSER_FBI_ENABLED=true` en production** (variable d'environnement
+Vercel côté club-manager-api) pour se déclencher — à vérifier/activer
+avant de retester. Pas de nouveau test route-level ajouté (la route
+`/fbi/test` n'a aucune couverture existante nécessitant de mocker
+`HttpFbiClient`/`fbi_jobs` — lift disproportionné pour ce correctif
+d'une ligne, urgence du diagnostic en direct).
 
 ## Dérogations / licenciés FBI
 

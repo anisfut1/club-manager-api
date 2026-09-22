@@ -167,9 +167,19 @@ integrationsRouter.patch("/fbi", requireClubRole("club_admin"), async (c) => {
  * POST /v1/clubs/:clubId/integrations/fbi/test — teste réellement la
  * stratégie principale (`HttpFbiClient`, §35 de la demande). Chemin
  * synchrone : le login HTTP est rapide, pas besoin du pattern 202+jobId ici.
- * Si l'échec est `LOGIN_FORM_NOT_RECOGNIZED` et que
+ * Si l'échec est `LOGIN_FORM_NOT_RECOGNIZED` OU `LOGIN_FAILED` et que
  * `BROWSER_FBI_ENABLED=true`, un job `test_connection` (navigateur) est
  * empilé en secours et son id renvoyé pour suivi via `GET /v1/jobs/:jobId`.
+ *
+ * `LOGIN_FAILED` ajouté au déclencheur (2026-09-22, voir docs/FBI.md) :
+ * un premier club a confirmé des identifiants corrects (login manuel
+ * réussi sur extranet.ffbb.com/fbi) alors que `HttpFbiClient` échouait
+ * systématiquement, même avec un User-Agent de navigateur — signature
+ * cohérente avec une protection anti-bot qu'un `fetch` brut ne peut pas
+ * contourner (empreinte TLS/JS), mais qu'un vrai Chromium (`BrowserFbiClient`)
+ * peut potentiellement franchir. Un `LOGIN_FAILED` du navigateur reste
+ * possible (vraiment mauvais identifiants) — mais c'est alors un signal
+ * plus fiable que celui du client HTTP seul.
  */
 integrationsRouter.post("/fbi/test", requireClubRole("club_admin"), async (c) => {
   const { club } = c.get("club");
@@ -202,7 +212,11 @@ integrationsRouter.post("/fbi/test", requireClubRole("club_admin"), async (c) =>
 
     logError("Test de connexion FBI échoué", error, { clubId: club.id });
 
-    if (error instanceof FbiError && error.code === "LOGIN_FORM_NOT_RECOGNIZED" && getEnv().BROWSER_FBI_ENABLED) {
+    if (
+      error instanceof FbiError &&
+      (error.code === "LOGIN_FORM_NOT_RECOGNIZED" || error.code === "LOGIN_FAILED") &&
+      getEnv().BROWSER_FBI_ENABLED
+    ) {
       const { data: job } = await serviceSupabase.from("fbi_jobs").insert({ club_id: club.id, type: "test_connection" }).select("id").single();
       if (job) return c.json({ success: false, message, jobId: job.id }, 202);
     }
