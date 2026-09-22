@@ -176,6 +176,28 @@ scope distinct) — à construire séparément si le nom des gymnases devient
 un besoin réel, jamais avant d'avoir confirmé que le cœur du sync
 (calendrier/scores/adversaires) fonctionne.
 
+**Cinquième déclenchement réel : le fetch FFBB passe entièrement**
+(`organismes`, `engagements`, `rencontres`, `competitions`, `poules` — plus
+aucune erreur 401/403) — nouvel échec, cette fois dans NOTRE code
+d'écriture en base : `Upsert compétition ... échoué : invalid input
+syntax for type boolean: "AFF"`. `RawCompetition.publicationInternet`
+était déclaré `boolean` (doc tierce jamais vérifiée en direct, comme
+`api_bearer_token` et `salle.nom` avant lui) mais la vraie API renvoie une
+**chaîne** (`"AFF"`, vraisemblablement "Affiché") — passée telle quelle à
+`publication_internet boolean not null default true` (colonne Postgres),
+elle fait planter l'upsert.
+
+**Corrigé** (`public-provider.ts`) : `liveStat`/`emarqueV2`/
+`publicationInternet` typés `unknown` (plus `boolean`) dans
+`RawCompetition`, et `publicationInternet` converti explicitement
+(`row.publicationInternet == null ? true : Boolean(row.publicationInternet)`)
+au lieu du `?? true` seul qui laissait passer toute valeur non-null telle
+quelle. Ce champ n'est stocké qu'à titre informatif (jamais utilisé pour
+filtrer, voir `sync.ts`) : `Boolean("AFF")` → `true` est acceptable sans
+connaître tous les codes possibles. Couvert par 2 nouveaux tests
+(`public-provider.test.ts`) : conversion d'une chaîne reçue en vrai
+booléen, et valeur par défaut quand le champ est absent.
+
 ## Cron
 
 `GET /internal/cron/ffbb` (toutes les 15 minutes, voir `vercel.json`) :

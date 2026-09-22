@@ -80,3 +80,49 @@ describe("FfbbPublicProvider.listMatchesForOrganisme", () => {
     expect(matches[0]!.venue).toEqual({ ffbbId: "4242", name: null, commune: null, raw: 4242 });
   });
 });
+
+describe("FfbbPublicProvider.listCompetitions", () => {
+  it(
+    "convertit publicationInternet en vrai booléen même reçu comme chaîne (\"AFF\" observé en " +
+      "production le 2026-09-22, colonne Postgres booléenne — voir docs/FFBB.md)",
+    async () => {
+      const fetchImpl = vi.fn(async (url: string | URL) => {
+        const href = url.toString();
+        if (href.includes("items/configuration")) {
+          return jsonResponse(200, CONFIGURATION_BODY);
+        }
+        return jsonResponse(200, {
+          data: [{ id: "comp-1", nom: "Régionale 1", liveStat: false, emarqueV2: true, publicationInternet: "AFF" }],
+        });
+      });
+
+      const provider = new FfbbPublicProvider({
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        candidateRetryDelayMs: 0,
+      });
+      const competitions = await provider.listCompetitions(["comp-1"]);
+
+      expect(competitions).toHaveLength(1);
+      expect(competitions[0]!.publicationInternet).toBe(true);
+      expect(typeof competitions[0]!.publicationInternet).toBe("boolean");
+    },
+  );
+
+  it("retombe sur true quand publicationInternet est absent", async () => {
+    const fetchImpl = vi.fn(async (url: string | URL) => {
+      const href = url.toString();
+      if (href.includes("items/configuration")) {
+        return jsonResponse(200, CONFIGURATION_BODY);
+      }
+      return jsonResponse(200, { data: [{ id: "comp-1", nom: "Régionale 1" }] });
+    });
+
+    const provider = new FfbbPublicProvider({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      candidateRetryDelayMs: 0,
+    });
+    const competitions = await provider.listCompetitions(["comp-1"]);
+
+    expect(competitions[0]!.publicationInternet).toBe(true);
+  });
+});

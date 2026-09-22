@@ -39,9 +39,15 @@ interface RawCompetition {
   sexe?: string;
   typeCompetition?: string;
   phase_code?: string;
-  liveStat?: boolean;
-  emarqueV2?: boolean;
-  publicationInternet?: boolean;
+  // Déclarés "boolean" dans la doc tierce jamais vérifiée en direct (voir
+  // docs/FFBB_ECOSYSTEM_RESEARCH.md §3.2) — constaté en production
+  // (2026-09-22, voir docs/FFBB.md) que `publicationInternet` renvoie en
+  // réalité une chaîne ("AFF") et non un booléen. Type élargi par prudence
+  // pour les 3 champs ; convertis explicitement plus bas (jamais passés
+  // tels quels à une colonne Postgres `boolean`).
+  liveStat?: unknown;
+  emarqueV2?: unknown;
+  publicationInternet?: unknown;
   saison?: number | string;
   competition_origine?: number | string | null;
   categorie?: RawCategorie;
@@ -253,7 +259,15 @@ export class FfbbPublicProvider {
       phaseCode: row.phase_code ?? null,
       liveStat: Boolean(row.liveStat),
       emarqueV2: Boolean(row.emarqueV2),
-      publicationInternet: row.publicationInternet ?? true,
+      // Coercion explicite, pas `?? true` seul : `row.publicationInternet` est
+      // apparu en production sous la forme d'une chaîne ("AFF", vraisemblablement
+      // "Affiché"), pas un booléen — passer la valeur brute plantait l'upsert
+      // Postgres (colonne `boolean`, voir docs/FFBB.md). `Boolean(...)` traite
+      // toute valeur présente non vide comme vraie (cohérent avec "AFF" =
+      // publié) ; seule l'absence du champ retombe sur `true` (comportement
+      // d'origine, ce champ n'est stocké qu'à titre informatif, jamais utilisé
+      // pour filtrer — voir sync.ts).
+      publicationInternet: row.publicationInternet == null ? true : Boolean(row.publicationInternet),
       season: toIdString(row.saison),
       parentCompetitionFfbbId: toIdString(row.competition_origine),
       raw: row,
