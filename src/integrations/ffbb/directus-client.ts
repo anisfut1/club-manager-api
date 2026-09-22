@@ -12,10 +12,7 @@ export class FfbbApiError extends Error {
 }
 
 interface FfbbConfigurationResponse {
-  data?: {
-    api_bearer_token?: string;
-    meilisearch_token?: string;
-  };
+  data?: unknown;
 }
 
 interface CachedToken {
@@ -25,6 +22,52 @@ interface CachedToken {
 
 let cachedApiToken: CachedToken | null = null;
 const TOKEN_TTL_MS = 15 * 60 * 1000;
+
+const EXACT_TOKEN_KEY = /^api[_-]?bearer[_-]?token$/i;
+/**
+ * Filet de sécurité si le nom de champ exact (confirmé uniquement par
+ * recoupement de code source tiers, jamais observé en direct — voir
+ * docs/FFBB_ECOSYSTEM_RESEARCH.md §3.2) diffère de ce qui est réellement
+ * renvoyé en production (casse différente, préfixe/suffixe...).
+ */
+const FALLBACK_TOKEN_KEY = /^(api[_-]?bearer[_-]?token|bearer[_-]?token|access[_-]?token|api[_-]?token|token)$/i;
+
+/**
+ * Cherche une valeur string dont la clé correspond à `pattern`, en
+ * descendant dans les objets/tableaux imbriqués (profondeur bornée). Rend
+ * la lecture du jeton tolérante à une forme de réponse inattendue (tableau
+ * au lieu d'objet, clé imbriquée d'un niveau...) sans deviner une forme
+ * précise non observée en direct.
+ */
+function findStringByKeyPattern(value: unknown, pattern: RegExp, depth = 0): string | undefined {
+  if (value == null || depth > 3) return undefined;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findStringByKeyPattern(item, pattern, depth + 1);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    for (const [key, val] of entries) {
+      if (typeof val === "string" && val.length > 0 && pattern.test(key)) {
+        return val;
+      }
+    }
+    for (const [, val] of entries) {
+      const found = findStringByKeyPattern(val, pattern, depth + 1);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
+
+function describeShape(value: unknown): string {
+  if (Array.isArray(value)) return `tableau de ${value.length} élément(s)`;
+  if (value && typeof value === "object") return `objet avec clés [${Object.keys(value).join(", ")}]`;
+  return `type ${typeof value}`;
+}
 
 /**
  * Récupère le jeton public de l'API FFBB (voir docs/FFBB_ECOSYSTEM_RESEARCH.md
@@ -53,11 +96,28 @@ async function getApiToken(fetchImpl: typeof fetch): Promise<string> {
     );
   }
 
-  const body = (await response.json()) as FfbbConfigurationResponse;
-  const token = body.data?.api_bearer_token;
+  const rawText = await response.text();
+  let parsed: FfbbConfigurationResponse;
+  try {
+    parsed = JSON.parse(rawText) as FfbbConfigurationResponse;
+  } catch {
+    // Corps non-JSON le plus probable en production : une page de blocage WAF/CDN
+    // (voir docs/FFBB_ECOSYSTEM_RESEARCH.md §3.2 et §10 sur BunnyCDN) — le
+    // content-type et un extrait permettent de le distinguer d'un vrai souci de schéma.
+    throw new FfbbApiError(
+      `Réponse de configuration FFBB non-JSON (content-type: ${response.headers.get("content-type") ?? "?"}) : ${rawText.slice(0, 300)}`,
+      "UNEXPECTED_RESPONSE",
+    );
+  }
+
+  const data = parsed.data;
+  const token = findStringByKeyPattern(data, EXACT_TOKEN_KEY) ?? findStringByKeyPattern(data, FALLBACK_TOKEN_KEY);
 
   if (!token) {
-    throw new FfbbApiError("Jeton API absent de la réponse de configuration FFBB", "UNEXPECTED_RESPONSE");
+    throw new FfbbApiError(
+      `Jeton API absent de la réponse de configuration FFBB (data = ${describeShape(data)})`,
+      "UNEXPECTED_RESPONSE",
+    );
   }
 
   cachedApiToken = { token, fetchedAt: Date.now() };

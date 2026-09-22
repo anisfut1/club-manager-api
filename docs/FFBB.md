@@ -26,15 +26,31 @@ classements si disponibles. Aucune erreur parce que FBI est absent — voir
 
 ## Statut
 
-**PREPARED** — la logique de mapping/diff/idempotence est testée
-unitairement (`integrations/ffbb/mapping.test.ts`, 100% pur, aucun accès
-réseau), mais aucun appel réel contre `api.ffbb.app` n'a été fait depuis un
-environnement de développement (réseau `*.ffbb.com` bloqué dans tous les
-environnements où ce code a été écrit — voir le premier spike côté SCSB,
+**PREPARED, premier appel réel en production en échec (non résolu)** — la
+logique de mapping/diff/idempotence est testée unitairement
+(`integrations/ffbb/mapping.test.ts`, 100% pur, aucun accès réseau), mais
+aucun appel réel contre `api.ffbb.app` n'a pu être fait depuis un
+environnement de développement (réseau `*.ffbb.app` bloqué dans tous les
+environnements où ce code a été écrit et testé, y compris les sandbox
+utilisées pour le déploiement — voir le premier spike côté SCSB,
 `docs/FFBB_ECOSYSTEM_RESEARCH.md`, conservé dans SCSB). Les noms de champs
 et endpoints sont ceux confirmés par recoupement de bibliothèques clientes
-open source indépendantes dans ce même document, jamais observés en direct
-depuis cette session.
+open source indépendantes dans ce même document, jamais observés en direct.
+
+Premier déclenchement réel du cron `/internal/cron/ffbb` en production :
+échec avec `FfbbApiError: Jeton API absent de la réponse de configuration
+FFBB` — `items/configuration` ne renvoie pas (ou pas sous le nom de champ
+attendu `data.api_bearer_token`) le jeton. `directus-client.ts` a été
+renforcé en conséquence (`getApiToken`) : lecture du corps en texte brut
+avant tentative de parse JSON (pour distinguer une vraie page de blocage
+WAF/CDN d'un souci de schéma, voir §10 de la recherche), et recherche du
+jeton par motif de clé (`api_bearer_token` en priorité, puis un filet de
+secours `bearer_token`/`access_token`/`token`) au lieu d'un seul chemin
+figé `data.api_bearer_token`. Le prochain échec produira dans les logs
+Vercel soit un extrait du corps non-JSON, soit la liste des clés
+réellement présentes dans `data` — l'information manquante pour corriger
+définitivement le nom de champ, jamais observable avant un vrai
+déploiement réseau non bloqué.
 
 ## Cron
 
