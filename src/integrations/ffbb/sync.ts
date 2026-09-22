@@ -22,6 +22,23 @@ export interface SyncFfbbResult {
   };
 }
 
+/**
+ * Renseigne `clubs.logo_url` depuis FFBB UNIQUEMENT s'il est encore vide —
+ * demande explicite du club ("Sète vs X" sur la page Matchs). `logo_url`
+ * est un champ que le club peut aussi éditer manuellement
+ * (`PATCH /v1/clubs/:clubId`, voir contracts/clubs.ts) : jamais écrasé une
+ * fois personnalisé, sync ou pas.
+ */
+async function syncClubLogoIfMissing(supabase: Client, clubId: string, logoUrl: string | null): Promise<void> {
+  if (!logoUrl) return;
+
+  const { error } = await supabase.from("clubs").update({ logo_url: logoUrl }).eq("id", clubId).is("logo_url", null);
+
+  if (error) {
+    throw new Error(`Mise à jour du logo du club échouée : ${error.message}`);
+  }
+}
+
 async function upsertCompetitions(supabase: Client, competitions: NormalizedCompetition[]): Promise<Map<string, string>> {
   const map = new Map<string, string>();
 
@@ -237,6 +254,8 @@ export async function syncFfbb(supabase: Client, provider: FfbbPublicProvider, c
 
   try {
     const snapshot = await provider.fetchClubSnapshot(club.ffbbClubId);
+
+    await syncClubLogoIfMissing(supabase, club.id, snapshot.organisme.logoUrl);
 
     const competitionIdByFfbbId = await upsertCompetitions(supabase, snapshot.competitions);
     stats.competitionsUpserted = competitionIdByFfbbId.size;

@@ -313,3 +313,35 @@ describe("FfbbPublicProvider.fetchClubSnapshot", () => {
     expect(snapshot.matches[0]!.opponentLogoUrl).toBe("https://api.ffbb.app/assets/logo-adverse");
   });
 });
+
+describe("FfbbPublicProvider.findOrganismeByCode", () => {
+  it("construit logoUrl à partir de logo.id (demande explicite : logo DU club, pas seulement des adversaires)", async () => {
+    const fetchImpl = vi.fn(async (url: string | URL) => {
+      const href = url.toString();
+      if (href.includes("items/configuration")) {
+        return jsonResponse(200, CONFIGURATION_BODY);
+      }
+      return jsonResponse(200, { data: [{ id: "org-1", code: "OCC0034008", nom: "SC Sète", logo: { id: "logo-sete" } }] });
+    });
+
+    const provider = new FfbbPublicProvider({ fetchImpl: fetchImpl as unknown as typeof fetch, candidateRetryDelayMs: 0 });
+    const organisme = await provider.findOrganismeByCode("OCC0034008");
+
+    expect(organisme.logoUrl).toBe("https://api.ffbb.app/assets/logo-sete");
+  });
+
+  it("logoUrl est null quand l'organisme n'a pas de logo", async () => {
+    const fetchImpl = vi.fn(async (url: string | URL) => {
+      const href = url.toString();
+      if (href.includes("items/configuration")) {
+        return jsonResponse(200, CONFIGURATION_BODY);
+      }
+      return jsonResponse(200, { data: [{ id: "org-1", code: "OCC0034008", nom: "SC Sète" }] });
+    });
+
+    const provider = new FfbbPublicProvider({ fetchImpl: fetchImpl as unknown as typeof fetch, candidateRetryDelayMs: 0 });
+    const organisme = await provider.findOrganismeByCode("OCC0034008");
+
+    expect(organisme.logoUrl).toBeNull();
+  });
+});

@@ -358,6 +358,26 @@ Migration `20260922110000_matches_opponent_logo_url.sql` (appliquée) :
    d'images côté backend, à la manière des documents e-Marque, si
    nécessaire) — pas de sur-ingénierie avant d'avoir la confirmation.
 
+**Neuvième déclenchement : les deux points ci-dessus confirmés en
+production le 2026-09-22.** `venue_raw_label` et `opponent_logo_url`
+remontent avec de vraies valeurs (`"GYMNASE ROGER COUDERC — 37 Rue MAS DE
+LEMASSON"`, `https://api.ffbb.app/assets/55bb35db-...`) — `libelle`/
+`adresse`/`logo.id` étaient les bons noms de champs du premier coup.
+**`assets/{id}` est accessible sans authentification** : testé
+directement dans un navigateur par le club, l'image s'affiche — pas
+besoin de proxy/cache d'images, une balise `<img>` suffit côté frontend.
+
+**Dixième ajout : logo DU club lui-même** (pas seulement des adversaires
+— demande explicite, affichage "Sète vs X"). `findOrganismeByCode`
+demande maintenant aussi `logo.id` (`NormalizedOrganisme.logoUrl`,
+`public-provider.ts`). `syncClubLogoIfMissing` (`sync.ts`) renseigne
+`clubs.logo_url` — réutilise le champ EXISTANT (déjà exposé via
+`ClubDto.logoUrl`, déjà éditable manuellement via
+`PATCH /v1/clubs/:clubId`) plutôt qu'une nouvelle colonne/un nouveau champ
+d'API : `UPDATE clubs SET logo_url = ... WHERE id = club_id AND logo_url
+IS NULL` — ne l'écrase jamais si le club l'a personnalisé, sync ou pas.
+Couvert par 2 nouveaux tests (`public-provider.test.ts`).
+
 ## Cron
 
 `GET /internal/cron/ffbb` (toutes les 15 minutes, voir `vercel.json`) :

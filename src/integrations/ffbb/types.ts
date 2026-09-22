@@ -8,6 +8,8 @@ export interface NormalizedOrganisme {
   ffbbId: string;
   code: string;
   name: string;
+  /** Voir NormalizedMatch.opponentLogoUrl — même mécanisme (assets/{id}), pour le logo DU club lui-même. */
+  logoUrl: string | null;
 }
 
 export interface NormalizedCompetition {

@@ -222,7 +222,7 @@ export class FfbbPublicProvider {
 
   async findOrganismeByCode(clubCode: string): Promise<NormalizedOrganisme> {
     const rows = await this.client.listItems<RawOrganisme>(FFBB_ENDPOINTS.organismes, {
-      fields: ["id", "code", "nom"],
+      fields: ["id", "code", "nom", "logo.id"],
       filter: { code: { _eq: clubCode } },
       limit: 1,
     });
@@ -235,6 +235,7 @@ export class FfbbPublicProvider {
     return {
       ffbbId: requireIdString(organisme.id),
       code: organisme.code ?? clubCode,
+      logoUrl: buildAssetUrl(organisme.logo?.id),
       name: organisme.nom ?? clubCode,
     };
   }
