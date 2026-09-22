@@ -47,6 +47,13 @@ export const MatchListItemDtoSchema = z
     isHome: z.boolean().nullable(),
     teamName: z.string().nullable(),
     opponentName: z.string().nullable(),
+    /**
+     * URL construite ({FFBB_API_BASE_URL}assets/{id}) — pas encore confirmé
+     * accessible sans authentification depuis un navigateur (voir
+     * docs/FFBB.md côté club-manager-api). Peut nécessiter un proxy/cache
+     * d'images côté frontend si l'affichage direct échoue.
+     */
+    opponentLogoUrl: z.string().nullable(),
     venueLabel: z.string().nullable(),
     scoreHome: z.number().nullable(),
     scoreAway: z.number().nullable(),
@@ -133,6 +140,7 @@ export const MatchDetailsDtoSchema = z
     isHome: z.boolean().nullable(),
     teamName: z.string().nullable(),
     opponentName: z.string().nullable(),
+    opponentLogoUrl: z.string().nullable(),
     venueLabel: z.string().nullable(),
     scoreHome: z.number().nullable(),
     scoreAway: z.number().nullable(),

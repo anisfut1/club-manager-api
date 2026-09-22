@@ -57,6 +57,7 @@ export function mapNormalizedMatchToRow(match: NormalizedMatch, context: MatchMa
     is_home: match.isHome,
     opponent_name: match.opponentName,
     opponent_ffbb_organisme_id: match.opponentOrganismeFfbbId,
+    opponent_logo_url: match.opponentLogoUrl,
     venue_id: context.venueId,
     venue_raw_label: formatVenueLabel(match.venue?.name, match.venue?.address),
     match_datetime: match.matchDateTime,

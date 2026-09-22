@@ -67,6 +67,14 @@ export interface NormalizedMatch {
   isHome: boolean;
   opponentName: string | null;
   opponentOrganismeFfbbId: string | null;
+  /**
+   * URL construite (`{FFBB_API_BASE_URL}assets/{logo.id}`), jamais vérifiée
+   * en direct si cet endpoint accepte les requêtes anonymes — voir
+   * docs/FFBB.md. Renseignée par un appel séparé (`listOrganismeLogos`,
+   * comme `listCompetitions`/`listPools`), jamais via la relation
+   * `idOrganismeEquipe1/2` de la rencontre (pas d'expansion demandée là).
+   */
+  opponentLogoUrl: string | null;
   matchDateTime: string | null;
   scoreHome: number | null;
   scoreAway: number | null;

@@ -15,6 +15,16 @@ export const FFBB_ENDPOINTS = {
   competitions: "items/ffbbserver_competitions",
   poules: "items/ffbbserver_poules",
   rencontres: "items/ffbbserver_rencontres",
+  /**
+   * Endpoint standard Directus de service de fichiers. Un organisme a un
+   * champ `logo.id` (voir public-provider.ts, `logoAssetUrl`) qui référence
+   * un fichier ici : `{FFBB_API_BASE_URL}assets/{id}`. Non vérifié en
+   * direct si cet endpoint accepte les requêtes anonymes (probable, sert
+   * des images publiques dans l'appli mobile) ou exige le même jeton que
+   * le reste de l'API (auquel cas une simple balise <img> ne suffirait pas
+   * côté frontend — voir docs/FFBB.md).
+   */
+  assets: "assets",
 } as const;
 
 /**

@@ -315,6 +315,7 @@ export interface Database {
           is_home: boolean | null;
           opponent_name: string | null;
           opponent_ffbb_organisme_id: string | null;
+          opponent_logo_url: string | null;
           venue_id: string | null;
           venue_raw_label: string | null;
           score_home: number | null;
@@ -343,6 +344,7 @@ export interface Database {
           is_home?: boolean | null;
           opponent_name?: string | null;
           opponent_ffbb_organisme_id?: string | null;
+          opponent_logo_url?: string | null;
           venue_id?: string | null;
           venue_raw_label?: string | null;
           score_home?: number | null;

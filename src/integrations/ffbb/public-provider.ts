@@ -1,4 +1,4 @@
-import { FFBB_ENDPOINTS, FFBB_MATCH_HISTORY_MONTHS } from "./config.js";
+import { FFBB_API_BASE_URL, FFBB_ENDPOINTS, FFBB_MATCH_HISTORY_MONTHS } from "./config.js";
 import { FfbbApiError, FfbbDirectusClient, type DirectusClientOptions } from "./directus-client.js";
 import type {
   FfbbClubSnapshot,
@@ -24,6 +24,12 @@ function historyCutoffDate(monthsBack: number): string {
   return cutoff.toISOString().slice(0, 10);
 }
 
+/** `{FFBB_API_BASE_URL}assets/{id}` — voir FFBB_ENDPOINTS.assets et RawOrganisme.logo. */
+function buildAssetUrl(assetId: string | null | undefined): string | null {
+  if (!assetId) return null;
+  return `${FFBB_API_BASE_URL}${FFBB_ENDPOINTS.assets}/${assetId}`;
+}
+
 // Formes brutes attendues côté Directus (voir docs/FFBB_ECOSYSTEM_RESEARCH.md
 // §3.3/§3.4). Champs optionnels par prudence : cette API n'est pas
 // officiellement documentée et peut évoluer sans préavis (voir le même
@@ -32,6 +38,15 @@ interface RawOrganisme {
   id: number | string;
   code?: string;
   nom?: string;
+  /**
+   * Référence de fichier Directus (voir `models/get_organisme_response.py`
+   * du SDK tiers ffbb-data-client, lu comme référence — champ `logo:
+   * LogoModel | None` avec `id: str`). L'image elle-même se sert via
+   * `{FFBB_API_BASE_URL}assets/{logo.id}` (voir `FFBB_ENDPOINTS.assets`),
+   * jamais vérifié en direct si cet endpoint est public ou nécessite le
+   * même jeton que le reste de l'API.
+   */
+  logo?: { id?: string | null } | null;
 }
 
 interface RawCategorie {
@@ -343,6 +358,9 @@ export class FfbbPublicProvider {
         isHome,
         opponentName,
         opponentOrganismeFfbbId,
+        // Renseigné séparément dans fetchClubSnapshot (listOrganismeLogos) —
+        // pas de relation étendue ici, voir NormalizedMatch.opponentLogoUrl.
+        opponentLogoUrl: null,
         matchDateTime: row.date_rencontre ?? null,
         scoreHome,
         scoreAway,
@@ -351,6 +369,30 @@ export class FfbbPublicProvider {
         raw: row,
       };
     });
+  }
+
+  /**
+   * Logos des organismes adverses, pour affichage dans le calendrier
+   * (demande explicite du club). Appel séparé plutôt qu'une relation
+   * étendue sur `rencontres.idOrganismeEquipe1/2` — même principe que
+   * `salle` : jamais tester une relation imbriquée en aveugle sur un champ
+   * qui peut aussi être interrogé comme collection top-level. Renvoie une
+   * URL construite (`{FFBB_API_BASE_URL}assets/{id}`), jamais vérifiée en
+   * direct si cet endpoint accepte les requêtes anonymes (voir docs/FFBB.md).
+   */
+  async listOrganismeLogos(organismeIds: string[]): Promise<Map<string, string | null>> {
+    if (organismeIds.length === 0) return new Map();
+
+    const rows = await this.client.listAllItems<RawOrganisme>(FFBB_ENDPOINTS.organismes, {
+      fields: ["id", "logo.id"],
+      filter: { id: { _in: organismeIds } },
+    });
+
+    const map = new Map<string, string | null>();
+    for (const row of rows) {
+      map.set(requireIdString(row.id), buildAssetUrl(row.logo?.id));
+    }
+    return map;
   }
 
   /**
@@ -390,6 +432,16 @@ export class FfbbPublicProvider {
     await sleep(FFBB_REQUEST_SPACING_MS);
     const pools = await this.listPools(poolIds);
 
-    return { organisme, engagements, competitions, pools, matches };
+    const opponentOrganismeIds = [
+      ...new Set(matches.map((m) => m.opponentOrganismeFfbbId).filter((id): id is string => Boolean(id))),
+    ];
+    await sleep(FFBB_REQUEST_SPACING_MS);
+    const logoByOrganismeId = await this.listOrganismeLogos(opponentOrganismeIds);
+    const matchesWithLogos = matches.map((match) => ({
+      ...match,
+      opponentLogoUrl: match.opponentOrganismeFfbbId ? (logoByOrganismeId.get(match.opponentOrganismeFfbbId) ?? null) : null,
+    }));
+
+    return { organisme, engagements, competitions, pools, matches: matchesWithLogos };
   }
 }

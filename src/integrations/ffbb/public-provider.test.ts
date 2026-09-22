@@ -226,3 +226,90 @@ describe("FfbbPublicProvider.listCompetitions", () => {
     expect(competitions[0]!.publicationInternet).toBe(true);
   });
 });
+
+describe("FfbbPublicProvider.listOrganismeLogos", () => {
+  it("construit l'URL d'asset ({FFBB_API_BASE_URL}assets/{id}) à partir de logo.id", async () => {
+    const fetchImpl = vi.fn(async (url: string | URL) => {
+      const href = url.toString();
+      if (href.includes("items/configuration")) {
+        return jsonResponse(200, CONFIGURATION_BODY);
+      }
+      return jsonResponse(200, { data: [{ id: "org-2", logo: { id: "logo-abc" } }] });
+    });
+
+    const provider = new FfbbPublicProvider({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      candidateRetryDelayMs: 0,
+    });
+    const logos = await provider.listOrganismeLogos(["org-2"]);
+
+    expect(logos.get("org-2")).toBe("https://api.ffbb.app/assets/logo-abc");
+  });
+
+  it("renvoie null pour un organisme sans logo, sans planter", async () => {
+    const fetchImpl = vi.fn(async (url: string | URL) => {
+      const href = url.toString();
+      if (href.includes("items/configuration")) {
+        return jsonResponse(200, CONFIGURATION_BODY);
+      }
+      return jsonResponse(200, { data: [{ id: "org-2", logo: null }] });
+    });
+
+    const provider = new FfbbPublicProvider({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      candidateRetryDelayMs: 0,
+    });
+    const logos = await provider.listOrganismeLogos(["org-2"]);
+
+    expect(logos.get("org-2")).toBeNull();
+  });
+
+  it("ne fait aucun appel réseau pour une liste d'identifiants vide", async () => {
+    const fetchImpl = vi.fn();
+    const provider = new FfbbPublicProvider({ fetchImpl: fetchImpl as unknown as typeof fetch, candidateRetryDelayMs: 0 });
+
+    const logos = await provider.listOrganismeLogos([]);
+
+    expect(logos.size).toBe(0);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe("FfbbPublicProvider.fetchClubSnapshot", () => {
+  it("attache opponentLogoUrl à chaque match à partir de listOrganismeLogos", async () => {
+    const fetchImpl = vi.fn(async (url: string | URL) => {
+      const href = url.toString();
+      if (href.includes("items/configuration")) {
+        return jsonResponse(200, CONFIGURATION_BODY);
+      }
+      if (href.includes("items/ffbbserver_organismes") && href.includes("code")) {
+        return jsonResponse(200, { data: [{ id: "org-1", code: "OCC0034008", nom: "SC Sète" }] });
+      }
+      if (href.includes("items/ffbbserver_engagements")) {
+        return jsonResponse(200, { data: [] });
+      }
+      if (href.includes("items/ffbbserver_rencontres")) {
+        return jsonResponse(200, {
+          data: [{ id: "match-1", idOrganismeEquipe1: "org-1", idOrganismeEquipe2: "org-2", nomEquipe2: "Adverse" }],
+        });
+      }
+      if (href.includes("items/ffbbserver_competitions") || href.includes("items/ffbbserver_poules")) {
+        return jsonResponse(200, { data: [] });
+      }
+      if (href.includes("items/ffbbserver_organismes") && href.includes("_in")) {
+        return jsonResponse(200, { data: [{ id: "org-2", logo: { id: "logo-adverse" } }] });
+      }
+      return jsonResponse(200, { data: [] });
+    });
+
+    const provider = new FfbbPublicProvider({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      candidateRetryDelayMs: 0,
+      pageDelayMs: 0,
+    });
+    const snapshot = await provider.fetchClubSnapshot("OCC0034008");
+
+    expect(snapshot.matches).toHaveLength(1);
+    expect(snapshot.matches[0]!.opponentLogoUrl).toBe("https://api.ffbb.app/assets/logo-adverse");
+  });
+});

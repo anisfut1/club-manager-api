@@ -57,9 +57,10 @@ matchesRouter.get("/", async (c) => {
 
   let builder = supabase
     .from("matches")
-    .select("id, numero, journee, match_datetime, is_home, opponent_name, venue_raw_label, score_home, score_away, status, emarque_status, team_id", {
-      count: "exact",
-    })
+    .select(
+      "id, numero, journee, match_datetime, is_home, opponent_name, opponent_logo_url, venue_raw_label, score_home, score_away, status, emarque_status, team_id",
+      { count: "exact" },
+    )
     .eq("club_id", club.id);
 
   if (teamId) builder = builder.eq("team_id", teamId);
@@ -88,6 +89,7 @@ matchesRouter.get("/", async (c) => {
     isHome: m.is_home,
     teamName: m.team_id ? (teamNameById.get(m.team_id) ?? null) : null,
     opponentName: m.opponent_name,
+    opponentLogoUrl: m.opponent_logo_url,
     venueLabel: m.venue_raw_label,
     scoreHome: m.score_home,
     scoreAway: m.score_away,
@@ -107,7 +109,9 @@ matchesRouter.get("/:matchId", async (c) => {
 
   const { data: match } = await supabase
     .from("matches")
-    .select("id, numero, journee, match_datetime, is_home, opponent_name, venue_raw_label, score_home, score_away, status, emarque_status, team_id")
+    .select(
+      "id, numero, journee, match_datetime, is_home, opponent_name, opponent_logo_url, venue_raw_label, score_home, score_away, status, emarque_status, team_id",
+    )
     .eq("id", matchId)
     .eq("club_id", club.id)
     .maybeSingle();
@@ -154,6 +158,7 @@ matchesRouter.get("/:matchId", async (c) => {
     isHome: match.is_home,
     teamName: team?.name ?? null,
     opponentName: match.opponent_name,
+    opponentLogoUrl: match.opponent_logo_url,
     venueLabel: match.venue_raw_label,
     scoreHome: match.score_home,
     scoreAway: match.score_away,

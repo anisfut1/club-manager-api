@@ -326,6 +326,38 @@ soit `libelle`/`adresse` sont aussi de mauvais noms et le vrai message
 d'erreur Directus (capturé depuis le sixième correctif, voir
 `request()`) dira lequel.
 
+**Huitième ajout : logos des organismes adverses** (demande explicite du
+club). `models/get_organisme_response.py` du SDK tiers ffbb-data-client
+(lu comme référence, rien copié) confirme `organisme.logo: { id,
+gradient_color }` — une référence de fichier Directus, pas une URL
+directe. L'image se sert via l'endpoint standard `assets/{id}` (voir
+`FFBB_ENDPOINTS.assets`).
+
+**Implémenté** (`public-provider.ts`) : `listOrganismeLogos(organismeIds)`
+— appel séparé à `items/ffbbserver_organismes` (comme `salle`, jamais une
+relation imbriquée testée en aveugle sur une collection qui peut aussi
+être interrogée top-level), construit l'URL `{FFBB_API_BASE_URL}assets/{logo.id}`.
+Câblé dans `fetchClubSnapshot` : après le calcul des matchs, les
+identifiants d'organismes adverses distincts sont collectés et résolus en
+une seule passe, puis attachés à chaque match (`opponentLogoUrl`).
+Migration `20260922110000_matches_opponent_logo_url.sql` (appliquée) :
+`matches.opponent_logo_url`. Exposé via l'API (`MatchListItemDto`/
+`MatchDetailsDto.opponentLogoUrl`).
+
+**Non vérifié en direct, sur DEUX points distincts** (réseau
+`api.ffbb.app` toujours inaccessible) :
+1. Le nom de champ `logo`/`logo.id` lui-même (même prudence que pour
+   `salle` : à confirmer par le prochain cron réel, le corps d'erreur
+   Directus dira si c'est faux).
+2. **Plus important** : `assets/{id}` pourrait exiger le même jeton
+   Bearer que le reste de l'API — dans ce cas, une simple balise `<img
+   src="...">` côté frontend échouerait silencieusement (le navigateur
+   n'envoie pas notre en-tête `Authorization`). Décision explicite du
+   club : récupérer l'identifiant/URL maintenant, tester l'affichage
+   séparément avant de construire quoi que ce soit de plus (proxy/cache
+   d'images côté backend, à la manière des documents e-Marque, si
+   nécessaire) — pas de sur-ingénierie avant d'avoir la confirmation.
+
 ## Cron
 
 `GET /internal/cron/ffbb` (toutes les 15 minutes, voir `vercel.json`) :
