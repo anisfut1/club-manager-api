@@ -120,9 +120,16 @@ const RENCONTRE_FIELDS = [
   "idOrganismeEquipe1",
   "idOrganismeEquipe2",
   "idPoule",
-  "salle.id",
-  "salle.nom",
-  "salle.commune.libelle",
+  // PAS "salle.id"/"salle.nom"/"salle.commune.libelle" : confirmé en
+  // production (2026-09-22, voir docs/FFBB.md) que le rôle public FFBB
+  // renvoie 403 FORBIDDEN sur TOUTE la requête dès que la relation "salle"
+  // est étendue ("You don't have permission to access field \"nom\" in
+  // collection \"ffbbserver_salles\"..."), quel que soit le jeton candidat.
+  // "salle" seul renvoie l'identifiant brut de la relation (FK) sans
+  // l'étendre — normalizeVenue() gère déjà ce cas (dégrade proprement :
+  // ffbbId renseigné, name/commune à null) plutôt que de faire échouer tout
+  // syncFfbb pour un problème de permission sur un champ annexe.
+  "salle",
 ];
 
 function toIdString(value: number | string | null | undefined): string | null {

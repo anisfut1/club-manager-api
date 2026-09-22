@@ -26,8 +26,9 @@ classements si disponibles. Aucune erreur parce que FBI est absent — voir
 
 ## Statut
 
-**PREPARED, premier appel réel en production en échec (non résolu)** — la
-logique de mapping/diff/idempotence est testée unitairement
+**PREPARED, corrigé après 4 déclenchements réels en production (à
+reconfirmer par un cron réussi)** — la logique de mapping/diff/idempotence
+est testée unitairement
 (`integrations/ffbb/mapping.test.ts`, 100% pur, aucun accès réseau), mais
 aucun appel réel contre `api.ffbb.app` n'a pu être fait depuis un
 environnement de développement (réseau `*.ffbb.app` bloqué dans tous les
@@ -127,6 +128,37 @@ invalide...). **Ceci est la seule vraie inconnue restante** : le prochain
 déclenchement donnera enfin le texte d'erreur réel de Directus au lieu
 d'un simple code 401 — à lire en priorité avant toute nouvelle
 supposition sur les champs/filtre.
+
+**Quatrième déclenchement réel : cause confirmée avec certitude, hypothèse
+validée.** Le corps de réponse Directus (candidat `key_directus_website`,
+403) :
+
+```json
+{"errors":[{"message":"You don't have permission to access field \"nom\" in collection \"ffbbserver_salles\" or it does not exist. Queried in \"salle\".","extensions":{"code":"FORBIDDEN"}}]}
+```
+
+Confirme exactement l'hypothèse ci-dessus : le rôle public associé à ces
+jetons n'a pas le droit de lire les champs de la relation `salle` (au
+minimum `nom`, probablement aussi `commune.libelle`), et Directus rejette
+alors TOUTE la requête `items/ffbbserver_rencontres` plutôt que d'omettre
+silencieusement le champ non autorisé. (Le candidat `key_ms` a échoué
+séparément avec `"Invalid user credentials."` / `INVALID_CREDENTIALS` —
+attendu, `key_ms` est le jeton Meilisearch, hors périmètre `items/*`, voir
+plus haut.)
+
+**Corrigé** (`public-provider.ts`, `RENCONTRE_FIELDS`) : les champs
+`salle.id`/`salle.nom`/`salle.commune.libelle` sont retirés, remplacés par
+le champ plat `salle` seul — Directus renvoie alors l'identifiant brut de
+la relation (FK) sans l'étendre, un cas déjà géré par `normalizeVenue()`
+(dégrade proprement : `venue.ffbbId` renseigné, `name`/`commune` à
+`null`, plutôt que de faire échouer tout `syncFfbb` pour un champ annexe).
+Couvert par `public-provider.test.ts` : vérifie que la requête générée ne
+contient plus `salle.nom`/`salle.commune`/`salle.id`, et que la
+normalisation d'une salle reçue comme FK brute ne plante pas.
+
+Salle/commune du gymnase resteront `null` tant que cette permission n'est
+pas élargie côté FFBB (hors de notre contrôle) — n'affecte ni le
+calendrier, ni les scores, ni les adversaires, le cœur du Module 1.
 
 ## Cron
 
