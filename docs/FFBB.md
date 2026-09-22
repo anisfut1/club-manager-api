@@ -161,20 +161,42 @@ pas élargie côté FFBB (hors de notre contrôle) — n'affecte ni le
 calendrier, ni les scores, ni les adversaires, le cœur du Module 1.
 
 **Piste documentée pour une amélioration future (nom/adresse des
-salles) :** la page PyPI du SDK tiers `ffbb-data-client` (2026, non
-auditée, à vérifier avant tout usage) sépare explicitement l'API Directus
-(`items/*`, ce que ce projet utilise) de la **recherche Meilisearch**
-(`search_salles()`, "Résolution physique complète : Gymnase, Rue, CP,
-Ville") — cohérent avec `key_ms` (déjà identifié comme jeton Meilisearch,
-distinct de `key_dh`/`key_directus_competitions`/`key_directus_website`).
-Hypothèse : le nom/l'adresse d'une salle se résout via une requête vers
-`https://meilisearch-prod.ffbb.app/` (base URL différente de
-`api.ffbb.app`, format de requête Meilisearch, pas Directus REST) avec
-`key_ms`, plutôt que via la relation Directus qu'on vient de désactiver.
-Non implémenté ici (nouveau client HTTP, nouveau format de requête,
-scope distinct) — à construire séparément si le nom des gymnases devient
+salles), affinée par lecture directe du code source du SDK tiers
+`ffbb-data-client` (github.com/nickdesi/ffbb-data-client, 2026, lu comme
+référence uniquement — rien copié, réimplémentation propre si construit) :**
+
+- `models/get_configuration_response.py` confirme avec certitude que
+  `key_dh` EST le jeton API officiel (propriété `api_bearer_token` du
+  modèle, retourne `self.key_dh`) et `key_ms` le jeton Meilisearch
+  (propriété `meilisearch_token`) — cohérent avec notre découverte
+  empirique du 2026-09-22. `CANDIDATE_TOKEN_FIELDS` (`directus-client.ts`)
+  met désormais `key_dh` en premier candidat pour cette raison (au lieu
+  d'être découvert par tâtonnement à chaque fois).
+- `clients/_mixins/list_methods.py` montre que `list_salles()` de ce SDK
+  interroge **directement `items/ffbbserver_salles`** (endpoint Directus
+  `items/*` standard, voir `config.py` de ce SDK : `ENDPOINT_SALLES =
+  "items/ffbbserver_salles"`) via `_list_directus_items_async()` — PAS
+  Meilisearch. Piste plus précise que l'hypothèse Meilisearch précédente :
+  une requête top-level séparée vers `items/ffbbserver_salles` (filtrée
+  par `id: {_in: [...]}`, exactement le même schéma que
+  `listCompetitions`/`listPools` déjà en place dans `public-provider.ts`)
+  pourrait très bien réussir même si la traversée `rencontres.salle.nom`
+  par relation échoue en 403 — les permissions Directus par champ
+  s'appliquent parfois différemment selon que la collection est
+  interrogée directement ou via une relation imbriquée. **Non vérifié en
+  direct** (réseau `api.ffbb.app` toujours inaccessible depuis tous les
+  environnements de développement disponibles).
+- `clients/_mixins/getters.py` montre que même ce SDK tiers, dans sa
+  propre méthode `get_rencontre_async`, ne demande jamais l'expansion de
+  la relation `salle` — cohérent avec notre correctif (aucune preuve que
+  la traversée de cette relation fonctionne ailleurs non plus).
+
+Non implémenté ici (nouvel appel séparé `listSalles(salleIds)`, jamais
+testé en direct) — à construire séparément si le nom des gymnases devient
 un besoin réel, jamais avant d'avoir confirmé que le cœur du sync
-(calendrier/scores/adversaires) fonctionne.
+(calendrier/scores/adversaires) fonctionne. Si construit : code écrit
+depuis zéro par ce projet, sur le modèle de `listCompetitions`/`listPools`
+déjà en place — jamais une adaptation du code du SDK tiers.
 
 **Cinquième déclenchement réel : le fetch FFBB passe entièrement**
 (`organismes`, `engagements`, `rencontres`, `competitions`, `poules` — plus

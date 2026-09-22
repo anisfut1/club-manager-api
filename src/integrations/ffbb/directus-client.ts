@@ -55,17 +55,25 @@ function sleep(ms: number): Promise<void> {
  * réalité (constaté en production le 2026-09-22 — voir docs/FFBB.md, la
  * forme supposée dans docs/FFBB_ECOSYSTEM_RESEARCH.md §3.2, déduite par
  * recoupement de bibliothèques clientes tierces, ne correspond pas). Les
- * champs réellement présents : `key_dh` (probablement "Data Hub", le terme
- * employé dans FFBB_ECOSYSTEM_RESEARCH.md §2), `key_directus_website`,
- * `key_directus_competitions`, `key_ms` (Meilisearch, recherche
- * uniquement — hors périmètre `items/*`). Comme aucun n'est confirmé,
- * chaque candidat est essayé dans cet ordre CONTRE LE VRAI ENDPOINT
- * demandé (voir `FfbbDirectusClient.listItems`) jusqu'à ce qu'un renvoie
- * un succès HTTP — c'est l'API elle-même qui tranche, jamais une nouvelle
- * supposition. Le nom du champ gagnant est loggé pour ne plus jamais avoir
+ * champs réellement présents : `key_dh`, `key_directus_website`,
+ * `key_directus_competitions`, `key_ms`.
+ *
+ * `key_dh` confirmé comme LE jeton API officiel par une source tierce
+ * indépendante et fiable (le SDK open source `ffbb-data-client`,
+ * `models/get_configuration_response.py` : la propriété
+ * `api_bearer_token` du modèle `GetConfigurationResponse` renvoie
+ * explicitement `self.key_dh` ; `meilisearch_token` renvoie `key_ms`) —
+ * cohérent avec notre propre découverte empirique en production
+ * (`key_dh` a authentifié `items/ffbbserver_organismes` le 2026-09-22).
+ * D'où sa priorité en premier candidat. Les 3 autres restent des filets
+ * de secours (l'API FFBB n'étant pas documentée officiellement, rien
+ * n'empêche un renommage futur) : chaque candidat est essayé dans cet
+ * ordre CONTRE LE VRAI ENDPOINT demandé (voir `FfbbDirectusClient.listItems`)
+ * jusqu'à ce qu'un renvoie un succès HTTP. Le nom du champ gagnant est loggé
+ * pour ne plus jamais avoir
  * à re-deviner.
  */
-const CANDIDATE_TOKEN_FIELDS = ["key_directus_competitions", "key_dh", "key_directus_website", "key_ms"] as const;
+const CANDIDATE_TOKEN_FIELDS = ["key_dh", "key_directus_competitions", "key_directus_website", "key_ms"] as const;
 
 function describeShape(value: unknown): string {
   if (Array.isArray(value)) return `tableau de ${value.length} élément(s)`;

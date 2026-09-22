@@ -35,7 +35,7 @@ describe("FfbbDirectusClient", () => {
       }
       const auth = (init?.headers as Record<string, string>).authorization;
       calls.push(auth);
-      if (auth === "Bearer competitions-token") {
+      if (auth === "Bearer dh-token") {
         return jsonResponse(200, { data: [{ id: "rencontre-1" }] });
       }
       return jsonResponse(403, { errors: [{ message: "Forbidden" }] });
@@ -45,9 +45,11 @@ describe("FfbbDirectusClient", () => {
     const items = await client.listItems("items/ffbbserver_rencontres");
 
     expect(items).toEqual([{ id: "rencontre-1" }]);
-    // "key_directus_competitions" est le premier candidat essayé (voir
-    // CANDIDATE_TOKEN_FIELDS) — il fonctionne du premier coup ici, un seul appel.
-    expect(calls).toEqual(["Bearer competitions-token"]);
+    // "key_dh" est le premier candidat essayé (voir CANDIDATE_TOKEN_FIELDS —
+    // confirmé comme LE jeton API officiel par le SDK tiers ffbb-data-client,
+    // voir le commentaire au-dessus de CANDIDATE_TOKEN_FIELDS) — il fonctionne
+    // du premier coup ici, un seul appel.
+    expect(calls).toEqual(["Bearer dh-token"]);
   });
 
   it("essaie les champs candidats suivants quand les premiers échouent avec 401/403", async () => {
@@ -60,7 +62,7 @@ describe("FfbbDirectusClient", () => {
       }
       const auth = (init?.headers as Record<string, string>).authorization;
       attempted.push(auth);
-      if (auth === "Bearer dh-token") {
+      if (auth === "Bearer competitions-token") {
         return jsonResponse(200, { data: [{ id: "org-1" }] });
       }
       return jsonResponse(401, { errors: [{ message: "Unauthorized" }] });
@@ -70,7 +72,7 @@ describe("FfbbDirectusClient", () => {
     const items = await client.listItems("items/ffbbserver_organismes");
 
     expect(items).toEqual([{ id: "org-1" }]);
-    expect(attempted).toEqual(["Bearer competitions-token", "Bearer dh-token"]);
+    expect(attempted).toEqual(["Bearer dh-token", "Bearer competitions-token"]);
   });
 
   it("échoue avec un message exploitable quand tous les jetons candidats échouent", async () => {
@@ -164,7 +166,7 @@ describe("FfbbDirectusClient", () => {
     await client.listItems("items/ffbbserver_poules");
 
     expect(configFetches).toBe(1);
-    expect(authHeaders).toEqual(["Bearer competitions-token", "Bearer competitions-token"]);
+    expect(authHeaders).toEqual(["Bearer dh-token", "Bearer dh-token"]);
   });
 
   it("retente en priorité le dernier champ qui a fonctionné, avant l'ordre fixe des candidats", async () => {
