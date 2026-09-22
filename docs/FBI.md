@@ -280,12 +280,40 @@ identifiants envoyés.
 aussi `button[type="submit"]`/`input[type="submit"]` dans le formulaire
 et, s'il porte un `name`, son couple nom/valeur est ajouté au corps du
 POST (et au diagnostic, pour voir si aucun bouton nommé n'est trouvé).
-Couvert par un nouveau test. **Non encore reconfirmé en direct** —
-prochain "Tester la connexion" à lire en priorité : si `LOGIN_FAILED`
-persiste avec ce correctif, la piste "identifiants réellement
-incorrects côté FBI" (mot de passe expiré, compte verrouillé après
-plusieurs tentatives, etc. — à vérifier alors directement sur
-extranet.ffbb.com/fbi) devient la plus probable.
+Couvert par un nouveau test.
+
+**Sixième déclenchement réel : le bouton n'était pas la cause — aucun
+bouton nommé sur ce formulaire** (diagnostic : `bouton de soumission=
+aucun trouvé`), le correctif est un no-op ici (harmless, mais pas la
+solution). Le club confirme via une question directe que ces mêmes
+identifiants fonctionnent en se connectant à la main sur
+`extranet.ffbb.com/fbi`, écartant un vrai mot de passe incorrect ou une
+erreur de chiffrement côté club-manager-api (le round-trip AES-256-GCM
+est testé unitairement — unicode, chaîne vide, isolation par AAD — et
+toute incohérence de clé/AAD lèverait `DecryptionError`, une erreur
+distincte, jamais un `LOGIN_FAILED` silencieux ; la longueur du
+ciphertext en base est cohérente avec un mot de passe normal).
+
+**Piste retenue** : la page affiche explicitement *"Votre navigateur
+n'est pas recommandé pour utiliser FBI. Nous vous recommandons Google
+Chrome"* — preuve d'une détection de navigateur côté serveur. Aucune de
+nos requêtes n'envoyait de `User-Agent` (le `fetch` de Node/undici n'en
+envoie pas un qui ressemble à un vrai navigateur) : cohérent avec une
+protection anti-bot basique et silencieuse (rejet de connexion sans le
+révéler explicitement), fréquente sur ce type d'appli legacy.
+
+**Corrigé** (`http-client.ts`) : `FBI_REQUEST_HEADERS` (User-Agent
+Chrome/Windows réaliste + `Accept-Language: fr-FR`) appliqué à TOUTE
+requête vers FBI (login, landing, `isSessionValid`,
+`downloadDocument`) — pas seulement le login, une incohérence de
+user-agent au fil d'une session étant elle-même un signal de détection
+courant. Couvert par un nouveau test qui vérifie qu'un User-Agent
+contenant "Chrome" est envoyé sur les 3 requêtes d'un login réussi.
+**Non encore reconfirmé en direct** — prochain "Tester la connexion" à
+lire en priorité : si `LOGIN_FAILED` persiste malgré un vrai mot de
+passe confirmé et un User-Agent de navigateur, il faudra probablement
+passer par `BrowserFbiClient` (Playwright, déjà prévu comme stratégie de
+secours) pour ce club, HTTP direct semblant insuffisant.
 
 ## Dérogations / licenciés FBI
 

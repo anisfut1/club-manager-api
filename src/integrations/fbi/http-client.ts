@@ -24,6 +24,26 @@ import type { EmarqueDocumentRef, FbiAutomationClient, FbiCredentialsInput } fro
 
 export const FBI_DEFAULT_BASE_URL = "https://extranet.ffbb.com/fbi";
 
+/**
+ * Toute page FBI (succès ou échec) affiche "Votre navigateur n'est pas
+ * recommandé pour utiliser FBI. Nous vous recommandons Google Chrome" —
+ * preuve d'une détection de navigateur côté serveur. Nos requêtes
+ * n'envoyaient jusqu'ici AUCUN `User-Agent` (`fetch` de Node/undici
+ * n'en envoie pas un qui ressemble à un vrai navigateur) : un `LOGIN_FAILED`
+ * systématique avec des identifiants confirmés corrects sur le vrai site
+ * (constaté en production, voir docs/FBI.md) est cohérent avec un rejet
+ * de connexion basé sur le user-agent (protection anti-bot silencieuse,
+ * fréquente sur ce type d'appli legacy) plutôt qu'un vrai refus
+ * d'identifiants. Appliqué à CHAQUE requête FBI, pas seulement le login :
+ * une incohérence de user-agent au fil d'une même session est un signal
+ * de détection courant.
+ */
+const FBI_REQUEST_HEADERS = {
+  "user-agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+  "accept-language": "fr-FR,fr;q=0.9",
+} as const;
+
 /** Aplatit les espaces/retours à la ligne pour rester lisible dans un log JSON une ligne, et borne la longueur. */
 function truncateFlat(text: string, maxLength: number): string {
   const flattened = text.replace(/\s+/g, " ").trim();
@@ -156,7 +176,7 @@ export class HttpFbiClient implements FbiAutomationClient<HttpFbiSession> {
 
     let loginPage: Response;
     try {
-      loginPage = await this.fetchImpl(loginUrl);
+      loginPage = await this.fetchImpl(loginUrl, { headers: { ...FBI_REQUEST_HEADERS } });
     } catch (error) {
       throw new FbiError("Page de connexion FBI injoignable", "LOGIN_PAGE_UNREACHABLE", error);
     }
@@ -188,6 +208,7 @@ export class HttpFbiClient implements FbiAutomationClient<HttpFbiSession> {
       submitResponse = await this.fetchImpl(form.action, {
         method: "POST",
         headers: {
+          ...FBI_REQUEST_HEADERS,
           "content-type": "application/x-www-form-urlencoded",
           cookie: cookieJar.cookieHeader,
         },
@@ -211,7 +232,7 @@ export class HttpFbiClient implements FbiAutomationClient<HttpFbiSession> {
     let landingHtml: string;
     if (redirectLocation) {
       const landingUrl = new URL(redirectLocation, form.action).toString();
-      const landing = await this.fetchImpl(landingUrl, { headers: { cookie: cookieJar.cookieHeader } });
+      const landing = await this.fetchImpl(landingUrl, { headers: { ...FBI_REQUEST_HEADERS, cookie: cookieJar.cookieHeader } });
       cookieJar.applySetCookieHeaders(landing.headers);
       landingHtml = await landing.text();
     } else if (submitResponse.ok) {
@@ -258,7 +279,7 @@ export class HttpFbiClient implements FbiAutomationClient<HttpFbiSession> {
    */
   async isSessionValid(session: HttpFbiSession): Promise<boolean> {
     const response = await this.fetchImpl(`${this.baseUrl}/accueil.fbi`, {
-      headers: { cookie: session.cookieJar.cookieHeader },
+      headers: { ...FBI_REQUEST_HEADERS, cookie: session.cookieJar.cookieHeader },
     });
     const html = await response.text();
     return response.ok && !this.looksLikeLoginPage(html);
@@ -290,7 +311,7 @@ export class HttpFbiClient implements FbiAutomationClient<HttpFbiSession> {
   async downloadDocument(session: HttpFbiSession, url: string): Promise<Buffer> {
     let response: Response;
     try {
-      response = await this.fetchImpl(url, { headers: { cookie: session.cookieJar.cookieHeader } });
+      response = await this.fetchImpl(url, { headers: { ...FBI_REQUEST_HEADERS, cookie: session.cookieJar.cookieHeader } });
     } catch (error) {
       throw new FbiError(`Téléchargement FBI échoué : ${url}`, "REQUEST_FAILED", error);
     }

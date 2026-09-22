@@ -89,6 +89,31 @@ describe("HttpFbiClient.login", () => {
     ]);
   });
 
+  it("envoie un User-Agent de navigateur réel sur chaque requête FBI (le site fait de la détection de navigateur, voir docs/FBI.md)", async () => {
+    const capturedUserAgents: (string | null)[] = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      capturedUserAgents.push(new Headers(init?.headers).get("user-agent"));
+
+      if (url.endsWith("/connexion.fbi")) {
+        return makeResponse(LOGIN_PAGE_HTML, { headers: { "set-cookie": "JSESSIONID=abc123; Path=/fbi" } });
+      }
+      if (url.endsWith("/j_security_check")) {
+        return makeResponse("", { status: 302, headers: { location: "/fbi/accueil.fbi" } });
+      }
+      return makeResponse(AUTHENTICATED_PAGE_HTML);
+    });
+
+    const provider = new HttpFbiClient({ baseUrl: BASE_URL, fetchImpl: fetchImpl as unknown as typeof fetch });
+    await provider.login({ username: "club1234", password: "secret" });
+
+    expect(capturedUserAgents).toHaveLength(3);
+    for (const ua of capturedUserAgents) {
+      expect(ua).toContain("Chrome");
+      expect(ua).not.toBeNull();
+    }
+  });
+
   it("envoie les identifiants dans les bons champs de formulaire (détectés dynamiquement)", async () => {
     let capturedBody = "";
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
