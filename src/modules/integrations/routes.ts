@@ -236,10 +236,30 @@ integrationsRouter.get("/sync-runs", async (c) => {
   return c.json({ syncRuns });
 });
 
-/** POST /v1/clubs/:clubId/integrations/ffbb/sync — diagnostic admin (§18 de la demande), le cron fait déjà tourner ce même service automatiquement. */
+/**
+ * POST /v1/clubs/:clubId/integrations/ffbb/sync — diagnostic admin (§18 de
+ * la demande), le cron fait déjà tourner ce même service automatiquement.
+ *
+ * Acquiert `try_acquire_sync_lock` (même verrou que `scheduler.ts`, voir
+ * supabase/migrations/20260921100070_sync_locks.sql) — jusqu'ici ce verrou
+ * n'était posé QUE côté cron, jamais ici : un admin cliquant plusieurs fois
+ * sur "Relancer maintenant", ou un clic pendant que le cron tourne déjà,
+ * lançait deux `syncFfbb` en parallèle pour le même club (constaté en
+ * production dans l'historique `sync_runs`, voir docs/FFBB.md). 409 explicite
+ * plutôt qu'un chevauchement silencieux.
+ */
 integrationsRouter.post("/ffbb/sync", requireClubRole("club_admin"), async (c) => {
   const { club } = c.get("club");
   const serviceSupabase = createServiceSupabaseClient();
+
+  const { data: acquired, error: lockError } = await serviceSupabase.rpc("try_acquire_sync_lock", {
+    p_club_id: club.id,
+    p_integration: "ffbb",
+  });
+  if (lockError) throw new Error(`Acquisition du verrou de synchronisation échouée : ${lockError.message}`);
+  if (!acquired) {
+    throw conflict("Une synchronisation FFBB est déjà en cours pour ce club — réessaie dans quelques minutes.", "FFBB_SYNC_ALREADY_RUNNING");
+  }
 
   try {
     const result = await syncFfbb(serviceSupabase, new FfbbPublicProvider(), { id: club.id, ffbbClubId: club.ffbbClubId });
@@ -247,6 +267,8 @@ integrationsRouter.post("/ffbb/sync", requireClubRole("club_admin"), async (c) =
   } catch (error) {
     logError("Synchronisation FFBB manuelle échouée", error, { clubId: club.id });
     throw error;
+  } finally {
+    await serviceSupabase.rpc("release_sync_lock", { p_club_id: club.id, p_integration: "ffbb" });
   }
 });
 

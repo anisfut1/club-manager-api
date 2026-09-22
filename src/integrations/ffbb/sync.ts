@@ -23,6 +23,35 @@ export interface SyncFfbbResult {
 }
 
 /**
+ * Clôture les `sync_runs` restés "running" indéfiniment — un processus tué
+ * avant sa mise à jour finale (ex. timeout serveur) laisse une ligne
+ * "running" pour toujours, jamais "error" (le `finally`/`catch` applicatif
+ * ne s'exécute pas sur un kill dur), ce qui donne l'impression trompeuse
+ * d'une synchronisation bloquée sur /admin/sync (constaté en production,
+ * voir docs/FFBB.md). Appelée seulement APRÈS acquisition du verrou
+ * `try_acquire_sync_lock` (routes.ts / scheduler.ts) : à ce stade aucune
+ * autre synchronisation FFBB n'est en cours pour ce club, donc toute ligne
+ * encore "running" est nécessairement orpheline — jamais un run concurrent
+ * légitime.
+ */
+export async function reapOrphanedRunningSyncRuns(supabase: Client, clubId: string): Promise<void> {
+  const { error } = await supabase
+    .from("sync_runs")
+    .update({
+      status: "error",
+      finished_at: new Date().toISOString(),
+      error_log: "Exécution interrompue avant la fin (processus arrêté, ex. timeout serveur) — clôturée automatiquement au démarrage de la synchronisation suivante.",
+    })
+    .eq("club_id", clubId)
+    .eq("provider", "ffbb")
+    .eq("status", "running");
+
+  if (error) {
+    logError("Nettoyage des sync_runs orphelins échoué", error, { clubId });
+  }
+}
+
+/**
  * Renseigne `clubs.logo_url` depuis FFBB UNIQUEMENT s'il est encore vide —
  * demande explicite du club ("Sète vs X" sur la page Matchs). `logo_url`
  * est un champ que le club peut aussi éditer manuellement
@@ -231,6 +260,8 @@ export interface SyncFfbbClub {
  * environnement (voir docs/FFBB_ECOSYSTEM_RESEARCH.md).
  */
 export async function syncFfbb(supabase: Client, provider: FfbbPublicProvider, club: SyncFfbbClub): Promise<SyncFfbbResult> {
+  await reapOrphanedRunningSyncRuns(supabase, club.id);
+
   const { data: syncRun, error: syncRunError } = await supabase
     .from("sync_runs")
     .insert({ club_id: club.id, provider: "ffbb", status: "running" })

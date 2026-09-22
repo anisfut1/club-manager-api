@@ -411,3 +411,54 @@ PATCH /v1/clubs/:clubId/integrations/ffbb
 synchronisé (aucun `DELETE` sur `matches`) ; un changement de code
 replanifie `ffbb_next_sync_at = now()` pour resynchroniser au prochain
 passage du cron. Voir `docs/API.md` pour le détail des 8 gaps résolus.
+
+## Onzième correctif — /admin/intégrations et /admin/sync remontaient des erreurs (2026-09-22)
+
+Signalé par le club : ces deux pages "sont en erreur". Diagnostic à partir
+des données réelles en production (`sync_runs`, `fbi_integration_status`,
+logs Supabase) plutôt que d'une supposition — deux causes distinctes,
+toutes deux corrigées :
+
+1. **Verrou de concurrence jamais posé sur le déclenchement manuel.**
+   `try_acquire_sync_lock`/`release_sync_lock` (voir
+   `supabase/migrations/20260921100070_sync_locks.sql`) existaient déjà et
+   étaient déjà utilisés par `scheduler.ts` (le cron) — mais **jamais** par
+   `POST /v1/clubs/:clubId/integrations/ffbb/sync` (bouton "Relancer
+   maintenant" de `/admin/intégrations`). Un admin cliquant plusieurs fois
+   de suite, ou cliquant pendant que le cron tournait déjà, lançait deux
+   `syncFfbb` en parallèle pour le même club — confirmé dans l'historique
+   `sync_runs` du club pilote (plusieurs déclenchements à quelques minutes
+   d'écart le 2026-09-22 après-midi). Corrigé : la route pose maintenant le
+   même verrou que le cron (`routes.ts`), avec un 409
+   `FFBB_SYNC_ALREADY_RUNNING` explicite si une synchronisation est déjà en
+   cours, et le libère systématiquement (`finally`) même si `syncFfbb`
+   lève une exception. Testé (`routes.test.ts`, 4 nouveaux cas).
+
+2. **Une ligne `sync_runs` restée "running" indéfiniment.** Un processus
+   tué durement (timeout serveur, avant le correctif de fenêtre 6 mois —
+   voir "Sixième déclenchement" plus haut) ne passe jamais par le `catch`
+   de `syncFfbb` qui marque le run "error" : la ligne reste "running" pour
+   toujours. `/admin/sync` affiche les 10 derniers runs sans filtrer par
+   âge — une ligne "running" en réalité morte depuis des heures, mélangée
+   à d'anciennes erreurs déjà résolues (coercion booléenne
+   `publicationInternet`, déjà corrigée — voir "Cinquième déclenchement";
+   jetons FFBB expirés, auto-résolus au run suivant), donnait l'impression
+   d'un système cassé alors que les synchronisations récentes réussissaient
+   toutes. Corrigé : `reapOrphanedRunningSyncRuns` (`sync.ts`), appelée en
+   tête de `syncFfbb` — à ce stade le verrou vient d'être acquis, donc
+   toute ligne "running" trouvée pour ce club est nécessairement orpheline
+   (jamais un run concurrent légitime), et est requalifiée en "error" avec
+   un message explicite. Testé isolément (`sync.test.ts`).
+
+Fix complémentaire côté SCSB : `/admin/sync` appelait
+`api.matches.list(club.id)` SANS filtre `from`, paginant tout l'historique
+du club à chaque chargement (le même risque de dépassement de délai déjà
+corrigé sur la page Matchs publique) — aligné sur le même filtre
+`currentSeasonStart()`.
+
+Nettoyage ponctuel en production (une seule ligne, exécuté directement en
+SQL, pas via une migration — pas un changement de schéma) : la ligne
+`sync_runs` orpheline du club pilote (`c7574a14…`, démarrée le
+2026-09-22 14:27, jamais terminée) a été requalifiée en "error" pour que
+`/admin/sync` reflète immédiatement l'état réel sans attendre le prochain
+cycle de synchronisation.

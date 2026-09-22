@@ -120,6 +120,8 @@ export interface FakeClubSupabaseState {
   emarqueImports: FakeEmarqueImportRow[];
   profiles: FakeProfileRow[];
   isPlatformAdmin: boolean;
+  /** Clés `${clubId}:${integration}` actuellement verrouillées (voir try_acquire_sync_lock/release_sync_lock). */
+  syncLocks: Set<string>;
 }
 
 export function makeFakeClubSupabaseState(overrides: Partial<FakeClubSupabaseState> = {}): FakeClubSupabaseState {
@@ -135,6 +137,7 @@ export function makeFakeClubSupabaseState(overrides: Partial<FakeClubSupabaseSta
     emarqueImports: [],
     profiles: [],
     isPlatformAdmin: false,
+    syncLocks: new Set(),
     ...overrides,
   };
 }
@@ -360,8 +363,19 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
           throw new Error(`Table inattendue dans le fake Supabase de test : ${table}`);
       }
     },
-    rpc(fn: string) {
+    rpc(fn: string, args?: { p_club_id?: string; p_integration?: string }) {
       if (fn === "is_platform_admin") return Promise.resolve({ data: state.isPlatformAdmin, error: null });
+      if (fn === "try_acquire_sync_lock") {
+        const key = `${args?.p_club_id}:${args?.p_integration}`;
+        if (state.syncLocks.has(key)) return Promise.resolve({ data: false, error: null });
+        state.syncLocks.add(key);
+        return Promise.resolve({ data: true, error: null });
+      }
+      if (fn === "release_sync_lock") {
+        const key = `${args?.p_club_id}:${args?.p_integration}`;
+        state.syncLocks.delete(key);
+        return Promise.resolve({ data: null, error: null });
+      }
       throw new Error(`RPC inattendue dans le fake Supabase de test : ${fn}`);
     },
   };

@@ -16,6 +16,10 @@ vi.mock("../../db/client.js", () => ({
   createAnonSupabaseClient: () => ({}),
 }));
 
+const { mockSyncFfbb } = vi.hoisted(() => ({ mockSyncFfbb: vi.fn() }));
+vi.mock("../../integrations/ffbb/sync.js", () => ({ syncFfbb: mockSyncFfbb }));
+vi.mock("../../integrations/ffbb/public-provider.js", () => ({ FfbbPublicProvider: vi.fn() }));
+
 const { app } = await import("../../app.js");
 
 const CLUB_A = {
@@ -41,6 +45,8 @@ function request(path: string, init: RequestInit = {}) {
 
 beforeEach(() => {
   currentUserId = "user-a";
+  mockSyncFfbb.mockReset();
+  mockSyncFfbb.mockResolvedValue({ syncRunId: "run-1", status: "success", stats: {} });
   state = makeFakeClubSupabaseState({
     clubs: [{ ...CLUB_A }],
     memberships: [
@@ -161,5 +167,48 @@ describe("GET /integrations (gap 8 de la demande)", () => {
     const body = await res.json();
     expect(body.fbi.username).toBeNull();
     expect(body.fbi.configured).toBe(false);
+  });
+});
+
+describe("POST /integrations/ffbb/sync — verrou de concurrence", () => {
+  it("synchronise et libère le verrou, même déclenché plusieurs fois d'affilée", async () => {
+    const res1 = await request("/integrations/ffbb/sync", { method: "POST" });
+    expect(res1.status).toBe(200);
+    expect(mockSyncFfbb).toHaveBeenCalledTimes(1);
+
+    // Le verrou a été libéré après le premier appel : un second déclenchement passe aussi.
+    const res2 = await request("/integrations/ffbb/sync", { method: "POST" });
+    expect(res2.status).toBe(200);
+    expect(mockSyncFfbb).toHaveBeenCalledTimes(2);
+  });
+
+  it("refuse avec 409 un déclenchement pendant qu'une synchronisation est déjà en cours pour ce club", async () => {
+    state.syncLocks.add(`${CLUB_A.id}:ffbb`);
+
+    const res = await request("/integrations/ffbb/sync", { method: "POST" });
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error.code).toBe("FFBB_SYNC_ALREADY_RUNNING");
+    expect(mockSyncFfbb).not.toHaveBeenCalled();
+  });
+
+  it("libère le verrou même si syncFfbb lève une exception (jamais de verrou bloqué durablement)", async () => {
+    mockSyncFfbb.mockRejectedValueOnce(new Error("panne FFBB simulée"));
+
+    const res = await request("/integrations/ffbb/sync", { method: "POST" });
+    expect(res.status).toBe(500);
+    expect(state.syncLocks.has(`${CLUB_A.id}:ffbb`)).toBe(false);
+
+    // Le verrou étant libéré, un nouveau déclenchement est accepté.
+    const res2 = await request("/integrations/ffbb/sync", { method: "POST" });
+    expect(res2.status).toBe(200);
+  });
+
+  it("un coach reçoit 403 (jamais d'acquisition de verrou pour un rôle non autorisé)", async () => {
+    currentUserId = "user-coach";
+    const res = await request("/integrations/ffbb/sync", { method: "POST" });
+    expect(res.status).toBe(403);
+    expect(mockSyncFfbb).not.toHaveBeenCalled();
   });
 });
