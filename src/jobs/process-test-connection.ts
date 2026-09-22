@@ -1,11 +1,11 @@
-import type { DbClient } from "@/db/client";
-import type { FbiJobRow } from "@/db/types";
-import { getFbiCredentials } from "@/integrations/fbi/credentials-store";
-import { BrowserFbiClient } from "@/integrations/fbi/browser-client";
-import { launchServerlessBrowser } from "@/integrations/fbi/browser-launcher";
-import { classifyFbiLoginStatus, FbiError } from "@/integrations/fbi/errors";
-import { getEnv } from "@/config/env";
-import { logError, logInfo } from "@/logger";
+import type { DbClient } from "../db/client.js";
+import type { FbiJobRow } from "../db/types.js";
+import { getFbiCredentials } from "../integrations/fbi/credentials-store.js";
+import { BrowserFbiClient } from "../integrations/fbi/browser-client.js";
+import { launchServerlessBrowser } from "../integrations/fbi/browser-launcher.js";
+import { classifyFbiLoginStatus, FbiError } from "../integrations/fbi/errors.js";
+import { getEnv } from "../config/env.js";
+import { logError, logInfo } from "../logger.js";
 
 /**
  * Traite un job `test_connection` via `BrowserFbiClient` — utilisé UNIQUEMENT

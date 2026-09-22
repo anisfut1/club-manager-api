@@ -1,11 +1,11 @@
 import { Hono } from "hono";
-import type { AppEnv } from "@/auth/context";
-import { requireAuth, requireClubMembership } from "@/auth/middleware";
-import { badRequest, notFound } from "@/api-error";
-import { MatchesQueryDtoSchema, type MatchListItemDto, type MatchDetailsDto } from "@/contracts/matches";
-import { computePeriodRange } from "@/util/timezone";
-import { sanitizeEmarqueError } from "@/integrations/emarque/sanitize-error";
-import type { QualityWarningDto } from "@/contracts/emarque";
+import type { AppEnv } from "../../auth/context.js";
+import { requireAuth, requireClubMembership } from "../../auth/middleware.js";
+import { badRequest, notFound } from "../../api-error.js";
+import { MatchesQueryDtoSchema, type MatchListItemDto, type MatchDetailsDto } from "../../contracts/matches.js";
+import { computePeriodRange } from "../../util/timezone.js";
+import { sanitizeEmarqueError } from "../../integrations/emarque/sanitize-error.js";
+import type { QualityWarningDto } from "../../contracts/emarque.js";
 
 export const matchesRouter = new Hono<AppEnv>();
 

@@ -1,6 +1,6 @@
-import { PdfTextExtractor } from "../extractors/pdf-text-extractor";
-import { PdfRasterOcrExtractor } from "../extractors/pdf-raster-ocr-extractor";
-import type { DocumentExtractor } from "../extractors/types";
+import { PdfTextExtractor } from "../extractors/pdf-text-extractor.js";
+import { PdfRasterOcrExtractor } from "../extractors/pdf-raster-ocr-extractor.js";
+import type { DocumentExtractor } from "../extractors/types.js";
 
 /**
  * Choisit l'extracteur adapté à un document (ARCHITECTURE.md §15/§16) :

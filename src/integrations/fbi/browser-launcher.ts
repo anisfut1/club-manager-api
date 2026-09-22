@@ -1,6 +1,6 @@
 import type { Browser } from "playwright-core";
-import { getEnv } from "@/config/env";
-import { logInfo } from "@/logger";
+import { getEnv } from "../../config/env.js";
+import { logInfo } from "../../logger.js";
 
 /**
  * Lance un Chromium headless "serverless" (playwright-core + @sparticuz/chromium)

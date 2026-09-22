@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "@/db/types";
-import { decryptSecret, encryptSecret } from "@/security/crypto";
-import type { FbiCredentialsInput } from "./types";
+import type { Database } from "../../db/types.js";
+import { decryptSecret, encryptSecret } from "../../security/crypto.js";
+import type { FbiCredentialsInput } from "./types.js";
 
 type Client = SupabaseClient<Database>;
 

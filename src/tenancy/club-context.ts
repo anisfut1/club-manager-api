@@ -1,6 +1,6 @@
-import type { DbClient } from "@/db/client";
-import type { ClubRole, ClubStatus } from "@/db/types";
-import { notFound } from "@/api-error";
+import type { DbClient } from "../db/client.js";
+import type { ClubRole, ClubStatus } from "../db/types.js";
+import { notFound } from "../api-error.js";
 
 /**
  * Adapté depuis SCSB src/lib/tenancy/club-context.ts : même logique de

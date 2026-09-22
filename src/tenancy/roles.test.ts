@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { hasAnyRole, hasRole, isClubAdmin, ROLE_LABELS } from "./roles";
-import type { ClubRole } from "@/db/types";
+import { hasAnyRole, hasRole, isClubAdmin, ROLE_LABELS } from "./roles.js";
+import type { ClubRole } from "../db/types.js";
 
 describe("hasRole", () => {
   it("retourne true si le rôle est présent parmi plusieurs rôles cumulés", () => {

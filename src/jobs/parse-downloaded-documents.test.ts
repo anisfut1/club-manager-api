@@ -1,23 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { EMarqueMatchData } from "@/integrations/emarque/types";
+import type { EMarqueMatchData } from "../integrations/emarque/types.js";
 
-vi.mock("@/storage/emarque-storage", () => ({
+vi.mock("../storage/emarque-storage.js", () => ({
   downloadEmarqueFile: vi.fn(async () => Buffer.from("contenu-zip-synthetique")),
 }));
 
-vi.mock("@/integrations/emarque/parser/parse-emarque-zip", () => ({
+vi.mock("../integrations/emarque/parser/parse-emarque-zip.js", () => ({
   PARSER_VERSION: "test-version",
   parseEmarqueZip: vi.fn(),
 }));
 
-vi.mock("@/integrations/emarque/persist/persist-emarque-match", () => ({
+vi.mock("../integrations/emarque/persist/persist-emarque-match.js", () => ({
   persistEmarqueMatchData: vi.fn(async () => ({ importId: "import-1", status: "imported", alreadyImported: false, participantsLinked: 0, participantsUnlinked: 0 })),
 }));
 
-import { downloadEmarqueFile } from "@/storage/emarque-storage";
-import { parseEmarqueZip } from "@/integrations/emarque/parser/parse-emarque-zip";
-import { persistEmarqueMatchData } from "@/integrations/emarque/persist/persist-emarque-match";
-import { parseDownloadedEmarqueDocuments } from "./parse-downloaded-documents";
+import { downloadEmarqueFile } from "../storage/emarque-storage.js";
+import { parseEmarqueZip } from "../integrations/emarque/parser/parse-emarque-zip.js";
+import { persistEmarqueMatchData } from "../integrations/emarque/persist/persist-emarque-match.js";
+import { parseDownloadedEmarqueDocuments } from "./parse-downloaded-documents.js";
 
 const EMPTY_EMARQUE_DATA: EMarqueMatchData = {
   match: {

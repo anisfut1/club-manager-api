@@ -1,10 +1,10 @@
 import { Hono } from "hono";
-import type { AppEnv } from "@/auth/context";
-import { requireAuth, requireClubMembership, requireClubRole } from "@/auth/middleware";
-import { getClubCapabilities } from "@/tenancy/club-capabilities";
-import type { ClubRole } from "@/tenancy/roles";
-import { UpdateClubDtoSchema, type ClubDto, type TeamDto } from "@/contracts/clubs";
-import { badRequest } from "@/api-error";
+import type { AppEnv } from "../../auth/context.js";
+import { requireAuth, requireClubMembership, requireClubRole } from "../../auth/middleware.js";
+import { getClubCapabilities } from "../../tenancy/club-capabilities.js";
+import type { ClubRole } from "../../tenancy/roles.js";
+import { UpdateClubDtoSchema, type ClubDto, type TeamDto } from "../../contracts/clubs.js";
+import { badRequest } from "../../api-error.js";
 
 export const clubsRouter = new Hono<AppEnv>();
 

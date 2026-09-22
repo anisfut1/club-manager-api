@@ -1,13 +1,13 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { swaggerUI } from "@hono/swagger-ui";
-import type { AppEnv } from "@/auth/context";
-import { ApiError } from "@/api-error";
-import { getEnv } from "@/config/env";
-import { v1Router } from "@/api/v1/index";
-import { internalRouter } from "@/api/internal/index";
-import { generateOpenApiDocument } from "@/openapi";
-import { logError } from "@/logger";
+import type { AppEnv } from "./auth/context.js";
+import { ApiError } from "./api-error.js";
+import { getEnv } from "./config/env.js";
+import { v1Router } from "./api/v1/index.js";
+import { internalRouter } from "./api/internal/index.js";
+import { generateOpenApiDocument } from "./openapi.js";
+import { logError } from "./logger.js";
 
 export const app = new Hono<AppEnv>();
 

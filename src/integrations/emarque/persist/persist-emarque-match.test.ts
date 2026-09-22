@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { EMarqueMatchData } from "../types";
-import { persistEmarqueMatchData } from "./persist-emarque-match";
+import type { EMarqueMatchData } from "../types.js";
+import { persistEmarqueMatchData } from "./persist-emarque-match.js";
 
 function buildData(overrides: Partial<EMarqueMatchData> = {}): EMarqueMatchData {
   return {

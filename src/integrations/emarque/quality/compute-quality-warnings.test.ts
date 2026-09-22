@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { computeOverallConfidence, computeQualityWarnings } from "./compute-quality-warnings";
-import type { EMarqueMatchData } from "../types";
+import { computeOverallConfidence, computeQualityWarnings } from "./compute-quality-warnings.js";
+import type { EMarqueMatchData } from "../types.js";
 
 function baseData(): Pick<EMarqueMatchData, "match" | "players" | "tableOfficials"> {
   return {

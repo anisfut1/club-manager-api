@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nextErrorBackoffSeconds, nextWaitingBackoffSeconds } from "./backoff";
+import { nextErrorBackoffSeconds, nextWaitingBackoffSeconds } from "./backoff.js";
 
 describe("nextWaitingBackoffSeconds", () => {
   it("suit le calendrier 30min / 2h / 6h / 24h puis se stabilise à 24h (§27/§47 du brief FBI)", () => {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { NormalizedMatch } from "@/integrations/ffbb/types";
-import type { Database } from "@/db/types";
-import { diffTrackedFields, mapNormalizedMatchToRow, shouldRequestEmarque } from "./mapping";
+import type { NormalizedMatch } from "./types.js";
+import type { Database } from "../../db/types.js";
+import { diffTrackedFields, mapNormalizedMatchToRow, shouldRequestEmarque } from "./mapping.js";
 
 type MatchRow = Database["public"]["Tables"]["matches"]["Row"];
 

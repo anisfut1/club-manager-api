@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseFinalResultLine, parsePouleLabel, parseRencontreHeaderLine, toIsoLocalDateTime } from "./header-fields";
+import { parseFinalResultLine, parsePouleLabel, parseRencontreHeaderLine, toIsoLocalDateTime } from "./header-fields.js";
 
 describe("parseRencontreHeaderLine", () => {
   it("analyse une ligne d'en-tête propre", () => {

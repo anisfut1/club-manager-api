@@ -7,7 +7,7 @@ import {
   parseMinutesSecondsToSeconds,
   splitCommaSeparatedName,
   splitUppercaseAbbreviatedName,
-} from "./text-fields";
+} from "./text-fields.js";
 
 describe("extractLicenseNumber", () => {
   it("extrait un numéro de licence propre", () => {

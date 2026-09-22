@@ -1,4 +1,4 @@
-import type { EMarqueMatchData, EMarqueQualityWarning } from "../types";
+import type { EMarqueMatchData, EMarqueQualityWarning } from "../types.js";
 
 const LOW_CONFIDENCE_THRESHOLD = 40;
 

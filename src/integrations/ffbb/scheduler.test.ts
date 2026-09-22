@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { mockSyncFfbb } = vi.hoisted(() => ({ mockSyncFfbb: vi.fn() }));
 vi.mock("./sync", () => ({ syncFfbb: mockSyncFfbb }));
 
-import { syncAllDueClubs } from "./scheduler";
+import { syncAllDueClubs } from "./scheduler.js";
 
 interface FakeClubRow {
   id: string;

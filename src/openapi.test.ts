@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { generateOpenApiDocument } from "./openapi";
+import { generateOpenApiDocument } from "./openapi.js";
 
 /**
  * §26 de la demande : garantit que toute route/DTO nouvellement ajoutée

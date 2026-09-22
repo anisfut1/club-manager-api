@@ -1,23 +1,23 @@
 import { Hono } from "hono";
-import type { AppEnv } from "@/auth/context";
-import { requireAuth, requireClubMembership, requireClubRole } from "@/auth/middleware";
-import { createServiceSupabaseClient } from "@/db/client";
-import { badRequest, conflict } from "@/api-error";
-import { getFbiCredentials, getFbiUsername, saveFbiCredentials } from "@/integrations/fbi/credentials-store";
-import { HttpFbiClient } from "@/integrations/fbi/http-client";
-import { FbiError, type FbiErrorCode } from "@/integrations/fbi/errors";
-import { FfbbPublicProvider } from "@/integrations/ffbb/public-provider";
-import { syncFfbb } from "@/integrations/ffbb/sync";
-import { getEnv } from "@/config/env";
-import { logError } from "@/logger";
+import type { AppEnv } from "../../auth/context.js";
+import { requireAuth, requireClubMembership, requireClubRole } from "../../auth/middleware.js";
+import { createServiceSupabaseClient } from "../../db/client.js";
+import { badRequest, conflict } from "../../api-error.js";
+import { getFbiCredentials, getFbiUsername, saveFbiCredentials } from "../../integrations/fbi/credentials-store.js";
+import { HttpFbiClient } from "../../integrations/fbi/http-client.js";
+import { FbiError, type FbiErrorCode } from "../../integrations/fbi/errors.js";
+import { FfbbPublicProvider } from "../../integrations/ffbb/public-provider.js";
+import { syncFfbb } from "../../integrations/ffbb/sync.js";
+import { getEnv } from "../../config/env.js";
+import { logError } from "../../logger.js";
 import {
   PatchFbiIntegrationDtoSchema,
   PatchFfbbIntegrationDtoSchema,
   type FbiIntegrationStatusDto,
   type IntegrationStatusDto,
   type SyncRunDto,
-} from "@/contracts/integrations";
-import type { DbClient } from "@/db/client";
+} from "../../contracts/integrations.js";
+import type { DbClient } from "../../db/client.js";
 
 export const integrationsRouter = new Hono<AppEnv>();
 

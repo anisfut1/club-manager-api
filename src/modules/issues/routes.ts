@@ -1,9 +1,9 @@
 import { Hono } from "hono";
-import type { AppEnv } from "@/auth/context";
-import { requireAuth, requireClubMembership, requireClubRole } from "@/auth/middleware";
-import { badRequest, notFound } from "@/api-error";
-import type { IssueDto } from "@/contracts/issues";
-import type { QualityWarningDto } from "@/contracts/emarque";
+import type { AppEnv } from "../../auth/context.js";
+import { requireAuth, requireClubMembership, requireClubRole } from "../../auth/middleware.js";
+import { badRequest, notFound } from "../../api-error.js";
+import type { IssueDto } from "../../contracts/issues.js";
+import type { QualityWarningDto } from "../../contracts/emarque.js";
 
 export const issuesRouter = new Hono<AppEnv>();
 

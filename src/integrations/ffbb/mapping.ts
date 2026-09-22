@@ -4,8 +4,8 @@
  * unitairement (voir ARCHITECTURE.md §9 et le brief "tests FFBB : mapping,
  * diff, idempotence").
  */
-import type { NormalizedMatch } from "@/integrations/ffbb/types";
-import type { Database } from "@/db/types";
+import type { NormalizedMatch } from "./types.js";
+import type { Database } from "../../db/types.js";
 
 type MatchRow = Database["public"]["Tables"]["matches"]["Row"];
 type MatchInsert = Database["public"]["Tables"]["matches"]["Insert"];

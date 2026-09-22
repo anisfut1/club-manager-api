@@ -1,5 +1,5 @@
-import { FFBB_ENDPOINTS } from "./config";
-import { FfbbApiError, FfbbDirectusClient, type DirectusClientOptions } from "./directus-client";
+import { FFBB_ENDPOINTS } from "./config.js";
+import { FfbbApiError, FfbbDirectusClient, type DirectusClientOptions } from "./directus-client.js";
 import type {
   FfbbClubSnapshot,
   NormalizedCompetition,
@@ -9,7 +9,7 @@ import type {
   NormalizedPool,
   NormalizedTeamEngagement,
   NormalizedVenue,
-} from "./types";
+} from "./types.js";
 
 // Formes brutes attendues côté Directus (voir docs/FFBB_ECOSYSTEM_RESEARCH.md
 // §3.3/§3.4). Champs optionnels par prudence : cette API n'est pas

@@ -1,21 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { buildFakeClubSupabase, makeFakeClubSupabaseState, type FakeClubSupabaseState } from "@/test-support/fake-club-supabase";
+import { buildFakeClubSupabase, makeFakeClubSupabaseState, type FakeClubSupabaseState } from "../../test-support/fake-club-supabase.js";
 
 let state: FakeClubSupabaseState;
 let currentUserId = "user-a";
 
-vi.mock("@/auth/jwt", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/auth/jwt")>();
+vi.mock("../../auth/jwt.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../auth/jwt.js")>();
   return { ...actual, verifyAccessToken: vi.fn(async () => ({ id: currentUserId, email: `${currentUserId}@example.test` })) };
 });
 
-vi.mock("@/db/client", () => ({
+vi.mock("../../db/client.js", () => ({
   createUserSupabaseClient: () => buildFakeClubSupabase(state),
   createServiceSupabaseClient: () => buildFakeClubSupabase(state),
   createAnonSupabaseClient: () => ({}),
 }));
 
-const { app } = await import("@/app");
+const { app } = await import("../../app.js");
 
 const CLUB_A = {
   id: "aaaaaaaa-0000-0000-0000-000000000000",

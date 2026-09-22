@@ -1,15 +1,15 @@
 import { createHash } from "node:crypto";
-import type { DbClient } from "@/db/client";
-import type { FbiJobRow } from "@/db/types";
-import { getFbiCredentials } from "@/integrations/fbi/credentials-store";
-import { BrowserFbiClient, type BrowserFbiSession } from "@/integrations/fbi/browser-client";
-import { launchServerlessBrowser } from "@/integrations/fbi/browser-launcher";
-import { classifyFbiLoginStatus, FbiError } from "@/integrations/fbi/errors";
-import { inferMatchDocumentType, mimeTypeForFileName } from "@/integrations/fbi/document-type";
-import { emarqueStoragePath, resolveSeasonLabel, uploadEmarqueFile } from "@/storage/emarque-storage";
-import { nextErrorBackoffSeconds, nextWaitingBackoffSeconds } from "./backoff";
-import { getEnv } from "@/config/env";
-import { logError, logInfo } from "@/logger";
+import type { DbClient } from "../db/client.js";
+import type { FbiJobRow } from "../db/types.js";
+import { getFbiCredentials } from "../integrations/fbi/credentials-store.js";
+import { BrowserFbiClient, type BrowserFbiSession } from "../integrations/fbi/browser-client.js";
+import { launchServerlessBrowser } from "../integrations/fbi/browser-launcher.js";
+import { classifyFbiLoginStatus, FbiError } from "../integrations/fbi/errors.js";
+import { inferMatchDocumentType, mimeTypeForFileName } from "../integrations/fbi/document-type.js";
+import { emarqueStoragePath, resolveSeasonLabel, uploadEmarqueFile } from "../storage/emarque-storage.js";
+import { nextErrorBackoffSeconds, nextWaitingBackoffSeconds } from "./backoff.js";
+import { getEnv } from "../config/env.js";
+import { logError, logInfo } from "../logger.js";
 
 const UNIQUE_VIOLATION = "23505";
 

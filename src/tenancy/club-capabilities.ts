@@ -1,4 +1,4 @@
-import type { DbClient } from "@/db/client";
+import type { DbClient } from "../db/client.js";
 
 /**
  * Copié depuis SCSB src/lib/tenancy/club-capabilities.ts. Modèle central du

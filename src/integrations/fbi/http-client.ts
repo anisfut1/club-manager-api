@@ -1,7 +1,7 @@
 import * as cheerio from "cheerio";
-import { SimpleCookieJar } from "./cookie-jar";
-import { FbiError } from "./errors";
-import type { EmarqueDocumentRef, FbiAutomationClient, FbiCredentialsInput } from "./types";
+import { SimpleCookieJar } from "./cookie-jar.js";
+import { FbiError } from "./errors.js";
+import type { EmarqueDocumentRef, FbiAutomationClient, FbiCredentialsInput } from "./types.js";
 
 /**
  * HttpFbiClient — client HTTP direct pour FBI (pas de navigateur, voir

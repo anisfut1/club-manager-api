@@ -1,4 +1,4 @@
-import type { ZoneFraction } from "../extractors/types";
+import type { ZoneFraction } from "../extractors/types.js";
 
 /**
  * Coordonnées calibrées pour le document "résumé" (statistiques par

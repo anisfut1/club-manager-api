@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SimpleCookieJar } from "./cookie-jar";
+import { SimpleCookieJar } from "./cookie-jar.js";
 
 function headersWithSetCookie(values: string[]): Headers {
   const headers = new Headers();

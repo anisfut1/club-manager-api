@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { claimNextJob } from "./claim";
-import type { FbiJobRow } from "@/db/types";
+import { claimNextJob } from "./claim.js";
+import type { FbiJobRow } from "../db/types.js";
 
 function makeFakeSupabase(response: { data: FbiJobRow | null; error: { message: string } | null }) {
   const calls: Array<{ fn: string; args: unknown }> = [];

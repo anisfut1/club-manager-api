@@ -1,8 +1,8 @@
 import { Hono } from "hono";
-import type { AppEnv } from "@/auth/context";
-import { requireAuth } from "@/auth/middleware";
-import { badRequest, notFound } from "@/api-error";
-import type { JobStatusDto } from "@/contracts/jobs";
+import type { AppEnv } from "../../auth/context.js";
+import { requireAuth } from "../../auth/middleware.js";
+import { badRequest, notFound } from "../../api-error.js";
+import type { JobStatusDto } from "../../contracts/jobs.js";
 
 export const jobStatusRouter = new Hono<AppEnv>();
 

@@ -1,4 +1,4 @@
-import { FFBB_API_BASE_URL, FFBB_ENDPOINTS, FFBB_USER_AGENT } from "./config";
+import { FFBB_API_BASE_URL, FFBB_ENDPOINTS, FFBB_USER_AGENT } from "./config.js";
 
 export class FfbbApiError extends Error {
   constructor(

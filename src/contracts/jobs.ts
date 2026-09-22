@@ -1,4 +1,4 @@
-import { z } from "./zod";
+import { z } from "./zod.js";
 
 /** §36 de la demande : opérations potentiellement longues -> 202 + jobId, jamais une connexion HTTP maintenue ouverte. */
 export const JobAcceptedDtoSchema = z

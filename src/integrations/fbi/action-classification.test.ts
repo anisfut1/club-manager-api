@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyFbiAction, extractFbiActionName, isFbiRequestAllowed } from "./action-classification";
+import { classifyFbiAction, extractFbiActionName, isFbiRequestAllowed } from "./action-classification.js";
 
 describe("extractFbiActionName", () => {
   it("extrait le nom d'action d'une URL .fbi", () => {

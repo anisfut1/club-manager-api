@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyFbiLoginStatus, FbiError } from "./errors";
+import { classifyFbiLoginStatus, FbiError } from "./errors.js";
 
 describe("classifyFbiLoginStatus", () => {
   it("renvoie CONNECTED en l'absence d'erreur", () => {

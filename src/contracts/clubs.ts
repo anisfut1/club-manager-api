@@ -1,6 +1,6 @@
-import { z } from "./zod";
-import { ClubRoleSchema } from "./common";
-import { isValidTimeZone } from "@/util/timezone";
+import { z } from "./zod.js";
+import { ClubRoleSchema } from "./common.js";
+import { isValidTimeZone } from "../util/timezone.js";
 
 export const ClubDtoSchema = z
   .object({

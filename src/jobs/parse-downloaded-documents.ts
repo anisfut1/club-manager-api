@@ -1,8 +1,8 @@
-import type { DbClient } from "@/db/client";
-import { downloadEmarqueFile } from "@/storage/emarque-storage";
-import { parseEmarqueZip, PARSER_VERSION } from "@/integrations/emarque/parser/parse-emarque-zip";
-import { persistEmarqueMatchData } from "@/integrations/emarque/persist/persist-emarque-match";
-import { logError, logInfo } from "@/logger";
+import type { DbClient } from "../db/client.js";
+import { downloadEmarqueFile } from "../storage/emarque-storage.js";
+import { parseEmarqueZip, PARSER_VERSION } from "../integrations/emarque/parser/parse-emarque-zip.js";
+import { persistEmarqueMatchData } from "../integrations/emarque/persist/persist-emarque-match.js";
+import { logError, logInfo } from "../logger.js";
 
 export interface ParseDownloadedDocumentsResult {
   candidatesExamined: number;

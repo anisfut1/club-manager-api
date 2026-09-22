@@ -1,5 +1,5 @@
-import type { DbClient } from "@/db/client";
-import { logError, logInfo } from "@/logger";
+import type { DbClient } from "../db/client.js";
+import { logError, logInfo } from "../logger.js";
 
 const UNIQUE_VIOLATION = "23505";
 

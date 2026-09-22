@@ -1,9 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "@/db/types";
-import type { FfbbPublicProvider } from "@/integrations/ffbb/public-provider";
-import { FFBB_SYNC_BATCH_SIZE, FFBB_SYNC_INTERVAL_MINUTES } from "@/integrations/ffbb/config";
-import { syncFfbb } from "./sync";
-import { logError, logInfo } from "@/logger";
+import type { Database } from "../../db/types.js";
+import type { FfbbPublicProvider } from "./public-provider.js";
+import { FFBB_SYNC_BATCH_SIZE, FFBB_SYNC_INTERVAL_MINUTES } from "./config.js";
+import { syncFfbb } from "./sync.js";
+import { logError, logInfo } from "../../logger.js";
 
 type Client = SupabaseClient<Database>;
 

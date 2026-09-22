@@ -1,4 +1,4 @@
-import type { SanitizedErrorDto } from "@/contracts/emarque";
+import type { SanitizedErrorDto } from "../../contracts/emarque.js";
 
 /**
  * §5/§29 de la demande ("lastError sanitized") : `emarque_imports.last_error`

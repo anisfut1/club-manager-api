@@ -1,9 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "@/db/types";
-import type { FfbbPublicProvider } from "@/integrations/ffbb/public-provider";
-import type { NormalizedCompetition, NormalizedPool, NormalizedTeamEngagement } from "@/integrations/ffbb/types";
-import { diffTrackedFields, mapNormalizedMatchToRow, shouldRequestEmarque } from "@/integrations/ffbb/mapping";
-import { logError, logInfo } from "@/logger";
+import type { Database } from "../../db/types.js";
+import type { FfbbPublicProvider } from "./public-provider.js";
+import type { NormalizedCompetition, NormalizedPool, NormalizedTeamEngagement } from "./types.js";
+import { diffTrackedFields, mapNormalizedMatchToRow, shouldRequestEmarque } from "./mapping.js";
+import { logError, logInfo } from "../../logger.js";
 
 type Client = SupabaseClient<Database>;
 

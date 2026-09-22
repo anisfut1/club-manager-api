@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeClubCapabilities } from "./club-capabilities";
+import { computeClubCapabilities } from "./club-capabilities.js";
 
 describe("computeClubCapabilities", () => {
   it("un club sans FBI garde ffbb=true, fbi=false, emarque=false (FBI est facultatif)", () => {

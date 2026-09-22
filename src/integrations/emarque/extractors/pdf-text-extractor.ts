@@ -1,5 +1,5 @@
-import { loadPdfjs } from "./pdfjs-loader";
-import type { DocumentExtractor, ExtractedText, ZoneFraction } from "./types";
+import { loadPdfjs } from "./pdfjs-loader.js";
+import type { DocumentExtractor, ExtractedText, ZoneFraction } from "./types.js";
 
 /**
  * Extraction native du texte d'un PDF, quand une couche texte existe.

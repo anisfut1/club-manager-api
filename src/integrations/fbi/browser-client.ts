@@ -1,6 +1,6 @@
 import type { Browser, BrowserContext, Page } from "playwright-core";
-import { FbiError } from "./errors";
-import * as selectors from "./selectors";
+import { FbiError } from "./errors.js";
+import * as selectors from "./selectors.js";
 
 /**
  * BrowserFbiClient — automatisation Playwright de FBI, utilisée UNIQUEMENT

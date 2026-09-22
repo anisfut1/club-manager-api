@@ -1,5 +1,5 @@
 import { serve } from "@hono/node-server";
-import { app } from "./app";
+import { app } from "./app.js";
 
 /**
  * Serveur local (`npm run dev`) — UNIQUEMENT pour le développement. En

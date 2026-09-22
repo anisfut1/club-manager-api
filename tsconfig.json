@@ -10,10 +10,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "declaration": false,
-    "paths": {
-      "@/*": ["./src/*"]
-    }
+    "declaration": false
   },
   "include": ["src/**/*.ts", "api/**/*.ts"],
   "exclude": ["node_modules", "dist"]

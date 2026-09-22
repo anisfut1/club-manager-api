@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database, EmarqueImportStatus } from "@/db/types";
-import { logError, logInfo } from "@/logger";
-import type { EMarqueCoach, EMarqueMatchData, EMarqueOfficial, EMarquePlayer, EMarquePlayerStat, EMarqueTableOfficial } from "../types";
+import type { Database, EmarqueImportStatus } from "../../../db/types.js";
+import { logError, logInfo } from "../../../logger.js";
+import type { EMarqueCoach, EMarqueMatchData, EMarqueOfficial, EMarquePlayer, EMarquePlayerStat, EMarqueTableOfficial } from "../types.js";
 
 type Client = SupabaseClient<Database>;
 

@@ -1,7 +1,7 @@
-import type { DocumentExtractor, ZoneFraction } from "../extractors/types";
-import { FEUILLEMATCH_PAGE1, FEUILLEMATCH_ROSTER, OFFICIALS_TABLE_PAGE2 } from "../layout/feuillematch-layout";
-import { parseFinalResultLine, parsePouleLabel, parseRencontreHeaderLine } from "../normalizers/header-fields";
-import { extractJerseyNumber, findLicenseMatch, splitUppercaseAbbreviatedName } from "../normalizers/text-fields";
+import type { DocumentExtractor, ZoneFraction } from "../extractors/types.js";
+import { FEUILLEMATCH_PAGE1, FEUILLEMATCH_ROSTER, OFFICIALS_TABLE_PAGE2 } from "../layout/feuillematch-layout.js";
+import { parseFinalResultLine, parsePouleLabel, parseRencontreHeaderLine } from "../normalizers/header-fields.js";
+import { extractJerseyNumber, findLicenseMatch, splitUppercaseAbbreviatedName } from "../normalizers/text-fields.js";
 import type {
   EMarqueCoach,
   EMarqueMatchInfo,
@@ -11,7 +11,7 @@ import type {
   RefereeRole,
   TableOfficialRole,
   TeamSide,
-} from "../types";
+} from "../types.js";
 
 export interface FeuillematchResult {
   matchInfo: Pick<

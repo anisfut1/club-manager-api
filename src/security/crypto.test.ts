@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decryptSecret, DecryptionError, encryptSecret } from "./crypto";
+import { decryptSecret, DecryptionError, encryptSecret } from "./crypto.js";
 
 describe("encryptSecret / decryptSecret", () => {
   it("round-trip : déchiffre exactement ce qui a été chiffré", () => {

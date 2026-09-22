@@ -1,5 +1,5 @@
-import { createAnonSupabaseClient } from "@/db/client";
-import { unauthorized } from "@/api-error";
+import { createAnonSupabaseClient } from "../db/client.js";
+import { unauthorized } from "../api-error.js";
 
 export interface AuthUser {
   id: string;

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { getFbiCredentials, getFbiUsername, saveFbiCredentials } from "./credentials-store";
+import { getFbiCredentials, getFbiUsername, saveFbiCredentials } from "./credentials-store.js";
 
 interface FakeRow {
   club_id: string;

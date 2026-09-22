@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseEnv } from "./env";
+import { parseEnv } from "./env.js";
 
 const VALID_FBI_KEY = Buffer.alloc(32, 7).toString("base64");
 const VALID_CRON_SECRET = "a".repeat(16);

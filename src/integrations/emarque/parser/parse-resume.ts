@@ -1,12 +1,12 @@
-import type { DocumentExtractor } from "../extractors/types";
-import { RESUME_STATS_TABLE } from "../layout/resume-layout";
+import type { DocumentExtractor } from "../extractors/types.js";
+import { RESUME_STATS_TABLE } from "../layout/resume-layout.js";
 import {
   extractJerseyNumber,
   extractTrailingIntegers,
   hasCheckMark,
   parseMinutesSecondsToSeconds,
-} from "../normalizers/text-fields";
-import type { EMarquePlayerStat, TeamSide } from "../types";
+} from "../normalizers/text-fields.js";
+import type { EMarquePlayerStat, TeamSide } from "../types.js";
 
 const STAT_COLUMN_COUNT = 7; // Pts, Tirs, 3pts, 2Int, 2Ext, LF, Fautes
 
@@ -17,7 +17,7 @@ export interface ResumeRowResult extends EMarquePlayerStat {
 async function readTeamStats(
   extractor: DocumentExtractor,
   teamSide: TeamSide,
-  config: { rowTop: number; rowHeight: number; columnZone: (row: number) => import("../extractors/types").ZoneFraction },
+  config: { rowTop: number; rowHeight: number; columnZone: (row: number) => import("../extractors/types.js").ZoneFraction },
 ): Promise<ResumeRowResult[]> {
   const rows: ResumeRowResult[] = [];
   let consecutiveUnreadable = 0;

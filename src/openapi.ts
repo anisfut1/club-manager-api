@@ -1,7 +1,7 @@
 import { OpenAPIRegistry, OpenApiGeneratorV3 } from "@asteasolutions/zod-to-openapi";
-import { z } from "@/contracts/zod";
-import { ClubDtoSchema, TeamDtoSchema, UpdateClubDtoSchema } from "@/contracts/clubs";
-import { MatchListItemDtoSchema, MatchDetailsDtoSchema, MatchesQueryDtoSchema, MatchesPaginationDtoSchema } from "@/contracts/matches";
+import { z } from "./contracts/zod.js";
+import { ClubDtoSchema, TeamDtoSchema, UpdateClubDtoSchema } from "./contracts/clubs.js";
+import { MatchListItemDtoSchema, MatchDetailsDtoSchema, MatchesQueryDtoSchema, MatchesPaginationDtoSchema } from "./contracts/matches.js";
 import {
   IntegrationStatusDtoSchema,
   FbiIntegrationStatusDtoSchema,
@@ -10,14 +10,14 @@ import {
   SaveFbiCredentialsResponseDtoSchema,
   PatchFbiIntegrationDtoSchema,
   PatchFfbbIntegrationDtoSchema,
-} from "@/contracts/integrations";
-import { MatchDocumentDtoSchema } from "@/contracts/documents";
-import { IssueDtoSchema } from "@/contracts/issues";
-import { JobStatusDtoSchema } from "@/contracts/jobs";
-import { PlatformClubDtoSchema, CreateClubDtoSchema } from "@/contracts/platform";
-import { ClubCapabilitiesSchema, ErrorEnvelopeSchema } from "@/contracts/common";
-import { EmarqueImportDtoSchema, EmarqueImportsQueryDtoSchema } from "@/contracts/emarque";
-import { MeDtoSchema } from "@/contracts/me";
+} from "./contracts/integrations.js";
+import { MatchDocumentDtoSchema } from "./contracts/documents.js";
+import { IssueDtoSchema } from "./contracts/issues.js";
+import { JobStatusDtoSchema } from "./contracts/jobs.js";
+import { PlatformClubDtoSchema, CreateClubDtoSchema } from "./contracts/platform.js";
+import { ClubCapabilitiesSchema, ErrorEnvelopeSchema } from "./contracts/common.js";
+import { EmarqueImportDtoSchema, EmarqueImportsQueryDtoSchema } from "./contracts/emarque.js";
+import { MeDtoSchema } from "./contracts/me.js";
 
 /**
  * Spec OpenAPI assemblée à partir des MÊMES schémas zod que les DTO utilisés

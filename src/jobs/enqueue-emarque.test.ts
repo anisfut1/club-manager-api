@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { enqueueEmarqueDiscoveryJobsForClub } from "./enqueue-emarque";
+import { enqueueEmarqueDiscoveryJobsForClub } from "./enqueue-emarque.js";
 
 const CLUB_ID = "club-1";
 

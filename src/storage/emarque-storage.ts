@@ -1,4 +1,4 @@
-import type { DbClient } from "@/db/client";
+import type { DbClient } from "../db/client.js";
 
 export const EMARQUE_BUCKET = "emarque";
 

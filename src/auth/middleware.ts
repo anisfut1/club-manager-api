@@ -1,10 +1,10 @@
 import type { MiddlewareHandler } from "hono";
-import { createUserSupabaseClient } from "@/db/client";
-import { badRequest, forbidden } from "@/api-error";
-import { extractBearerToken, verifyAccessToken } from "./jwt";
-import { requireClubContext } from "@/tenancy/club-context";
-import { hasRole, type ClubRole } from "@/tenancy/roles";
-import type { AppEnv } from "./context";
+import { createUserSupabaseClient } from "../db/client.js";
+import { badRequest, forbidden } from "../api-error.js";
+import { extractBearerToken, verifyAccessToken } from "./jwt.js";
+import { requireClubContext } from "../tenancy/club-context.js";
+import { hasRole, type ClubRole } from "../tenancy/roles.js";
+import type { AppEnv } from "./context.js";
 
 /**
  * Flux d'authentification (§9 de la demande) :

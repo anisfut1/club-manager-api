@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { ApiError } from "@/api-error";
+import { ApiError } from "../api-error.js";
 
 interface FakeClub {
   id: string;
@@ -73,7 +73,7 @@ function buildFakeSupabase(state: { clubs: FakeClub[]; memberships: FakeMembersh
   } as any;
 }
 
-import { getClubContext, requireClubContext } from "./club-context";
+import { getClubContext, requireClubContext } from "./club-context.js";
 
 const CLUB_A: FakeClub = {
   id: "aaaaaaaa-0000-0000-0000-000000000000",

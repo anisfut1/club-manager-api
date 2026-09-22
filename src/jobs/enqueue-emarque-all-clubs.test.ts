@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { enqueueEmarqueDiscoveryJobsForAllClubs } from "./enqueue-emarque";
+import { enqueueEmarqueDiscoveryJobsForAllClubs } from "./enqueue-emarque.js";
 
 interface FakeState {
   activeClubIds: string[];

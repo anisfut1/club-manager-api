@@ -1,8 +1,8 @@
 import path from "node:path";
 import { createCanvas, type Canvas } from "@napi-rs/canvas";
 import { createWorker, PSM, type Worker } from "tesseract.js";
-import { loadPdfjs } from "./pdfjs-loader";
-import type { DocumentExtractor, ExtractedText, ZoneFraction } from "./types";
+import { loadPdfjs } from "./pdfjs-loader.js";
+import type { DocumentExtractor, ExtractedText, ZoneFraction } from "./types.js";
 
 /**
  * Résolution de rendu. Calibré empiriquement (voir docs/

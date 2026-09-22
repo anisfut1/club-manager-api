@@ -1,4 +1,4 @@
-import { z } from "./zod";
+import { z } from "./zod.js";
 
 const FfbbIntegrationStatusDtoSchema = z.object({
   enabled: z.boolean(),

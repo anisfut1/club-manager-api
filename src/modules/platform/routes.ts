@@ -1,11 +1,11 @@
 import { Hono } from "hono";
-import type { AppEnv } from "@/auth/context";
-import { requireAuth, requirePlatformAdmin } from "@/auth/middleware";
-import { createServiceSupabaseClient, type DbClient } from "@/db/client";
-import { badRequest } from "@/api-error";
-import { computeClubCapabilities } from "@/tenancy/club-capabilities";
-import { logError } from "@/logger";
-import type { PlatformClubDto } from "@/contracts/platform";
+import type { AppEnv } from "../../auth/context.js";
+import { requireAuth, requirePlatformAdmin } from "../../auth/middleware.js";
+import { createServiceSupabaseClient, type DbClient } from "../../db/client.js";
+import { badRequest } from "../../api-error.js";
+import { computeClubCapabilities } from "../../tenancy/club-capabilities.js";
+import { logError } from "../../logger.js";
+import type { PlatformClubDto } from "../../contracts/platform.js";
 
 export const platformRouter = new Hono<AppEnv>();
 

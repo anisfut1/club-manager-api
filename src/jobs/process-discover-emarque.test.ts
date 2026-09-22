@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { FbiJobRow } from "@/db/types";
-import { FbiError } from "@/integrations/fbi/errors";
+import type { FbiJobRow } from "../db/types.js";
+import { FbiError } from "../integrations/fbi/errors.js";
 
 const loginMock = vi.fn();
 const findEmarqueDocumentsMock = vi.fn();
 const downloadDocumentMock = vi.fn();
 const closeSessionMock = vi.fn();
 
-vi.mock("@/integrations/fbi/browser-client", () => ({
+vi.mock("../integrations/fbi/browser-client.js", () => ({
   BrowserFbiClient: class FakeBrowserFbiClient {
     login = loginMock;
     findEmarqueDocuments = findEmarqueDocumentsMock;
@@ -18,18 +18,18 @@ vi.mock("@/integrations/fbi/browser-client", () => ({
 
 const closeBrowserMock = vi.fn();
 const launchServerlessBrowserMock = vi.fn(async () => ({ close: closeBrowserMock }));
-vi.mock("@/integrations/fbi/browser-launcher", () => ({ launchServerlessBrowser: launchServerlessBrowserMock }));
+vi.mock("../integrations/fbi/browser-launcher.js", () => ({ launchServerlessBrowser: launchServerlessBrowserMock }));
 
 const getFbiCredentialsMock = vi.fn();
-vi.mock("@/integrations/fbi/credentials-store", () => ({ getFbiCredentials: getFbiCredentialsMock }));
+vi.mock("../integrations/fbi/credentials-store.js", () => ({ getFbiCredentials: getFbiCredentialsMock }));
 
 const uploadEmarqueFileMock = vi.fn();
-vi.mock("@/storage/emarque-storage", async () => {
-  const actual = await vi.importActual<typeof import("@/storage/emarque-storage")>("@/storage/emarque-storage");
+vi.mock("../storage/emarque-storage.js", async () => {
+  const actual = await vi.importActual<typeof import("../storage/emarque-storage.js")>("../storage/emarque-storage.js");
   return { ...actual, uploadEmarqueFile: uploadEmarqueFileMock };
 });
 
-const { processDiscoverEmarqueJob } = await import("./process-discover-emarque");
+const { processDiscoverEmarqueJob } = await import("./process-discover-emarque.js");
 
 function baseJob(overrides: Partial<FbiJobRow> = {}): FbiJobRow {
   return {

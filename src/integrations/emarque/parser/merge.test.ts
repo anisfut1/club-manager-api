@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { EMarquePlayer } from "../types";
-import type { ResumeRowResult } from "./parse-resume";
-import { mergePlayersWithStats } from "./merge";
+import type { EMarquePlayer } from "../types.js";
+import type { ResumeRowResult } from "./parse-resume.js";
+import { mergePlayersWithStats } from "./merge.js";
 
 function buildPlayer(overrides: Partial<EMarquePlayer> = {}): EMarquePlayer {
   return {

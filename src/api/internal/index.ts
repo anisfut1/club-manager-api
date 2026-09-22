@@ -1,16 +1,16 @@
 import { Hono } from "hono";
-import type { AppEnv } from "@/auth/context";
-import { getEnv } from "@/config/env";
-import { unauthorized } from "@/api-error";
-import { createServiceSupabaseClient } from "@/db/client";
-import { syncAllDueClubs } from "@/integrations/ffbb/scheduler";
-import { FfbbPublicProvider } from "@/integrations/ffbb/public-provider";
-import { enqueueEmarqueDiscoveryJobsForAllClubs } from "@/jobs/enqueue-emarque";
-import { claimNextJob } from "@/jobs/claim";
-import { processDiscoverEmarqueJob } from "@/jobs/process-discover-emarque";
-import { processTestConnectionJob } from "@/jobs/process-test-connection";
-import { parseDownloadedEmarqueDocuments } from "@/jobs/parse-downloaded-documents";
-import { logError, logInfo } from "@/logger";
+import type { AppEnv } from "../../auth/context.js";
+import { getEnv } from "../../config/env.js";
+import { unauthorized } from "../../api-error.js";
+import { createServiceSupabaseClient } from "../../db/client.js";
+import { syncAllDueClubs } from "../../integrations/ffbb/scheduler.js";
+import { FfbbPublicProvider } from "../../integrations/ffbb/public-provider.js";
+import { enqueueEmarqueDiscoveryJobsForAllClubs } from "../../jobs/enqueue-emarque.js";
+import { claimNextJob } from "../../jobs/claim.js";
+import { processDiscoverEmarqueJob } from "../../jobs/process-discover-emarque.js";
+import { processTestConnectionJob } from "../../jobs/process-test-connection.js";
+import { parseDownloadedEmarqueDocuments } from "../../jobs/parse-downloaded-documents.js";
+import { logError, logInfo } from "../../logger.js";
 
 /**
  * Traitements automatiques — JAMAIS sous `/v1` (§8 de la demande). Protégé

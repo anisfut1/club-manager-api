@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { getEnv } from "@/config/env";
-import type { Database } from "./types";
+import { getEnv } from "../config/env.js";
+import type { Database } from "./types.js";
 
 export type DbClient = SupabaseClient<Database>;
 

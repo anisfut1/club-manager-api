@@ -1,4 +1,4 @@
-import type { MatchDocumentType } from "@/db/types";
+import type { MatchDocumentType } from "../../db/types.js";
 
 const SUMMARY_PATTERN = /résumé|resume/i;
 const MATCH_SHEET_PATTERN = /feuille/i;

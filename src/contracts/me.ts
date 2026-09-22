@@ -1,4 +1,4 @@
-import { z } from "./zod";
+import { z } from "./zod.js";
 
 /**
  * GET /v1/me (gap 3 de la demande) — identité de session UNIQUEMENT.

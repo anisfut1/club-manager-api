@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { FbiError } from "./errors";
-import { HttpFbiClient } from "./http-client";
+import { FbiError } from "./errors.js";
+import { HttpFbiClient } from "./http-client.js";
 
 const BASE_URL = "https://fbi.test.local/fbi";
 
@@ -119,7 +119,7 @@ describe("HttpFbiClient.isSessionValid", () => {
     const fetchImpl = vi.fn(async () => makeResponse(AUTHENTICATED_PAGE_HTML));
     const provider = new HttpFbiClient({ baseUrl: BASE_URL, fetchImpl: fetchImpl as unknown as typeof fetch });
 
-    const { SimpleCookieJar } = await import("./cookie-jar");
+    const { SimpleCookieJar } = await import("./cookie-jar.js");
     const valid = await provider.isSessionValid({ cookieJar: new SimpleCookieJar() });
     expect(valid).toBe(true);
   });
@@ -128,7 +128,7 @@ describe("HttpFbiClient.isSessionValid", () => {
     const fetchImpl = vi.fn(async () => makeResponse(LOGIN_PAGE_HTML));
     const provider = new HttpFbiClient({ baseUrl: BASE_URL, fetchImpl: fetchImpl as unknown as typeof fetch });
 
-    const { SimpleCookieJar } = await import("./cookie-jar");
+    const { SimpleCookieJar } = await import("./cookie-jar.js");
     const valid = await provider.isSessionValid({ cookieJar: new SimpleCookieJar() });
     expect(valid).toBe(false);
   });
@@ -137,7 +137,7 @@ describe("HttpFbiClient.isSessionValid", () => {
 describe("HttpFbiClient.findEmarqueDocuments", () => {
   it("échoue explicitement avec EMARQUE_DOWNLOAD_ENDPOINT_NOT_CONFIRMED (jamais un faux succès)", async () => {
     const provider = new HttpFbiClient({ baseUrl: BASE_URL });
-    const { SimpleCookieJar } = await import("./cookie-jar");
+    const { SimpleCookieJar } = await import("./cookie-jar.js");
 
     await expect(provider.findEmarqueDocuments({ cookieJar: new SimpleCookieJar() }, "2813")).rejects.toMatchObject({
       code: "EMARQUE_DOWNLOAD_ENDPOINT_NOT_CONFIRMED",
@@ -149,7 +149,7 @@ describe("HttpFbiClient.downloadDocument", () => {
   it("retourne le contenu téléchargé sous forme de Buffer", async () => {
     const fetchImpl = vi.fn(async () => new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 }));
     const provider = new HttpFbiClient({ baseUrl: BASE_URL, fetchImpl: fetchImpl as unknown as typeof fetch });
-    const { SimpleCookieJar } = await import("./cookie-jar");
+    const { SimpleCookieJar } = await import("./cookie-jar.js");
 
     const buffer = await provider.downloadDocument({ cookieJar: new SimpleCookieJar() }, `${BASE_URL}/export.zip`);
     expect(buffer).toBeInstanceOf(Buffer);
@@ -159,7 +159,7 @@ describe("HttpFbiClient.downloadDocument", () => {
   it("lève REQUEST_FAILED sur une réponse HTTP en erreur", async () => {
     const fetchImpl = vi.fn(async () => new Response("not found", { status: 404 }));
     const provider = new HttpFbiClient({ baseUrl: BASE_URL, fetchImpl: fetchImpl as unknown as typeof fetch });
-    const { SimpleCookieJar } = await import("./cookie-jar");
+    const { SimpleCookieJar } = await import("./cookie-jar.js");
 
     await expect(provider.downloadDocument({ cookieJar: new SimpleCookieJar() }, `${BASE_URL}/missing.zip`)).rejects.toMatchObject({
       code: "REQUEST_FAILED",

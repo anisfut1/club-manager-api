@@ -1,11 +1,11 @@
 import JSZip from "jszip";
-import { selectExtractor } from "./select-extractor";
-import { parseFeuillematch } from "./parse-feuillematch";
-import { parseResume } from "./parse-resume";
-import { mergePlayersWithStats } from "./merge";
-import { computeOverallConfidence, computeQualityWarnings, type QualityCheckContext } from "../quality/compute-quality-warnings";
-import { emarqueMatchDataSchema } from "../schemas/emarque-match-data";
-import type { EMarqueMatchData, EMarqueQualityWarning } from "../types";
+import { selectExtractor } from "./select-extractor.js";
+import { parseFeuillematch } from "./parse-feuillematch.js";
+import { parseResume } from "./parse-resume.js";
+import { mergePlayersWithStats } from "./merge.js";
+import { computeOverallConfidence, computeQualityWarnings, type QualityCheckContext } from "../quality/compute-quality-warnings.js";
+import { emarqueMatchDataSchema } from "../schemas/emarque-match-data.js";
+import type { EMarqueMatchData, EMarqueQualityWarning } from "../types.js";
 
 export const PARSER_VERSION = "2026.09.1";
 

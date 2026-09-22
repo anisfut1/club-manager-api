@@ -2,9 +2,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { chromium, type Browser } from "playwright-core";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { TestServer, readFixture } from "@/test-support/static-server";
-import { BrowserFbiClient } from "./browser-client";
-import { FbiError } from "./errors";
+import { TestServer, readFixture } from "../../test-support/static-server.js";
+import { BrowserFbiClient } from "./browser-client.js";
+import { FbiError } from "./errors.js";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixture = (name: string) => readFixture(path.join(dirname, "__fixtures__", name));

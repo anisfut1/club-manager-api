@@ -1,15 +1,15 @@
 import { Hono } from "hono";
-import type { AppEnv } from "@/auth/context";
-import { requireAuth } from "@/auth/middleware";
-import { clubsRouter } from "@/modules/clubs/routes";
-import { matchesRouter } from "@/modules/matches/routes";
-import { integrationsRouter } from "@/modules/integrations/routes";
-import { jobStatusRouter } from "@/modules/integrations/job-status";
-import { documentsRouter } from "@/modules/documents/routes";
-import { issuesRouter } from "@/modules/issues/routes";
-import { emarqueImportsRouter } from "@/modules/emarque/routes";
-import { platformRouter } from "@/modules/platform/routes";
-import type { MeDto } from "@/contracts/me";
+import type { AppEnv } from "../../auth/context.js";
+import { requireAuth } from "../../auth/middleware.js";
+import { clubsRouter } from "../../modules/clubs/routes.js";
+import { matchesRouter } from "../../modules/matches/routes.js";
+import { integrationsRouter } from "../../modules/integrations/routes.js";
+import { jobStatusRouter } from "../../modules/integrations/job-status.js";
+import { documentsRouter } from "../../modules/documents/routes.js";
+import { issuesRouter } from "../../modules/issues/routes.js";
+import { emarqueImportsRouter } from "../../modules/emarque/routes.js";
+import { platformRouter } from "../../modules/platform/routes.js";
+import type { MeDto } from "../../contracts/me.js";
 
 /**
  * Toutes les routes destinées au frontend vivent sous `/v1` (§7 de la

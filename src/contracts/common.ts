@@ -1,4 +1,4 @@
-import { z } from "./zod";
+import { z } from "./zod.js";
 
 /**
  * DTO partagés (§38 de la demande : jamais un `select('*')` exposé

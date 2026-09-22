@@ -1,5 +1,5 @@
-import type { EMarquePlayer, EMarquePlayerStat } from "../types";
-import type { ResumeRowResult } from "./parse-resume";
+import type { EMarquePlayer, EMarquePlayerStat } from "../types.js";
+import type { ResumeRowResult } from "./parse-resume.js";
 
 /**
  * Complète l'effectif (identité + licence, extrait de feuillematch) avec le

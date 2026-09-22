@@ -1,5 +1,5 @@
-import { z } from "./zod";
-import { QualityWarningDtoSchema, SanitizedErrorDtoSchema } from "./emarque";
+import { z } from "./zod.js";
+import { QualityWarningDtoSchema, SanitizedErrorDtoSchema } from "./emarque.js";
 
 const DEFAULT_MATCHES_LIMIT = 50;
 const MAX_MATCHES_LIMIT = 200;

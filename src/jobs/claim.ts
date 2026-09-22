@@ -1,5 +1,5 @@
-import type { DbClient } from "@/db/client";
-import type { FbiJobRow } from "@/db/types";
+import type { DbClient } from "../db/client.js";
+import type { FbiJobRow } from "../db/types.js";
 
 /**
  * Réclame le prochain job éligible via `claim_next_fbi_job` (FOR UPDATE

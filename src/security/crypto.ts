@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { getEnv } from "@/config/env";
+import { getEnv } from "../config/env.js";
 
 /**
  * Copié depuis SCSB src/lib/security/crypto.ts (seul changement : la clé

@@ -1,4 +1,4 @@
-import type { ClubRole } from "@/db/types";
+import type { ClubRole } from "../db/types.js";
 
 export type { ClubRole };
 

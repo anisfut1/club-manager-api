@@ -1,6 +1,6 @@
-import type { DbClient } from "@/db/client";
-import type { AuthUser } from "./jwt";
-import type { ClubContext } from "@/tenancy/club-context";
+import type { DbClient } from "../db/client.js";
+import type { AuthUser } from "./jwt.js";
+import type { ClubContext } from "../tenancy/club-context.js";
 
 /**
  * Variables Hono peuplées par les middlewares de src/auth/middleware.ts —

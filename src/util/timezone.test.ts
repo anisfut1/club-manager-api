@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computePeriodRange, isValidTimeZone } from "./timezone";
+import { computePeriodRange, isValidTimeZone } from "./timezone.js";
 
 describe("isValidTimeZone", () => {
   it("accepte un fuseau IANA valide", () => {

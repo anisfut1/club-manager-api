@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { inferMatchDocumentType, mimeTypeForFileName } from "./document-type";
+import { inferMatchDocumentType, mimeTypeForFileName } from "./document-type.js";
 
 describe("inferMatchDocumentType", () => {
   it("priorise le ZIP complet (§19 du brief FBI)", () => {

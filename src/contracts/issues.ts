@@ -1,5 +1,5 @@
-import { z } from "./zod";
-import { QualityWarningDtoSchema } from "./emarque";
+import { z } from "./zod.js";
+import { QualityWarningDtoSchema } from "./emarque.js";
 
 /**
  * Une "issue" est dérivée de `matches.emarque_status` (error/needs_review)

@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { FbiJobRow } from "@/db/types";
-import { FbiError } from "@/integrations/fbi/errors";
+import type { FbiJobRow } from "../db/types.js";
+import { FbiError } from "../integrations/fbi/errors.js";
 
 const loginMock = vi.fn();
 const closeSessionMock = vi.fn();
 
-vi.mock("@/integrations/fbi/browser-client", () => ({
+vi.mock("../integrations/fbi/browser-client.js", () => ({
   BrowserFbiClient: class FakeBrowserFbiClient {
     login = loginMock;
     closeSession = closeSessionMock;
@@ -13,12 +13,12 @@ vi.mock("@/integrations/fbi/browser-client", () => ({
 }));
 
 const closeBrowserMock = vi.fn();
-vi.mock("@/integrations/fbi/browser-launcher", () => ({ launchServerlessBrowser: vi.fn(async () => ({ close: closeBrowserMock })) }));
+vi.mock("../integrations/fbi/browser-launcher.js", () => ({ launchServerlessBrowser: vi.fn(async () => ({ close: closeBrowserMock })) }));
 
 const getFbiCredentialsMock = vi.fn();
-vi.mock("@/integrations/fbi/credentials-store", () => ({ getFbiCredentials: getFbiCredentialsMock }));
+vi.mock("../integrations/fbi/credentials-store.js", () => ({ getFbiCredentials: getFbiCredentialsMock }));
 
-const { processTestConnectionJob } = await import("./process-test-connection");
+const { processTestConnectionJob } = await import("./process-test-connection.js");
 
 function baseJob(overrides: Partial<FbiJobRow> = {}): FbiJobRow {
   return {

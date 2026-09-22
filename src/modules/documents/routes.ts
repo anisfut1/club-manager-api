@@ -1,11 +1,11 @@
 import { Hono } from "hono";
-import type { AppEnv } from "@/auth/context";
-import { requireAuth, requireClubMembership } from "@/auth/middleware";
-import { isClubAdmin } from "@/tenancy/roles";
-import { createServiceSupabaseClient } from "@/db/client";
-import { badRequest } from "@/api-error";
-import { createEmarqueSignedUrl } from "@/storage/emarque-storage";
-import type { MatchDocumentDto } from "@/contracts/documents";
+import type { AppEnv } from "../../auth/context.js";
+import { requireAuth, requireClubMembership } from "../../auth/middleware.js";
+import { isClubAdmin } from "../../tenancy/roles.js";
+import { createServiceSupabaseClient } from "../../db/client.js";
+import { badRequest } from "../../api-error.js";
+import { createEmarqueSignedUrl } from "../../storage/emarque-storage.js";
+import type { MatchDocumentDto } from "../../contracts/documents.js";
 
 export const documentsRouter = new Hono<AppEnv>();
 
