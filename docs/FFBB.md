@@ -160,6 +160,22 @@ Salle/commune du gymnase resteront `null` tant que cette permission n'est
 pas élargie côté FFBB (hors de notre contrôle) — n'affecte ni le
 calendrier, ni les scores, ni les adversaires, le cœur du Module 1.
 
+**Piste documentée pour une amélioration future (nom/adresse des
+salles) :** la page PyPI du SDK tiers `ffbb-data-client` (2026, non
+auditée, à vérifier avant tout usage) sépare explicitement l'API Directus
+(`items/*`, ce que ce projet utilise) de la **recherche Meilisearch**
+(`search_salles()`, "Résolution physique complète : Gymnase, Rue, CP,
+Ville") — cohérent avec `key_ms` (déjà identifié comme jeton Meilisearch,
+distinct de `key_dh`/`key_directus_competitions`/`key_directus_website`).
+Hypothèse : le nom/l'adresse d'une salle se résout via une requête vers
+`https://meilisearch-prod.ffbb.app/` (base URL différente de
+`api.ffbb.app`, format de requête Meilisearch, pas Directus REST) avec
+`key_ms`, plutôt que via la relation Directus qu'on vient de désactiver.
+Non implémenté ici (nouveau client HTTP, nouveau format de requête,
+scope distinct) — à construire séparément si le nom des gymnases devient
+un besoin réel, jamais avant d'avoir confirmé que le cœur du sync
+(calendrier/scores/adversaires) fonctionne.
+
 ## Cron
 
 `GET /internal/cron/ffbb` (toutes les 15 minutes, voir `vercel.json`) :
