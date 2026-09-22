@@ -33,6 +33,25 @@ const LOGIN_PAGE_WITH_ERROR_HTML = `
   </html>
 `;
 
+/** Reproduit une page FBI réelle constatée en production (2026-09-22) : du texte visible entouré de <script> inline volumineux (sélecteur multi-comptes). */
+const LOGIN_PAGE_WITH_SCRIPT_NOISE_HTML = `
+  <html>
+    <head><title>FBI - Identification</title></head>
+    <body>
+      <p>Identifiant ou mot de passe incorrect</p>
+      <script>
+        $(document).ready(function() {
+          $('.selectpicker').selectpicker({ dropupAuto: false });
+          $("#loginList").change(function() { connexionEntete('identificationEntete'); });
+        });
+      </script>
+      <form action="/fbi/j_security_check" method="post">
+        <input type="password" name="motDePasse" />
+      </form>
+    </body>
+  </html>
+`;
+
 function makeResponse(body: string, init: { status?: number; headers?: Record<string, string>; url?: string } = {}) {
   const headers = new Headers(init.headers ?? {});
   const response = new Response(body, { status: init.status ?? 200, headers });
@@ -223,6 +242,31 @@ describe("HttpFbiClient.login", () => {
       const message = (error as FbiError).message;
       expect(message).toContain("Identifiant ou mot de passe incorrect");
       expect(message).not.toContain("fonts.googleapis.com");
+    }
+  });
+
+  it("exclut le contenu des <script>/<style> du diagnostic (jamais du code JS/CSS à la place du texte visible) — bug réel constaté en production le 2026-09-22, voir docs/FBI.md", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/connexion.fbi")) {
+        return makeResponse(LOGIN_PAGE_HTML, { headers: { "set-cookie": "JSESSIONID=abc123; Path=/fbi" } });
+      }
+      if (url.endsWith("/j_security_check")) {
+        return makeResponse(LOGIN_PAGE_WITH_SCRIPT_NOISE_HTML);
+      }
+      throw new Error(`URL inattendue dans le test : ${url}`);
+    });
+
+    const provider = new HttpFbiClient({ baseUrl: BASE_URL, fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    try {
+      await provider.login({ username: "x", password: "mauvais" });
+      throw new Error("devait lever une FbiError");
+    } catch (error) {
+      const message = (error as FbiError).message;
+      expect(message).toContain("Identifiant ou mot de passe incorrect");
+      expect(message).not.toContain("selectpicker");
+      expect(message).not.toContain("connexionEntete");
     }
   });
 

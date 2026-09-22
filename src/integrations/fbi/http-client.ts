@@ -38,10 +38,16 @@ function truncateFlat(text: string, maxLength: number): string {
  * docs/FBI.md), donc sans valeur diagnostique. Le texte visible du corps
  * (ex: "Identifiant ou mot de passe incorrect", ou au contraire le nom du
  * club connecté) est ce qui distingue réellement un échec d'un succès.
- * Jamais la page entière dans un message d'erreur ou un log.
+ * `<script>`/`<style>` retirés AVANT extraction : `.text()` de cheerio
+ * inclut leur contenu textuel (jamais visible dans un navigateur — code
+ * JS/CSS, pas du texte), constaté en production le 2026-09-22 (voir
+ * docs/FBI.md) : les 500 premiers caractères n'étaient QUE du JavaScript
+ * inline, aucune valeur diagnostique non plus. Jamais la page entière
+ * dans un message d'erreur ou un log.
  */
 function visibleBodyText(html: string, maxLength = 500): string {
   const $ = cheerio.load(html);
+  $("script, style").remove();
   return truncateFlat($("body").text(), maxLength);
 }
 

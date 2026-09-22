@@ -231,10 +231,32 @@ retirées via cheerio, déjà utilisé pour le parsing) plutôt que le
 balisage brut, avant troncature à 500 caractères. Couvert par un nouveau
 test qui vérifie qu'un message d'erreur placé dans le corps ressort bien
 dans le diagnostic, et que le `<head>` (ex: `fonts.googleapis.com`) n'y
-apparaît plus. **Non encore reconfirmé en direct** — prochain "Tester la
-connexion" à lire en priorité : le texte visible dira enfin s'il s'agit
-d'un vrai refus d'identifiants, d'un jeton CSRF manquant, ou d'autre
-chose.
+apparaît plus.
+
+**Quatrième déclenchement réel : le correctif ci-dessus tombait sur du
+JavaScript inline, pas du texte lisible.** `.text()` de cheerio inclut le
+contenu textuel des `<script>`/`<style>` (jamais visible dans un
+navigateur, mais bien du texte du point de vue du DOM) — les 500 premiers
+caractères capturés n'étaient que du JS (`$(document).ready(...)`,
+gestion de `#loginList`/`#loginEntete`/`#utilisateurId` via
+`connexionEntete('identificationEntete')`). **Piste ouverte, non
+confirmée** : ces noms (liste de comptes, "entête" à choisir) suggèrent
+que FBI présente une étape de SÉLECTION DE COMPTE/ENTITÉ après un login
+par ailleurs réussi (cas d'un identifiant associé à plusieurs structures)
+— auquel cas `LOGIN_FAILED` serait un faux négatif : `looksLikeLoginPage`
+trouve un `input[type=password]` sur cette page intermédiaire (peut-être
+un formulaire de re-confirmation) alors que les identifiants étaient
+corrects. À confirmer par le prochain texte visible, script exclu.
+
+**Corrigé** (`http-client.ts`) : `visibleBodyText()` retire désormais
+`<script>`/`<style>` (`$("script, style").remove()`) avant d'extraire le
+texte — jamais de code JS/CSS à la place du texte réellement visible.
+Couvert par un nouveau test (page avec message d'erreur ET `<script>`
+volumineux, vérifie que seul le message ressort). **Non encore
+reconfirmé en direct** — prochain "Tester la connexion" à lire en
+priorité : cette fois le texte visible devrait enfin permettre de trancher
+entre un vrai refus d'identifiants et une étape de sélection de compte
+non gérée.
 
 ## Dérogations / licenciés FBI
 
