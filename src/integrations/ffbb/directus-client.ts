@@ -163,6 +163,8 @@ export interface DirectusClientOptions {
   fetchImpl?: typeof fetch;
   /** Délai entre deux tentatives de jeton candidat (ms). Mis à 0 dans les tests. */
   candidateRetryDelayMs?: number;
+  /** Délai entre deux pages de `listAllItems` (ms). Mis à 0 dans les tests. */
+  pageDelayMs?: number;
 }
 
 /**
@@ -170,13 +172,51 @@ export interface DirectusClientOptions {
  * mécanique HTTP (jeton, en-têtes, pagination) — la normalisation des
  * données vit dans public-provider.ts.
  */
+const DEFAULT_PAGE_DELAY_MS = 200;
+
 export class FfbbDirectusClient {
   private readonly fetchImpl: typeof fetch;
   private readonly candidateRetryDelayMs: number;
+  private readonly pageDelayMs: number;
 
   constructor(options: DirectusClientOptions = {}) {
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.candidateRetryDelayMs = options.candidateRetryDelayMs ?? DEFAULT_CANDIDATE_RETRY_DELAY_MS;
+    this.pageDelayMs = options.pageDelayMs ?? DEFAULT_PAGE_DELAY_MS;
+  }
+
+  /**
+   * `listItems` seul ne récupère qu'UNE page — si l'API applique une limite
+   * par défaut côté serveur (aucune documentation publique là-dessus, voir
+   * docs/FFBB_ECOSYSTEM_RESEARCH.md §3.5/§10), un club avec un historique de
+   * matchs plus long que cette limite perd silencieusement les résultats les
+   * plus récents quand on trie par date croissante (constaté en production
+   * le 2026-09-22 : 500 rencontres reçues pour `items/ffbbserver_rencontres`,
+   * toutes antérieures à novembre 2025, aucune de la saison en cours — voir
+   * docs/FFBB.md). Pagine explicitement avec un `pageSize` fixé par nous
+   * (jamais `limit: -1`, qui pourrait faire une requête arbitrairement lourde
+   * côté serveur) jusqu'à ce qu'une page renvoie moins que `pageSize`
+   * éléments. Plafond de pages en garde-fou contre une boucle infinie si le
+   * serveur se comportait de façon inattendue (jamais observé, mais jamais
+   * testé en direct non plus).
+   */
+  async listAllItems<T>(endpoint: string, params: DirectusListParams = {}, pageSize = 200): Promise<T[]> {
+    const MAX_PAGES = 50;
+    const results: T[] = [];
+    let offset = params.offset ?? 0;
+
+    for (let page = 0; page < MAX_PAGES; page++) {
+      if (page > 0) await sleep(this.pageDelayMs);
+      const batch = await this.listItems<T>(endpoint, { ...params, limit: pageSize, offset });
+      results.push(...batch);
+      if (batch.length < pageSize) return results;
+      offset += pageSize;
+    }
+
+    throw new FfbbApiError(
+      `Pagination FFBB interrompue après ${MAX_PAGES} pages (${endpoint}) : plus de résultats que prévu, ou boucle infinie potentielle.`,
+      "UNEXPECTED_RESPONSE",
+    );
   }
 
   async listItems<T>(endpoint: string, params: DirectusListParams = {}): Promise<T[]> {

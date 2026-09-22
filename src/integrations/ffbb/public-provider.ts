@@ -210,7 +210,7 @@ export class FfbbPublicProvider {
   }
 
   async listEngagements(organismeFfbbId: string): Promise<NormalizedTeamEngagement[]> {
-    const rows = await this.client.listItems<RawEngagement>(FFBB_ENDPOINTS.engagements, {
+    const rows = await this.client.listAllItems<RawEngagement>(FFBB_ENDPOINTS.engagements, {
       fields: ["id", "nom", "nomEquipe", "numeroEquipe", "idCompetition", "idPoule", "idOrganisme"],
       filter: { idOrganisme: { _eq: organismeFfbbId } },
     });
@@ -229,7 +229,7 @@ export class FfbbPublicProvider {
   async listCompetitions(competitionFfbbIds: string[]): Promise<NormalizedCompetition[]> {
     if (competitionFfbbIds.length === 0) return [];
 
-    const rows = await this.client.listItems<RawCompetition>(FFBB_ENDPOINTS.competitions, {
+    const rows = await this.client.listAllItems<RawCompetition>(FFBB_ENDPOINTS.competitions, {
       fields: [
         "id",
         "nom",
@@ -277,7 +277,7 @@ export class FfbbPublicProvider {
   async listPools(poolFfbbIds: string[]): Promise<NormalizedPool[]> {
     if (poolFfbbIds.length === 0) return [];
 
-    const rows = await this.client.listItems<RawPool>(FFBB_ENDPOINTS.poules, {
+    const rows = await this.client.listAllItems<RawPool>(FFBB_ENDPOINTS.poules, {
       fields: ["id", "nom", "id_competition"],
       filter: { id: { _in: poolFfbbIds } },
     });
@@ -291,7 +291,7 @@ export class FfbbPublicProvider {
   }
 
   async listMatchesForOrganisme(organismeFfbbId: string): Promise<NormalizedMatch[]> {
-    const rows = await this.client.listItems<RawRencontre>(FFBB_ENDPOINTS.rencontres, {
+    const rows = await this.client.listAllItems<RawRencontre>(FFBB_ENDPOINTS.rencontres, {
       fields: RENCONTRE_FIELDS,
       filter: {
         _or: [{ idOrganismeEquipe1: { _eq: organismeFfbbId } }, { idOrganismeEquipe2: { _eq: organismeFfbbId } }],

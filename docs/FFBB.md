@@ -28,13 +28,15 @@ classements si disponibles. Aucune erreur parce que FBI est absent — voir
 
 **LIVE — premier cron réel en production réussi le 2026-09-22**
 (`{"clubsDue":1,"clubsSynced":1,"clubsSkippedLocked":0,"clubsFailed":0}`),
-après correction successive de 3 bugs réels trouvés uniquement par
+après correction successive de 4 bugs réels trouvés uniquement par
 l'exécution en production (jamais reproductibles avant, réseau
 `api.ffbb.app` bloqué dans tous les environnements de développement
 disponibles) : nom de champ du jeton API, relation Directus `salle`
 interdite en lecture, champ `publicationInternet` reçu comme chaîne au
-lieu d'un booléen — voir l'historique détaillé ci-dessous, conservé tel
-quel. La logique de mapping/diff/idempotence est testée unitairement
+lieu d'un booléen, et absence de pagination sur `items/ffbbserver_rencontres`
+(troncature silencieuse avant les matchs de la saison en cours) — voir
+l'historique détaillé ci-dessous, conservé tel quel. La logique de
+mapping/diff/idempotence est testée unitairement
 (`integrations/ffbb/mapping.test.ts`, 100% pur, aucun accès réseau), mais
 aucun appel réel contre `api.ffbb.app` n'a pu être fait depuis un
 environnement de développement (réseau `*.ffbb.app` bloqué dans tous les
@@ -225,6 +227,52 @@ filtrer, voir `sync.ts`) : `Boolean("AFF")` → `true` est acceptable sans
 connaître tous les codes possibles. Couvert par 2 nouveaux tests
 (`public-provider.test.ts`) : conversion d'une chaîne reçue en vrai
 booléen, et valeur par défaut quand le champ est absent.
+
+**Quatrième bug réel, trouvé après le premier cron réussi par inspection
+directe des données synchronisées** (pas par un nouvel échec — le cron
+répondait `clubsSynced:1`, mais les données elles-mêmes étaient
+incomplètes) : `team_id` était `null` sur les 500 rencontres synchronisées.
+Investigation en base (requêtes SQL directes sur `raw_ffbb_payload`,
+capturé lors du sync réussi — pas besoin de réseau FFBB pour ça) :
+
+- **Cause 1, réelle mais sans correctif** (confirmée avec l'utilisateur) :
+  un "engagement" FFBB (équipe↔compétition↔saison) est scopé par saison ;
+  `listEngagements` ne récupère que la saison en cours, donc les rencontres
+  de saisons passées référencent des `idEngagementEquipe1/2` qui n'existent
+  plus dans la liste — pas de `team_id` pour l'historique. Tentative de
+  contournement par le nom brut de l'équipe (`nomEquipe1/2`, ex. `"SPORT
+  CLUB DE SETE BASKET - 1"`) écartée : les vraies données montrent des
+  formes ambiguës (équipes inter-clubs/CTC type `"IE - CTC BASKET THAU"`,
+  entrées sans numéro) qui rendraient un correctif par expression régulière
+  fragile — risque de rattacher un match à la mauvaise équipe interne.
+  Accepté comme limite connue : **seules les saisons passées sont
+  concernées**, pas bloquant pour l'usage réel (confirmé par le club).
+- **Cause 2, bug réel, corrigé** : `items/ffbbserver_rencontres` ne
+  recevait AUCUN paramètre de pagination (`limit`/`offset`). Les 500
+  rencontres reçues, triées par `date_rencontre` croissant, s'arrêtaient
+  toutes avant novembre 2025 — **aucune ne concernait la saison en cours**
+  (2026-2027, qui n'a pas encore de calendrier publié au moment de ce
+  test, vérifié : 0 rencontre avec une date ≥ août 2026). Si l'API FFBB
+  applique une limite par défaut côté serveur (non documentée
+  officiellement, voir `docs/FFBB_ECOSYSTEM_RESEARCH.md` §3.5/§10), une
+  requête sans pagination explicite perd silencieusement tout ce qui vient
+  après la limite — potentiellement les rencontres les plus récentes en tri
+  croissant.
+
+**Corrigé** (`directus-client.ts`) : nouvelle méthode
+`FfbbDirectusClient.listAllItems()` qui pagine explicitement (taille de
+page fixée par nous, 200 par défaut — jamais `limit: -1`) jusqu'à ce
+qu'une page renvoie moins d'éléments que la taille demandée, avec un
+plafond de 50 pages en garde-fou. Utilisée pour `listEngagements`,
+`listCompetitions`, `listPools` et `listMatchesForOrganisme`
+(`public-provider.ts`) — les seuls appels dont le nombre de résultats
+n'est pas borné par une liste d'identifiants explicite. `organismes`
+reste sur `listItems` (recherche par code, `limit: 1`, jamais plus d'un
+résultat attendu). Couvert par 3 nouveaux tests dans
+`directus-client.test.ts` (pagination multi-pages, arrêt dès qu'une page
+est incomplète, garde-fou anti-boucle-infinie) et 1 dans
+`public-provider.test.ts` (confirme que `listMatchesForOrganisme` va bien
+chercher une deuxième page).
 
 ## Cron
 

@@ -79,6 +79,50 @@ describe("FfbbPublicProvider.listMatchesForOrganisme", () => {
     expect(matches).toHaveLength(1);
     expect(matches[0]!.venue).toEqual({ ffbbId: "4242", name: null, commune: null, raw: 4242 });
   });
+
+  it(
+    "pagine au-delà de la première page (500 rencontres tronquées avant la saison en cours, " +
+      "constaté en production le 2026-09-22 — voir docs/FFBB.md)",
+    async () => {
+      // Page 1 pleine (taille de page par défaut de listAllItems = 200) suivie
+      // d'une page 2 plus petite : si listMatchesForOrganisme utilisait encore
+      // listItems (une seule page), seuls les 200 premiers résultats
+      // reviendraient, jamais le match le plus récent de la page 2.
+      const page1 = Array.from({ length: 200 }, (_, i) => ({
+        id: `old-${i}`,
+        idOrganismeEquipe1: "org-1",
+        idOrganismeEquipe2: "org-2",
+        date_rencontre: "2023-09-01T00:00:00",
+      }));
+      const page2 = [
+        {
+          id: "recent-current-season",
+          idOrganismeEquipe1: "org-1",
+          idOrganismeEquipe2: "org-2",
+          date_rencontre: "2026-10-01T00:00:00",
+        },
+      ];
+
+      const fetchImpl = vi.fn(async (url: string | URL) => {
+        const href = url.toString();
+        if (href.includes("items/configuration")) {
+          return jsonResponse(200, CONFIGURATION_BODY);
+        }
+        const offset = Number(new URL(href).searchParams.get("offset") ?? "0");
+        return jsonResponse(200, { data: offset === 0 ? page1 : page2 });
+      });
+
+      const provider = new FfbbPublicProvider({
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        candidateRetryDelayMs: 0,
+        pageDelayMs: 0,
+      });
+      const matches = await provider.listMatchesForOrganisme("org-1");
+
+      expect(matches).toHaveLength(201);
+      expect(matches.some((m) => m.ffbbId === "recent-current-season")).toBe(true);
+    },
+  );
 });
 
 describe("FfbbPublicProvider.listCompetitions", () => {

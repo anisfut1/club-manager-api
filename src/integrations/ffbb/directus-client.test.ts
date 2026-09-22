@@ -215,4 +215,87 @@ describe("FfbbDirectusClient", () => {
     // n'est jamais repartie sur "competitions-token" (ordre fixe) en premier.
     expect(rencontresAttempts).toEqual(["rencontres:Bearer dh-token", "rencontres:Bearer dh-token"]);
   });
+
+  describe("listAllItems", () => {
+    it(
+      "pagine jusqu'à récupérer TOUS les résultats, pas seulement la première page " +
+        "(500 rencontres tronquées avant la saison en cours, constaté en production le 2026-09-22 — voir docs/FFBB.md)",
+      async () => {
+        const { FfbbDirectusClient: FreshClient } = await import("./directus-client.js");
+        const offsetsRequested: number[] = [];
+        // 3 pages de 2 éléments (taille de page = 2 dans ce test), la 3e page
+        // n'en renvoie qu'1 (< pageSize) : signal de fin de pagination.
+        const pages = [
+          [{ id: "m1" }, { id: "m2" }],
+          [{ id: "m3" }, { id: "m4" }],
+          [{ id: "m5" }],
+        ];
+        const fetchImpl = vi.fn(async (url: string | URL) => {
+          const href = url.toString();
+          if (href.includes("items/configuration")) {
+            return jsonResponse(200, CONFIGURATION_BODY);
+          }
+          const offset = Number(new URL(href).searchParams.get("offset") ?? "0");
+          offsetsRequested.push(offset);
+          const pageIndex = offset / 2;
+          return jsonResponse(200, { data: pages[pageIndex] ?? [] });
+        });
+
+        const client = new FreshClient({
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+          candidateRetryDelayMs: 0,
+          pageDelayMs: 0,
+        });
+        const items = await client.listAllItems("items/ffbbserver_rencontres", {}, 2);
+
+        expect(items).toEqual([{ id: "m1" }, { id: "m2" }, { id: "m3" }, { id: "m4" }, { id: "m5" }]);
+        expect(offsetsRequested).toEqual([0, 2, 4]);
+      },
+    );
+
+    it("s'arrête après une seule page quand elle renvoie moins que pageSize éléments", async () => {
+      const { FfbbDirectusClient: FreshClient } = await import("./directus-client.js");
+      let requestCount = 0;
+      const fetchImpl = vi.fn(async (url: string | URL) => {
+        const href = url.toString();
+        if (href.includes("items/configuration")) {
+          return jsonResponse(200, CONFIGURATION_BODY);
+        }
+        requestCount += 1;
+        return jsonResponse(200, { data: [{ id: "only-one" }] });
+      });
+
+      const client = new FreshClient({
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        candidateRetryDelayMs: 0,
+        pageDelayMs: 0,
+      });
+      const items = await client.listAllItems("items/ffbbserver_organismes", {}, 200);
+
+      expect(items).toEqual([{ id: "only-one" }]);
+      expect(requestCount).toBe(1);
+    });
+
+    it("s'interrompt avec une erreur exploitable au-delà de 50 pages plutôt qu'une boucle infinie", async () => {
+      const { FfbbDirectusClient: FreshClient } = await import("./directus-client.js");
+      const fetchImpl = vi.fn(async (url: string | URL) => {
+        const href = url.toString();
+        if (href.includes("items/configuration")) {
+          return jsonResponse(200, CONFIGURATION_BODY);
+        }
+        // Renvoie toujours une page pleine : ne signale jamais la fin.
+        return jsonResponse(200, { data: [{ id: "x" }, { id: "y" }] });
+      });
+
+      const client = new FreshClient({
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        candidateRetryDelayMs: 0,
+        pageDelayMs: 0,
+      });
+
+      await expect(client.listAllItems("items/ffbbserver_rencontres", {}, 2)).rejects.toMatchObject({
+        code: "UNEXPECTED_RESPONSE",
+      });
+    });
+  });
 });
