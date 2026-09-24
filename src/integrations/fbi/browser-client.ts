@@ -144,7 +144,8 @@ export class BrowserFbiClient {
     trace.push(await this.tryNavigateToSearchScreen(page));
     trace.push(await this.tryPrepareSearchFilters(page, season));
     trace.push(await this.trySearchByMatchNumber(page, matchNumber));
-    trace.push(await this.tryOpenMatchResult(page, matchNumber));
+    const openResult = await this.tryOpenMatchResult(page, matchNumber);
+    trace.push(openResult.trace);
 
     /**
      * Constaté en production le 2026-09-24 : les trois étapes ci-dessus
@@ -236,6 +237,30 @@ export class BrowserFbiClient {
     const links = await selectors.findDocumentLinks(page);
 
     /**
+     * Constaté en production le 2026-09-24 (rencontre n°1481, § "Vingt-
+     * neuvième déclenchement", docs/FBI.md) : le lien de la colonne EM
+     * déclenche un téléchargement natif du navigateur (voir
+     * `tryOpenMatchResult`) plutôt qu'un `<a href>` classique — DONC
+     * jamais trouvé par `findDocumentLinks` (qui ne scanne que des
+     * `href`). L'URL capturée par l'événement `download` de Playwright
+     * EST une vraie URL FBI réutilisable (ex :
+     * `.../telechargerFeuilleMatchEmarque.fbi?action=emV2&plugin=true&idRenc=<token>`),
+     * jamais un `blob:` temporaire — elle est ajoutée ici aux documents
+     * "trouvés par lien" exactement comme n'importe quel autre document,
+     * pour repasser par le même pipeline `downloadDocument()`/Storage
+     * (`process-discover-emarque.ts`) sans traitement spécial. Dédupliquée
+     * par URL au cas où le même document apparaîtrait aussi comme lien
+     * classique.
+     */
+    const documents = links.map((link) => ({
+      url: new URL(link.href, page.url()).toString(),
+      fileName: this.fileNameFromLabelOrUrl(link),
+    }));
+    if (openResult.discoveredDocument && !documents.some((d) => d.url === openResult.discoveredDocument!.url)) {
+      documents.push(openResult.discoveredDocument);
+    }
+
+    /**
      * Constaté en production le 2026-09-24 (rencontre n°2813, § "Vingt-
      * troisième déclenchement", docs/FBI.md) : `documents.length === 0`
      * (page confirmée pour CE match, mais aucun lien de document retenu
@@ -248,7 +273,7 @@ export class BrowserFbiClient {
      * correctif à l'aveugle sur le prochain échec identique.
      */
     let diagnostic: string | null = null;
-    if (links.length === 0) {
+    if (documents.length === 0) {
       const title = await page.title().catch(() => "?");
       const visibleLinks = await selectors.listVisibleLinks(page, 60);
       const linksSummary = visibleLinks.length > 0 ? visibleLinks.map((l) => `"${l.text}" → ${l.href}`).join(" | ") : "(aucun lien trouvé sur la page)";
@@ -280,13 +305,7 @@ export class BrowserFbiClient {
       });
     }
 
-    return {
-      documents: links.map((link) => ({
-        url: new URL(link.href, page.url()).toString(),
-        fileName: this.fileNameFromLabelOrUrl(link),
-      })),
-      diagnostic,
-    };
+    return { documents, diagnostic };
   }
 
   /**
@@ -527,7 +546,7 @@ export class BrowserFbiClient {
     }
   }
 
-  private async tryOpenMatchResult(page: Page, matchNumber: string): Promise<string> {
+  private async tryOpenMatchResult(page: Page, matchNumber: string): Promise<{ trace: string; discoveredDocument: { url: string; fileName: string } | null }> {
     /**
      * Constaté en production le 2026-09-24 (capture d'écran du VRAI FBI
      * fournie par le club) : le tableau de résultats a une colonne "EM"
@@ -540,7 +559,12 @@ export class BrowserFbiClient {
      * colonne e-Marque).
      */
     const emLink = await selectors.emarqueColumnLinkForMatch(page, matchNumber).catch(() => null);
-    if (!emLink) return `pas de lien e-Marque trouvé pour la rencontre "${matchNumber}" (colonne EM absente, ligne introuvable, ou colonne EM vide — match pas encore joué)`;
+    if (!emLink) {
+      return {
+        trace: `pas de lien e-Marque trouvé pour la rencontre "${matchNumber}" (colonne EM absente, ligne introuvable, ou colonne EM vide — match pas encore joué)`,
+        discoveredDocument: null,
+      };
+    }
 
     const text = (await emLink.textContent().catch(() => null))?.trim() ?? "?";
     const urlBefore = page.url();
@@ -602,6 +626,20 @@ export class BrowserFbiClient {
       await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
 
       const [download, popup] = await Promise.all([downloadPromise, popupPromise]);
+
+      /**
+       * Constaté en production le 2026-09-24 (rencontre n°1481, § "Vingt-
+       * neuvième déclenchement", docs/FBI.md) : `download.url()` est une
+       * VRAIE URL FBI ré-appelable via `context.request.get()` (mêmes
+       * cookies de session, voir `downloadDocument()`), jamais un `blob:`
+       * temporaire — le fichier réellement téléchargé par Playwright
+       * lui-même (dans `/tmp` de @sparticuz/chromium) ne sert à rien ici
+       * et est supprimé (best effort) pour ne pas polluer ce répertoire
+       * éphémère entre deux clics EM d'une même invocation.
+       */
+      const discoveredDocument = download ? { url: download.url(), fileName: download.suggestedFilename() } : null;
+      if (download) await download.delete().catch(() => {});
+
       const downloadNote = download ? ` — téléchargement natif déclenché : url=${download.url()}, nom suggéré="${download.suggestedFilename()}"` : "";
       const popupNote = popup ? ` — popup/nouvel onglet ouvert : url=${popup.url()}` : "";
       const networkNote =
@@ -610,14 +648,19 @@ export class BrowserFbiClient {
           : " — aucune requête XHR/fetch/POST capturée après le clic EM";
 
       const urlAfter = page.url();
-      return (
-        (urlAfter === urlBefore ? `lien EM "${text}" cliqué, mais l'URL n'a pas changé (${urlAfter})` : `lien EM "${text}" cliqué, url → ${urlAfter}`) +
-        downloadNote +
-        popupNote +
-        networkNote
-      );
+      return {
+        trace:
+          (urlAfter === urlBefore ? `lien EM "${text}" cliqué, mais l'URL n'a pas changé (${urlAfter})` : `lien EM "${text}" cliqué, url → ${urlAfter}`) +
+          downloadNote +
+          popupNote +
+          networkNote,
+        discoveredDocument,
+      };
     } catch (error) {
-      return `lien EM "${text}" trouvé mais le clic a échoué : ${error instanceof Error ? error.message : String(error)}`;
+      return {
+        trace: `lien EM "${text}" trouvé mais le clic a échoué : ${error instanceof Error ? error.message : String(error)}`,
+        discoveredDocument: null,
+      };
     } finally {
       page.off("response", onResponse);
     }

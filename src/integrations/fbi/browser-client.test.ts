@@ -171,12 +171,15 @@ describe("BrowserFbiClient.findEmarqueDocuments (§ 'Dix-huitième déclenchemen
     // findDocumentLinks (page.locator("a[href]")) ne peut rien trouver après
     // ce clic : la fixture reproduit un onclick sans navigation ni lien
     // navigable resté sur la page, comme le vrai telechargerMatch() en
-    // production — documents reste vide. Ce n'est PAS un échec de la
-    // découverte : la preuve que quelque chose s'est bien passé au clic
-    // est dans la capture réseau ci-dessous, pas dans le tableau de
-    // documents (dont le vrai fix — capturer un téléchargement natif ou une
-    // réponse AJAX comme document — reste à confirmer sur preuve en
-    // production, voir docs/FBI.md).
+    // production — documents reste vide ICI (cette fixture déclenche un
+    // simple fetch() de télémétrie, jamais un vrai téléchargement natif du
+    // navigateur — simuler un événement `download` réel dans ce harnais
+    // Chromium headless a fait planter Vitest pendant 30s à plusieurs
+    // reprises, voir la note ci-dessous et docs/FBI.md § "Vingt-huitième
+    // déclenchement"). Le vrai fix — capturer un téléchargement natif comme
+    // document (§ "Vingt-neuvième déclenchement") — est validé sur preuve
+    // de production (rencontre n°1481) plutôt que par une simulation de
+    // téléchargement ici, volontairement.
     expect(documents).toEqual([]);
     expect(diagnostic).toContain('lien EM "" cliqué');
     expect(diagnostic).toContain("requêtes réseau capturées après le clic EM");

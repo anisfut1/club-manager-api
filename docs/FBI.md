@@ -1375,6 +1375,52 @@ budget d'un job entier pour un clic qui n'aboutira jamais. Corrigé avec
 un timeout explicite et court (10s) sur ce clic précis — échoue vite et
 clairement plutôt que de gaspiller le budget du job.
 
+**Vingt-neuvième déclenchement — CONFIRMÉ EN PRODUCTION (rencontre
+n°1481) : le clic EM déclenche un vrai téléchargement natif, avec une URL
+réutilisable — le document est maintenant traité comme n'importe quel
+autre document découvert.** La capture ajoutée au déclenchement précédent
+a immédiatement porté ses fruits, lue directement en base :
+
+```
+téléchargement natif déclenché : url=https://extranet.ffbb.com/fbi/
+telechargerFeuilleMatchEmarque.fbi?action=emV2&plugin=true&idRenc=
+hpSiYXprCd6ZgGhweKzIfw%3D%3D, nom suggéré="OCC_RF2_MED_1481_SPORT_CLUB_DE
+_SETE_BASKET_LA_CROIX_D_ARGENT_B_MONTPELLIER-2.zip"
+```
+
+`telechargerMatch()` déclenche donc bien un téléchargement natif du
+navigateur (pas une popup, pas un simple appel AJAX) — l'hypothèse posée
+au déclenchement précédent. Point important : `download.url()` est une
+VRAIE URL FBI ré-appelable via `context.request.get()` (mêmes cookies de
+session que `downloadDocument()`), jamais un `blob:` temporaire propre à
+l'instance Chromium qui l'a téléchargée — elle peut donc être fetchée à
+nouveau plus tard, exactement comme un lien `href` classique.
+
+**Corrigé** : `tryOpenMatchResult` retourne désormais `{ trace,
+discoveredDocument }` au lieu d'une simple trace texte —
+`discoveredDocument` vaut `{ url: download.url(), fileName:
+download.suggestedFilename() }` quand un téléchargement natif est
+détecté, `null` sinon. Le fichier réellement écrit par Playwright dans
+`/tmp` (stockage éphémère de @sparticuz/chromium, voir
+`browser-launcher.ts`) est supprimé (`download.delete()`, best effort) —
+inutile, puisque le VRAI téléchargement passera par `downloadDocument()`
+comme tout autre document. `findEmarqueDocuments` fusionne ce document
+découvert dans son tableau `documents` (dédupliqué par URL avec ceux
+trouvés par `findDocumentLinks`), donc `process-discover-emarque.ts` n'a
+besoin d'aucun changement : le document EM suit exactement le même
+pipeline téléchargement/Storage/`match_documents` que n'importe quel
+autre.
+
+Non re-testé avec un vrai événement `download` Playwright dans
+`browser-client.test.ts` : simuler un téléchargement natif réel dans ce
+harnais Chromium headless (`window.location.href` vers un zip, puis un
+`<a download>` généré dynamiquement) a fait planter Vitest pendant 30s à
+plusieurs reprises lors de l'écriture du correctif précédent — la
+fixture n°5555 reste volontairement un simple `fetch()` de télémétrie
+(valide le chemin de capture réseau, pas la capture `download`). La
+mécanique de fusion `discoveredDocument` → `documents` est, elle, prouvée
+par preuve de production ci-dessus plutôt que par une simulation locale.
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque
