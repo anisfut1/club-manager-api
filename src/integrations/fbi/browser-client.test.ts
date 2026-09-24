@@ -169,6 +169,20 @@ describe("BrowserFbiClient.findEmarqueDocuments (navigation générique, best-ef
 
     await client.closeSession(session);
   });
+
+  it("inclut les liens réellement visibles sur la page bloquée dans le message d'erreur — diagnostic pour ajuster tryNavigateToSearchScreen sur le vrai markup FBI sans deviner à l'aveugle (§ 'Quinzième déclenchement', docs/FBI.md)", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 100 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    const error = await client.findEmarqueDocuments(session, "77777").catch((e: unknown) => e);
+
+    expect(error).toMatchObject({ code: "EMARQUE_MATCH_PAGE_NOT_REACHED" });
+    expect((error as Error).message).toContain("Liens visibles sur cette page");
+    // resultats.fbi (fixture par défaut) contient un lien vers la rencontre 2813 — doit apparaître dans le diagnostic.
+    expect((error as Error).message).toContain("2813");
+
+    await client.closeSession(session);
+  });
 });
 
 describe("BrowserFbiClient.downloadDocument", () => {

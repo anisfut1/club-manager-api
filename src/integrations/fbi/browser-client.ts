@@ -144,8 +144,14 @@ export class BrowserFbiClient {
      */
     if (!(await selectors.pageMentionsMatchNumber(page, matchNumber))) {
       const title = await page.title().catch(() => "?");
+      // Diagnostic riche (§ "Quinzième déclenchement", docs/FBI.md) :
+      // révèle les libellés RÉELS des liens de la page où la navigation
+      // reste bloquée, pour ajuster tryNavigateToSearchScreen sur le vrai
+      // markup FBI plutôt qu'à l'aveugle.
+      const links = await selectors.listVisibleLinks(page);
+      const linksSummary = links.length > 0 ? links.map((l) => `"${l.text}" → ${l.href}`).join(" | ") : "(aucun lien trouvé sur la page)";
       throw new FbiError(
-        `Page de résultat introuvable pour la rencontre ${matchNumber} : ni la recherche ni l'ouverture du résultat n'ont abouti (page actuelle : "${title}", ${page.url()}).`,
+        `Page de résultat introuvable pour la rencontre ${matchNumber} : ni la recherche ni l'ouverture du résultat n'ont abouti (page actuelle : "${title}", ${page.url()}). Liens visibles sur cette page : ${linksSummary}`,
         "EMARQUE_MATCH_PAGE_NOT_REACHED",
       );
     }

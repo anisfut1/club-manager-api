@@ -719,6 +719,39 @@ gère elle-même son erreur). Couvert par deux tests dans
 (inchangé), et un NOUVEAU test explicite pour un job qui renvoie `false`
 SANS lever d'exception — le vrai scénario de cette régression.
 
+**Seizième déclenchement — le blocage ne dépend pas du numéro de
+rencontre : TOUS les matchs testés restent sur "FBI - Accueil".** Une
+fois le correctif de comptage déployé, le club a de nouveau cliqué
+"Traiter les jobs FBI en attente" : la file globale (416 jobs, backlog
+complet, plus seulement les 3 numéros de test) a recommencé à défiler.
+Nouvel échec observé, rencontre n°752 (jamais testée avant, numéro à 3
+chiffres, aucune ambiguïté possible avec un chiffre isolé) — même
+diagnostic EXACT que n°1481/n°4516 : page actuelle "FBI - Accueil",
+`https://extranet.ffbb.com/fbi/accueil.fbi`. Ce n'est donc PAS un
+problème de longueur de numéro (les correctifs précédents sur ce point
+restent corrects et nécessaires, mais ne sont pas la cause racine) : la
+navigation ne quitte JAMAIS la page d'accueil post-login, pour AUCUN
+numéro testé jusqu'ici. Suspect le plus probable :
+`tryNavigateToSearchScreen` (`browser-client.ts`), le tout premier clic
+best-effort — `page.getByRole("link", { name: /rencontre|compétition|
+calendrier/i })` — ne trouve rien sur le VRAI accueil FBI (libellé
+différent, élément qui n'est pas un `role=link`, etc.), jamais observable
+depuis cet environnement (réseau `*.ffbb.com` bloqué).
+
+**Corrigé (diagnostic, pas une correction de sélecteur — pas assez
+d'évidence pour deviner un quatrième correctif à l'aveugle)** :
+`EMARQUE_MATCH_PAGE_NOT_REACHED` inclut désormais la liste des liens
+RÉELLEMENT visibles sur la page bloquée (`selectors.listVisibleLinks`,
+texte + href, plafonné à 25) dans son message. Le prochain échec en
+production révélera les libellés réels de navigation disponibles sur
+l'accueil FBI, permettant d'ajuster `tryNavigateToSearchScreen` sur le
+VRAI markup plutôt que sur une hypothèse — même méthode que celle qui a
+permis de corriger le formulaire de login au tout début de cette
+intégration. **Prochaine étape explicite** : récupérer le message
+d'erreur complet du prochain job en échec (logs Vercel ou colonne
+`fbi_jobs.last_error`) et l'analyser avant tout nouveau correctif de
+sélecteur.
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque

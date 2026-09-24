@@ -87,6 +87,36 @@ export async function findDocumentLinks(page: Page): Promise<DiscoveredDocumentL
   return found;
 }
 
+/**
+ * Diagnostic — liste les liens RÉELLEMENT visibles sur la page courante
+ * (texte + href, plafonné), pour l'inclure dans le message d'une
+ * `EMARQUE_MATCH_PAGE_NOT_REACHED` (`browser-client.ts`). Constaté en
+ * production le 2026-09-24 : la navigation reste bloquée sur "FBI -
+ * Accueil" pour TOUT numéro de rencontre testé (§ "Quinzième
+ * déclenchement" côté docs/FBI.md), y compris pour des numéros assez
+ * spécifiques pour exclure une coïncidence de texte — ce qui pointe vers
+ * `tryNavigateToSearchScreen` (le tout premier clic, `getByRole("link",
+ * { name: /rencontre|compétition|calendrier/i })`) qui ne trouve rien
+ * sur le VRAI accueil FBI, jamais observable depuis cet environnement.
+ * Ce dump doit révéler, au prochain échec, les libellés RÉELS des liens
+ * de navigation présents — plutôt que d'ajuster le regex à l'aveugle une
+ * quatrième fois.
+ */
+export async function listVisibleLinks(page: Page, limit = 25): Promise<{ text: string; href: string }[]> {
+  const anchors = page.locator("a[href]");
+  const count = Math.min(await anchors.count(), limit);
+  const links: { text: string; href: string }[] = [];
+
+  for (let i = 0; i < count; i += 1) {
+    const anchor = anchors.nth(i);
+    const href = (await anchor.getAttribute("href").catch(() => null)) ?? "";
+    const text = ((await anchor.textContent().catch(() => "")) ?? "").trim().replace(/\s+/g, " ").slice(0, 60);
+    if (text || href) links.push({ text, href });
+  }
+
+  return links;
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
