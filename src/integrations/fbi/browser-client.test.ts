@@ -152,6 +152,21 @@ describe("BrowserFbiClient.findEmarqueDocuments (§ 'Dix-huitième déclenchemen
 
     await client.closeSession(session);
   });
+
+  it("inclut le nom du champ ciblé (jamais supposé) ET un dump des champs de formulaire, y compris l'option sélectionnée d'un <select> — diagnostic ajouté après une recherche \"réussie\" sans aucun résultat en production (§ 'Dix-neuvième déclenchement', docs/FBI.md)", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 100 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    const error = await client.findEmarqueDocuments(session, "77777").catch((e: unknown) => e);
+
+    expect(error).toMatchObject({ code: "EMARQUE_MATCH_PAGE_NOT_REACHED" });
+    const message = (error as Error).message;
+    expect(message).toContain('champ "numeroRencontre" rempli');
+    expect(message).toContain("Champs de formulaire sur cette page");
+    expect(message).toContain('select[name=saison]="2026-2027"');
+
+    await client.closeSession(session);
+  });
 });
 
 describe("BrowserFbiClient.downloadDocument", () => {

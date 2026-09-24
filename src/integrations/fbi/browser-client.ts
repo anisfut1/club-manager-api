@@ -169,9 +169,30 @@ export class BrowserFbiClient {
        */
       const links = await selectors.listVisibleLinks(page, 60);
       const linksSummary = links.length > 0 ? links.map((l) => `"${l.text}" → ${l.href}`).join(" | ") : "(aucun lien trouvé sur la page)";
+
+      /**
+       * Diagnostic riche (§ "Dix-neuvième déclenchement", docs/FBI.md) :
+       * après correction du faux positif de checkbox, une recherche
+       * "réussie" (champ rempli, formulaire soumis) n'a produit AUCUNE
+       * ligne de résultat pour un match réellement joué (n°2813, preuve
+       * visuelle du code EM). Hypothèse à vérifier sur preuve : un champ
+       * de formulaire obligatoire non renseigné (ex : une saison qui
+       * défaute sur la saison EN COURS plutôt que celle du match
+       * recherché) empêcherait la recherche d'aboutir quel que soit le
+       * champ numéro ciblé. Ce dump révèle l'état RÉEL de tous les
+       * champs (y compris les `<select>` et leur option sélectionnée) au
+       * moment de l'échec.
+       */
+      const formFields = await selectors.listFormFields(page, 40);
+      const formFieldsSummary =
+        formFields.length > 0
+          ? formFields.map((f) => (f.tag === "select" ? `select[name=${f.name}]="${f.selectedLabel ?? f.value}"` : `${f.tag}[type=${f.type ?? "?"},name=${f.name}]="${f.value}"`)).join(" | ")
+          : "(aucun champ de formulaire trouvé sur la page)";
+
       throw new FbiError(
         `Page de résultat introuvable pour la rencontre ${matchNumber} : ni la recherche ni l'ouverture du résultat n'ont abouti (page actuelle : "${title}", ${page.url()}). ` +
           `Trace de navigation : [1] ${trace[0]} — [2] ${trace[1]} — [3] ${trace[2]}. ` +
+          `Champs de formulaire sur cette page : ${formFieldsSummary}. ` +
           `Liens visibles sur cette page : ${linksSummary}`,
         "EMARQUE_MATCH_PAGE_NOT_REACHED",
       );
@@ -241,9 +262,16 @@ export class BrowserFbiClient {
   }
 
   private async trySearchByMatchNumber(page: Page, matchNumber: string): Promise<string> {
-    const input = selectors.matchNumberSearchInput(page).first();
-    const count = await input.count().catch(() => 0);
-    if (count === 0) return "aucun champ de recherche par numéro trouvé (name/placeholder évocateur)";
+    const input = await selectors.matchNumberSearchInput(page);
+    if (!input) return "aucun champ de recherche par numéro trouvé (name/placeholder évocateur)";
+
+    /**
+     * Diagnostic (§ "Dix-neuvième déclenchement", docs/FBI.md) : le nom
+     * réel du champ ciblé, pour confirmer sur le prochain succès/échec
+     * que c'est bien le bon champ (jamais une checkbox ou un autre champ
+     * homonyme) — plutôt que de le supposer.
+     */
+    const inputName = (await input.getAttribute("name").catch(() => null)) ?? "?";
 
     const urlBefore = page.url();
     try {
@@ -264,9 +292,11 @@ export class BrowserFbiClient {
 
       await this.settle(page);
       const urlAfter = page.url();
-      return urlAfter === urlBefore ? `champ rempli ("${matchNumber}") et recherche soumise, mais l'URL n'a pas changé (${urlAfter})` : `champ rempli et recherche soumise, url → ${urlAfter}`;
+      return urlAfter === urlBefore
+        ? `champ "${inputName}" rempli ("${matchNumber}") et recherche soumise, mais l'URL n'a pas changé (${urlAfter})`
+        : `champ "${inputName}" rempli et recherche soumise, url → ${urlAfter}`;
     } catch (error) {
-      return `champ de recherche trouvé mais le remplissage/la soumission a échoué : ${error instanceof Error ? error.message : String(error)}`;
+      return `champ de recherche "${inputName}" trouvé mais le remplissage/la soumission a échoué : ${error instanceof Error ? error.message : String(error)}`;
     }
   }
 

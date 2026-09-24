@@ -922,6 +922,55 @@ réclamables. Réinitialisés à chaque nouveau correctif (`attempt_count`,
 et ciblé. Le reste de la file ne sera réactivé qu'une fois ces 3 matchs
 validés de bout en bout (document téléchargé ET parsé).
 
+**Suite immédiate — le correctif checkbox déployé, la recherche
+"réussit" mais ne renvoie AUCUNE ligne.** Nouveau test en production sur
+les 3 mêmes matchs isolés : l'étape [2] montre cette fois `champ rempli
+("2813") et recherche soumise, mais l'URL n'a pas changé` — le
+remplissage/la soumission n'ont plus levé d'exception (la checkbox n'est
+plus ciblée). Mais l'étape [3] ne trouve toujours aucun lien e-Marque, et
+la liste des liens visibles ne contient AUCUNE trace de tableau de
+résultats (seulement le menu global permanent) — pour un match RÉELLEMENT
+joué (n°2813, score connu, preuve visuelle du code EM). Ce n'est donc pas
+un problème de sélecteur de lien, mais une recherche qui n'a
+véritablement rien retourné.
+
+Hypothèse à vérifier sur preuve, pas à deviner (le réseau `*.ffbb.com`
+reste bloqué depuis cet environnement) : un formulaire de ce type a très
+probablement d'autres champs obligatoires que "N° Rencontre" — en
+particulier une **saison** — qui filtrent la recherche. Les 3 matchs
+testés datent tous de la saison 2025-2026 (joués entre septembre 2025 et
+mai 2026) ; la date du jour en production est le 2026-09-24, donc en
+saison 2026-2027. Si un sélecteur de saison sur cette page défaute sur la
+saison EN COURS plutôt que sur celle du match recherché, la recherche ne
+peut jamais aboutir, quel que soit le champ numéro ciblé.
+
+**Corrigé (diagnostic, encore une fois — pas assez de preuve pour deviner
+un cinquième champ à l'aveugle)** : `selectors.listFormFields` dump
+désormais TOUS les champs du formulaire de la page (input/select/textarea),
+avec pour un `<select>` le LIBELLÉ de l'option actuellement sélectionnée
+— inclus dans le message `EMARQUE_MATCH_PAGE_NOT_REACHED` aux côtés de la
+trace de navigation et des liens visibles. Le prochain échec révélera
+l'état réel de chaque champ (nom du champ numéro ciblé également ajouté à
+la trace de `trySearchByMatchNumber`, pour confirmer qu'il s'agit bien du
+bon champ et pas d'un homonyme).
+
+**Corrigé en même temps (bug réel, découvert en écrivant le test du
+diagnostic ci-dessus, jamais en production)** : `matchNumberSearchInput`
+combinait ses 4 alternatives dans un seul sélecteur CSS `a, b, c, d` —
+résolu par Playwright dans l'ORDRE DU DOM, jamais dans l'ordre d'écriture
+des alternatives (même piège que la checkbox du déclenchement précédent,
+sous une forme différente : n'importe quel AUTRE champ texte matchant
+`rencontre` avant le vrai champ "numero" dans le markup aurait pu être
+ciblé à tort). Résout maintenant chaque alternative dans l'ordre de
+priorité écrit dans le code (renvoie la première dont au moins un élément
+existe), jamais une seule requête CSS fusionnée.
+
+Couvert par une nouvelle fixture (`rechercher-rencontre.html`) qui ajoute
+un `<select name="saison">` (option "2026-2027" sélectionnée) avant la
+checkbox et le champ texte, et un nouveau test qui vérifie que le message
+d'erreur contient `champ "numeroRencontre" rempli` (jamais supposé) et
+`select[name=saison]="2026-2027"` dans le dump des champs de formulaire.
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque

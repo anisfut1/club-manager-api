@@ -117,6 +117,56 @@ export async function listVisibleLinks(page: Page, limit = 25): Promise<{ text: 
   return links;
 }
 
+export interface FormFieldSnapshot {
+  tag: string;
+  type?: string;
+  name: string;
+  value: string;
+  selectedLabel?: string;
+}
+
+/**
+ * Diagnostic — dump de TOUS les champs de formulaire visibles sur la page
+ * courante (input/select/textarea), avec pour un `<select>` le LIBELLÉ de
+ * l'option actuellement sélectionnée. Constaté en production le
+ * 2026-09-24 (§ "Dix-neuvième déclenchement", docs/FBI.md) : après avoir
+ * corrigé le faux positif de la checkbox "non joué", remplir et soumettre
+ * le champ numéro de rencontre n'a produit AUCUNE ligne de résultat — ni
+ * lien e-Marque, ni la moindre trace de tableau dans les liens visibles
+ * de la page. Hypothèse à vérifier sur preuve, pas à deviner : un
+ * formulaire FBI de ce type a très probablement d'autres champs
+ * obligatoires (saison, compétition, poule...) qui filtrent la recherche
+ * EN PLUS du numéro — si l'un d'eux a une valeur par défaut qui ne
+ * correspond pas au match recherché (ex : la saison en cours plutôt que
+ * la saison du match), la recherche ne peut jamais aboutir, quel que soit
+ * le champ numéro ciblé. Ce dump révélera, au prochain échec, l'état
+ * RÉEL de chaque champ du formulaire.
+ */
+export async function listFormFields(page: Page, limit = 40): Promise<FormFieldSnapshot[]> {
+  const fields = page.locator("form input, form select, form textarea");
+  const count = Math.min(await fields.count().catch(() => 0), limit);
+  const snapshots: FormFieldSnapshot[] = [];
+
+  for (let i = 0; i < count; i += 1) {
+    const field = fields.nth(i);
+    const tag = (await field.evaluate((node) => node.tagName.toLowerCase()).catch(() => "?")) as string;
+    const type = (await field.getAttribute("type").catch(() => null)) ?? undefined;
+    const name = (await field.getAttribute("name").catch(() => null)) ?? "";
+
+    if (tag === "select") {
+      const value = (await field.inputValue().catch(() => "")) ?? "";
+      const selectedLabel = (await field.locator("option:checked").first().textContent().catch(() => null))?.trim();
+      snapshots.push({ tag, name, value, selectedLabel });
+      continue;
+    }
+
+    const value = (await field.getAttribute("value").catch(() => null)) ?? "";
+    snapshots.push({ tag, type, name, value });
+  }
+
+  return snapshots;
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -182,19 +232,31 @@ export async function pageMentionsMatchNumber(page: Page, matchNumber: string): 
  * AVANT le vrai champ numéro dans le markup, `.first()` la sélectionnait
  * à tort, et `.fill()` plantait ("Input of type checkbox cannot be
  * filled"). Exclure explicitement les types non-texte (checkbox, radio,
- * hidden, submit, button) élimine ce faux positif quel que soit l'ordre
- * du DOM, sans avoir à deviner une position.
+ * hidden, submit, button) élimine CE faux positif précis, mais ne suffit
+ * pas en général : un simple `page.locator("a, b, c").first()` reste
+ * résolu par ORDRE DU DOM, jamais par l'ordre d'écriture de `a`/`b`/`c` —
+ * si une AUTRE checkbox/champ texte non pertinent matchant `rencontre`
+ * (ex : un champ "date de rencontre") précède le vrai champ "numero"
+ * dans le markup, le même bug reviendrait sous une autre forme. Résout
+ * donc chaque alternative dans l'ordre de PRIORITÉ écrit ci-dessous
+ * (renvoie la première dont au moins un élément existe), jamais toutes
+ * fusionnées dans un seul sélecteur CSS.
  */
-export function matchNumberSearchInput(page: Page): Locator {
+export async function matchNumberSearchInput(page: Page): Promise<Locator | null> {
   const nonTextTypes = ':not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="submit"]):not([type="button"])';
-  return page.locator(
-    [
-      `input[name*="numero" i]${nonTextTypes}`,
-      `input[name*="rencontre" i]${nonTextTypes}`,
-      `input[placeholder*="numéro" i]${nonTextTypes}`,
-      `input[placeholder*="rencontre" i]${nonTextTypes}`,
-    ].join(", "),
-  );
+  const candidates = [
+    `input[name*="numero" i]${nonTextTypes}`,
+    `input[name*="rencontre" i]${nonTextTypes}`,
+    `input[placeholder*="numéro" i]${nonTextTypes}`,
+    `input[placeholder*="rencontre" i]${nonTextTypes}`,
+  ];
+
+  for (const selector of candidates) {
+    const locator = page.locator(selector).first();
+    if ((await locator.count().catch(() => 0)) > 0) return locator;
+  }
+
+  return null;
 }
 
 /**
