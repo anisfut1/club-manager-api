@@ -104,6 +104,33 @@ describe("BrowserFbiClient.findEmarqueDocuments (§ 'Dix-huitième déclenchemen
     await client.closeSession(session);
   });
 
+  it("exclut le lien-leurre de téléchargement du LOGICIEL e-Marque, déduplique un même lien répété dans le DOM, et évite toute collision de nom de fichier entre deux documents distincts au libellé identique — régression production 2026-09-24 : rencontre n°1481 RÉELLEMENT réussie, mais avait téléchargé \"Télécharger e-Marque V2.pdf\" (logiciel, pas les données du match) et 3 copies d'un même document sous le nom générique \"e-Marque.pdf\" qui s'écrasaient en Storage (§ 'Vingt-deuxième déclenchement', docs/FBI.md)", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 100 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    const documents = await client.findEmarqueDocuments(session, "2813");
+
+    // Le lien-leurre logiciel (fixture detail.html : "Télécharger e-Marque
+    // V2" → /logiciel/emarque-v2.pdf) ne doit JAMAIS apparaître.
+    expect(documents.some((d) => d.url.includes("emarque-v2.pdf") || /v ?2/i.test(d.fileName))).toBe(false);
+
+    // Les deux liens vers /telechargerDocument.fbi?id=aaa (dupliqués deux
+    // fois dans le DOM de la fixture) ne doivent produire qu'UN seul
+    // document, jamais deux copies du même.
+    const aaaDocs = documents.filter((d) => d.url.includes("id=aaa"));
+    expect(aaaDocs).toHaveLength(1);
+
+    // id=aaa et id=bbb partagent le même libellé visible ("e-Marque") mais
+    // sont des documents DIFFÉRENTS : leurs noms de fichier dérivés ne
+    // doivent jamais entrer en collision (sinon l'un écrase l'autre dans
+    // Storage, comme constaté en production).
+    const bbbDocs = documents.filter((d) => d.url.includes("id=bbb"));
+    expect(bbbDocs).toHaveLength(1);
+    expect(aaaDocs[0].fileName).not.toBe(bbbDocs[0].fileName);
+
+    await client.closeSession(session);
+  });
+
   it("renvoie une liste vide (jamais une erreur) quand la rencontre existe dans le tableau de résultats mais que sa colonne EM est vide (pas encore jouée / sans e-Marque)", async () => {
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 100 });
     const session = await client.login({ username: "club1234", password: "secret" });

@@ -64,7 +64,22 @@ internalRouter.get("/cron/fbi-enqueue", async (c) => {
   }
 });
 
-const JOB_BATCH_SIZE = 3;
+/**
+ * Un seul job `discover_emarque` RÉEL par invocation — constaté en
+ * production le 2026-09-24 (§ "Vingt-deuxième déclenchement", docs/FBI.md) :
+ * le tout premier succès de bout en bout (rencontre n°1481, 5 documents
+ * téléchargés) a pris ~3min30 (login + navigation + recherche + téléchargement
+ * réels contre le vrai FBI, bien plus lent que les fixtures locales). Un lot
+ * de 3 (l'ancienne valeur) peut donc dépasser `maxDuration: 300` (vercel.json)
+ * dès le 2ᵉ ou 3ᵉ job — provoquant un "Vercel Runtime Timeout Error", qui tue
+ * le process AVANT que le job en cours puisse passer en `succeeded`/`failed`
+ * ou même que son `finally` (fermeture de session/browser) s'exécute : il
+ * reste bloqué en `status = 'claimed'` indéfiniment, ce qui bloque ENSUITE
+ * tout nouveau job pour ce club via la contrainte "un job actif par club"
+ * (voir la garde d'auto-guérison ajoutée aux deux fonctions SQL
+ * `claim_next_fbi_job*`, migration 20260924140000).
+ */
+const JOB_BATCH_SIZE = 1;
 
 /**
  * GET /internal/cron/fbi-jobs — §27/§28 de la demande : réclame un PETIT lot

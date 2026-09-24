@@ -258,7 +258,19 @@ integrationsRouter.post("/fbi/test", requireClubRole("club_admin"), async (c) =>
   }
 });
 
-const CLUB_JOB_BATCH_SIZE = 3;
+/**
+ * Un seul job `discover_emarque` RÉEL par invocation — voir la note
+ * détaillée sur `JOB_BATCH_SIZE` dans `src/api/internal/index.ts` (même
+ * constat en production le 2026-09-24, § "Vingt-deuxième déclenchement",
+ * docs/FBI.md) : ~3min30 pour un job réel contre le vrai FBI, un lot de 3
+ * (l'ancienne valeur) risque de dépasser `maxDuration: 300` et de tuer le
+ * process en cours de traitement d'un job suivant, le laissant bloqué en
+ * `status = 'claimed'`. Le bouton "Traiter les jobs FBI en attente"
+ * (`ProcessFbiJobsButton.tsx` côté SCSB) boucle déjà automatiquement tant
+ * qu'il reste des jobs — traiter un seul job par clic/itération est donc
+ * sans perte fonctionnelle, juste plus de requêtes.
+ */
+const CLUB_JOB_BATCH_SIZE = 1;
 const CLUB_PARSE_BATCH_SIZE = 10;
 
 /**

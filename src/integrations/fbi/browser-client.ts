@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Browser, BrowserContext, Page } from "playwright-core";
 import { FbiError } from "./errors.js";
 import * as selectors from "./selectors.js";
@@ -209,10 +210,26 @@ export class BrowserFbiClient {
     }));
   }
 
+  /**
+   * Constaté en production le 2026-09-24 (rencontre n°1481, § "Vingt-deuxième
+   * déclenchement", docs/FBI.md) : le nom de fichier RÉEL est utilisé quand
+   * l'URL se termine par une extension connue, sinon un nom dérivé du
+   * libellé visible du lien (repli générique). Deux liens DIFFÉRENTS avec le
+   * même libellé visible (ex : "e-Marque") produisaient alors le MÊME nom de
+   * fichier — donc le MÊME `storagePath` (dérivé du nom de fichier, voir
+   * `emarqueStoragePath`), et s'écrasaient silencieusement l'un l'autre dans
+   * Storage tout en laissant plusieurs lignes `match_documents` DISTINCTES
+   * pointant vers ce chemin unique désormais incohérent avec leur `sha256`
+   * d'origine. Un court hash de l'URL (jamais visible à l'utilisateur, juste
+   * de quoi distinguer deux documents homonymes) élimine cette collision.
+   */
   private fileNameFromLabelOrUrl(link: { href: string; label: string }): string {
     const fromUrl = link.href.split("/").pop();
     if (fromUrl && /\.(zip|pdf)$/i.test(fromUrl)) return fromUrl;
-    return `${link.label.replace(/[^a-z0-9-_]+/gi, "_").slice(0, 60) || "document"}.pdf`;
+
+    const slug = link.label.replace(/[^a-z0-9-_]+/gi, "_").slice(0, 60) || "document";
+    const shortHash = createHash("sha1").update(link.href).digest("hex").slice(0, 8);
+    return `${slug}_${shortHash}.pdf`;
   }
 
   /** Chaque étape "best effort" renvoie une trace lisible (jamais d'exception) — voir le diagnostic de `findEmarqueDocuments`. */

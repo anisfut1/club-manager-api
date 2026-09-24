@@ -1061,6 +1061,83 @@ sur preuve, si le bon bouton est ciblé et si un problème de timing AJAX
 était en jeu — ou pointera vers autre chose (ex. un des champs encore
 sur leur valeur "placeholder" : `idDivision`, `idPoule`, `numeroEquipe`).
 
+**Vingt-deuxième déclenchement — PREMIER SUCCÈS DE BOUT EN BOUT (rencontre
+n°1481, 5 documents "téléchargés"), mais deux nouveaux bugs découverts en
+creusant le résultat : timeout d'infrastructure bloquant la file, et
+documents leurres/dupliqués téléchargés au lieu des vraies données du
+match.** Nouveau test sur les 3 mêmes matchs isolés après déploiement du
+correctif précédent (dump des boutons + attente réseau) :
+
+1. **`Job discover_emarque réussi`, n°1481, `documentsDownloaded: 5`** —
+   la toute première fois, dans cette série de vingt et un correctifs,
+   qu'un job atteint réellement `status: "succeeded"` contre le vrai FBI.
+   Confirme que la navigation, le remplissage, la saison, la case "non
+   joué" et le clic du bouton RECHERCHER fonctionnent tous ensemble.
+2. **Immédiatement après, `Vercel Runtime Timeout Error: Task timed out
+   after 300 seconds`** pendant le traitement du job suivant (n°4516,
+   même lot de 3). Le job n°1481 a pris ~3min30 contre le vrai FBI (bien
+   plus lent que les fixtures locales) — un lot de 3 jobs réels dépasse
+   `maxDuration: 300`. Le process tué EN PLEIN TRAITEMENT du job suivant
+   ne peut jamais exécuter son `finally` (fermeture de session/browser,
+   `browser-client.ts`) : ce job reste bloqué en `status = 'claimed'`
+   indéfiniment, ce qui bloque ENSUITE tout nouveau job pour ce club via
+   la contrainte "un seul job actif par club" — constaté par une requête
+   SQL directe, débloqué manuellement une première fois.
+
+   **Corrigé** : `CLUB_JOB_BATCH_SIZE` (`routes.ts`) et `JOB_BATCH_SIZE`
+   (`api/internal/index.ts`, cron) réduits de 3 à 1 — un seul job réel
+   par invocation, largement sous `maxDuration: 300`. Le bouton "Traiter
+   les jobs FBI en attente" boucle déjà automatiquement côté SCSB, donc
+   aucune perte fonctionnelle. **ET** : migration
+   `20260924140000_fbi_jobs_claim_stale_recovery.sql` — la garde "un seul
+   job actif par club" des deux fonctions `claim_next_fbi_job*` n'exclut
+   désormais que les jobs `claimed`/`running` dont `claimed_at` est
+   RÉCENT (< 10 minutes, largement au-dessus de `maxDuration` lui-même) :
+   un job plus vieux que ça a forcément été tué par un timeout/crash, il
+   ne bloque plus jamais la file indéfiniment — auto-guérison, plus
+   besoin d'intervention manuelle en base.
+
+3. **En inspectant les "5 documents téléchargés" pour n°1481** (le club a
+   demandé pourquoi "Traiter les documents téléchargés" ne trouvait rien
+   à parser malgré ce succès) : 4 lignes `match_documents` réellement
+   présentes, TOUTES de type `other` (jamais `emarque_zip` — le seul type
+   que `parseDownloadedEmarqueDocuments` traite, par design, voir le
+   commentaire en tête de ce fichier : les documents séparés n'ont pas de
+   parseur dédié). Mais surtout : l'une d'elles est
+   `T_l_charger_e-Marque_V2.pdf` ("Télécharger e-Marque V2.pdf") — EXACTEMENT
+   le lien-leurre du LOGICIEL e-Marque déjà identifié aux Quinzième/
+   Seizième déclenchements sur l'accueil FBI, cette fois trouvé sur LA
+   PAGE DE DÉTAIL atteinte après le clic sur le lien EM lui-même (jamais
+   vérifié avant, faute d'un succès pour l'observer). Et 3 lignes
+   nommées identiquement `e-Marque.pdf`, au MÊME `storage_path` (donc
+   s'écrasant mutuellement dans Storage) — un même lien de document
+   dupliqué 3 fois dans le DOM (même phénomène que le menu global déjà
+   observé dupliqué 2-3 fois dans `listVisibleLinks`).
+
+   **Corrigé** : `findDocumentLinks` (`selectors.ts`) exclut désormais
+   explicitement les liens correspondant au logiciel e-Marque
+   (`SOFTWARE_DOWNLOAD_PATTERN` : "e-Marque V2", "MiniBasket", "logiciel",
+   "installer" — le motif générique `e-?marque` de
+   `DOCUMENT_LABEL_PATTERN` les matchait à tort) et déduplique par `href`
+   (jamais deux fois le même lien). `fileNameFromLabelOrUrl`
+   (`browser-client.ts`) ajoute un court hash de l'URL au nom de fichier
+   dérivé du libellé (repli générique, quand l'URL elle-même n'a pas
+   d'extension exploitable) : deux documents DIFFÉRENTS au même libellé
+   visible ("e-Marque") ne produisent plus jamais le même nom de fichier,
+   donc plus jamais le même `storage_path` — élimine la classe de bug
+   "écrasement silencieux en Storage" pour de bon, pas seulement pour ce
+   cas précis.
+
+Documents leurres/dupliqués supprimés manuellement pour n°1481
+(`match_documents`), `emarque_status` et jobs des 3 matchs de test
+remis à zéro pour un nouveau cycle de test propre. **Toujours ouvert** :
+aucun des documents découverts pour n°1481 n'était un `.zip` — reste à
+confirmer si CE match n'expose vraiment que des PDF séparés (auquel cas
+le pipeline de parsing automatique, qui ne traite que les ZIP, ne
+s'appliquera jamais à lui) ou si la vraie page de détail expose aussi un
+ZIP que la découverte n'a pas trouvé — seul un prochain succès "propre"
+(post-correctifs ci-dessus) le confirmera.
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque

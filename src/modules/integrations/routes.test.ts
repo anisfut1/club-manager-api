@@ -379,16 +379,27 @@ describe("POST /integrations/fbi/process-jobs (§9 : traiter les jobs FBI en att
   });
 
   it("traite un lot de jobs de ce club, dispatché par type", async () => {
+    /**
+     * Un seul job réel par requête depuis le 2026-09-24 (§ "Vingt-deuxième
+     * déclenchement", docs/FBI.md : CLUB_JOB_BATCH_SIZE réduit de 3 à 1 —
+     * un job discover_emarque réel contre le vrai FBI peut prendre ~3min30,
+     * un lot de plusieurs risquait de dépasser maxDuration: 300). Deux
+     * requêtes successives (le bouton "Traiter les jobs FBI en attente"
+     * boucle déjà côté SCSB) couvrent toujours le dispatch par type.
+     */
     const jobs = [makeJob({ id: "job-1", type: "discover_emarque" }), makeJob({ id: "job-2", type: "test_connection" })];
     mockClaimNextJobForClub.mockImplementation(() => Promise.resolve(jobs.shift() ?? null));
     mockProcessDiscoverEmarqueJob.mockResolvedValue(true);
     mockProcessTestConnectionJob.mockResolvedValue(true);
 
-    const res = await request("/integrations/fbi/process-jobs", { method: "POST" });
+    const res1 = await request("/integrations/fbi/process-jobs", { method: "POST" });
+    expect(res1.status).toBe(200);
+    expect(await res1.json()).toEqual({ claimed: 1, succeeded: 1, failed: 0 });
 
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body).toEqual({ claimed: 2, succeeded: 2, failed: 0 });
+    const res2 = await request("/integrations/fbi/process-jobs", { method: "POST" });
+    expect(res2.status).toBe(200);
+    expect(await res2.json()).toEqual({ claimed: 1, succeeded: 1, failed: 0 });
+
     expect(mockProcessDiscoverEmarqueJob).toHaveBeenCalledTimes(1);
     expect(mockProcessTestConnectionJob).toHaveBeenCalledTimes(1);
   });

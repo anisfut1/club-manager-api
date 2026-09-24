@@ -62,6 +62,21 @@ const DOCUMENT_EXTENSION_PATTERN = /\.(zip|pdf)(\?|$)/i;
 const DOCUMENT_LABEL_PATTERN = /feuille de match|résumé|resume|e-?marque|export|position.*tir|shot/i;
 
 /**
+ * Liens permanents vers le LOGICIEL e-Marque (pas des données DE CE match) —
+ * confirmés en production à deux reprises indépendantes : une première fois
+ * sur l'accueil FBI (menu "e-Marque" → ffbb.com/e-marque-v2, § "Quinzième/
+ * Seizième déclenchement", docs/FBI.md), une seconde fois le 2026-09-24 sur
+ * LA PAGE DE DÉTAIL atteinte après clic sur le lien EM lui-même, pour la
+ * rencontre n°1481 réellement "réussie" (§ "Vingt-deuxième déclenchement") :
+ * un document `T_l_charger_e-Marque_V2.pdf` ("Télécharger e-Marque V2.pdf")
+ * téléchargé et inséré comme si c'était un document DE CE match, alors que
+ * c'est un lien permanent (présent sur toute page offrant des téléchargements
+ * e-Marque) vers le logiciel/l'installateur. `DOCUMENT_LABEL_PATTERN`
+ * (générique "e-?marque") le matche à tort sans cette exclusion explicite.
+ */
+const SOFTWARE_DOWNLOAD_PATTERN = /e-?marque[\s_-]*v ?2|mini ?basket|logiciel|installer/i;
+
+/**
  * Cherche des liens plausibles vers des documents e-Marque sur la page
  * courante (résultat d'une recherche de rencontre) : soit l'URL se termine
  * par une extension de document connue, soit le texte visible du lien
@@ -72,6 +87,7 @@ export async function findDocumentLinks(page: Page): Promise<DiscoveredDocumentL
   const anchors = page.locator("a[href]");
   const count = await anchors.count();
   const found: DiscoveredDocumentLink[] = [];
+  const seenHrefs = new Set<string>();
 
   for (let i = 0; i < count; i += 1) {
     const anchor = anchors.nth(i);
@@ -79,9 +95,22 @@ export async function findDocumentLinks(page: Page): Promise<DiscoveredDocumentL
     if (!href) continue;
 
     const text = ((await anchor.textContent()) ?? "").trim();
-    if (DOCUMENT_EXTENSION_PATTERN.test(href) || DOCUMENT_LABEL_PATTERN.test(text)) {
-      found.push({ href, label: text || href });
-    }
+    if (SOFTWARE_DOWNLOAD_PATTERN.test(text) || SOFTWARE_DOWNLOAD_PATTERN.test(href)) continue;
+    if (!(DOCUMENT_EXTENSION_PATTERN.test(href) || DOCUMENT_LABEL_PATTERN.test(text))) continue;
+
+    /**
+     * Déduplique par href — constaté en production le 2026-09-24 (rencontre
+     * n°1481, § "Vingt-deuxième déclenchement") : le même lien de document
+     * apparaissait 3 FOIS dans le DOM (probablement une mise en page
+     * dupliquant certains éléments — déjà observé pour le menu global, voir
+     * `listVisibleLinks` plus haut), produisant 3 entrées "e-Marque.pdf" qui
+     * s'écrasaient mutuellement en Storage (même chemin dérivé d'un nom de
+     * fichier générique).
+     */
+    if (seenHrefs.has(href)) continue;
+    seenHrefs.add(href);
+
+    found.push({ href, label: text || href });
   }
 
   return found;
