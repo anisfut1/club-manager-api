@@ -174,6 +174,15 @@
         <button type="submit">RECHERCHER</button>
       </div>
     </form>
+    <script>
+      // Beacon fire-and-forget (ne bloque jamais la soumission GET normale
+      // du formulaire) — reproduit, pour les tests, qu'un clic sur
+      // "Rechercher" déclenche AUSSI une requête réseau, comme sur le vrai
+      // FBI (§ "Vingt-septième déclenchement", docs/FBI.md).
+      document.querySelector('button[type="submit"]').addEventListener("click", function () {
+        fetch("/telemetry-beacon", { method: "POST", body: JSON.stringify({ event: "search_click" }) });
+      });
+    </script>
     <table>
       <thead>
         <tr>

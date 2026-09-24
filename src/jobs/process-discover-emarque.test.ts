@@ -123,10 +123,13 @@ describe("processDiscoverEmarqueJob", () => {
   it("télécharge le ZIP prioritairement, dépose une ligne match_documents et marque le job réussi", async () => {
     getFbiCredentialsMock.mockResolvedValue({ username: "clubxxxx", password: "correct" });
     loginMock.mockResolvedValue({ context: {}, page: {} });
-    findEmarqueDocumentsMock.mockResolvedValue([
-      { url: "https://fbi.test/export/2813.zip", fileName: "2813.zip" },
-      { url: "https://fbi.test/export/2813-feuille.pdf", fileName: "2813-feuille.pdf" },
-    ]);
+    findEmarqueDocumentsMock.mockResolvedValue({
+      documents: [
+        { url: "https://fbi.test/export/2813.zip", fileName: "2813.zip" },
+        { url: "https://fbi.test/export/2813-feuille.pdf", fileName: "2813-feuille.pdf" },
+      ],
+      diagnostic: null,
+    });
     downloadDocumentMock.mockResolvedValue(Buffer.from("contenu-zip-synthetique"));
 
     const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [] };
@@ -146,7 +149,7 @@ describe("processDiscoverEmarqueJob", () => {
   it("replanifie (jamais un échec) quand aucun document n'est encore disponible", async () => {
     getFbiCredentialsMock.mockResolvedValue({ username: "clubxxxx", password: "correct" });
     loginMock.mockResolvedValue({ context: {}, page: {} });
-    findEmarqueDocumentsMock.mockResolvedValue([]);
+    findEmarqueDocumentsMock.mockResolvedValue({ documents: [], diagnostic: null });
 
     const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [] };
     const supabase = makeFakeSupabase({ match: { id: "match-1", club_id: "club-1", numero: "2813", match_datetime: null }, recorders });
@@ -155,6 +158,21 @@ describe("processDiscoverEmarqueJob", () => {
 
     expect(recorders.jobUpdates.at(-1)).toMatchObject({ patch: expect.objectContaining({ status: "pending" }) });
     expect(recorders.matchUpdates).toContainEqual({ id: "match-1", patch: { emarque_status: "waiting_for_emarque" } });
+  });
+
+  it("persiste le diagnostic riche dans last_error même quand ce n'est PAS une erreur (§ 'Vingt-septième déclenchement', docs/FBI.md) — consultable directement en base, sans dépendre des logs Vercel", async () => {
+    getFbiCredentialsMock.mockResolvedValue({ username: "clubxxxx", password: "correct" });
+    loginMock.mockResolvedValue({ context: {}, page: {} });
+    findEmarqueDocumentsMock.mockResolvedValue({ documents: [], diagnostic: "[info, pas une erreur] Page confirmée pour la rencontre 2813 mais aucun document retenu après filtrage." });
+
+    const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [] };
+    const supabase = makeFakeSupabase({ match: { id: "match-1", club_id: "club-1", numero: "2813", match_datetime: null }, recorders });
+
+    await processDiscoverEmarqueJob(supabase, baseJob());
+
+    expect(recorders.jobUpdates.at(-1)).toMatchObject({
+      patch: expect.objectContaining({ status: "pending", last_error: expect.stringContaining("[info, pas une erreur]") }),
+    });
   });
 
   it("replanifie avec l'erreur en last_error (jamais un succès silencieux) quand la page de la rencontre n'est jamais atteinte (régression 2026-09-24)", async () => {
@@ -188,7 +206,7 @@ describe("processDiscoverEmarqueJob", () => {
   it("ne re-crée pas de ligne en doublon quand match_documents a déjà cette ligne (idempotence sha256)", async () => {
     getFbiCredentialsMock.mockResolvedValue({ username: "clubxxxx", password: "correct" });
     loginMock.mockResolvedValue({ context: {}, page: {} });
-    findEmarqueDocumentsMock.mockResolvedValue([{ url: "https://fbi.test/export/2813.zip", fileName: "2813.zip" }]);
+    findEmarqueDocumentsMock.mockResolvedValue({ documents: [{ url: "https://fbi.test/export/2813.zip", fileName: "2813.zip" }], diagnostic: null });
     downloadDocumentMock.mockResolvedValue(Buffer.from("contenu-zip-synthetique"));
 
     const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [] };

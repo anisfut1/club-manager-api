@@ -122,13 +122,22 @@ export class BrowserFbiClient {
    * fichier) : tente de rejoindre un écran de recherche de rencontre, y
    * saisit le numéro, puis scanne la page de résultat pour des liens de
    * documents connus. Chaque étape échoue silencieusement (best effort)
-   * plutôt que de planter — le retour `[]` déclenche un retry planifié
+   * plutôt que de planter — `documents: []` déclenche un retry planifié
    * ("document pas encore trouvé" n'est pas une erreur).
    *
    * `season` (format "2025-2026", voir `resolveSeasonLabel` côté appelant)
    * est OPTIONNEL mais fortement recommandé : voir `tryPrepareSearchFilters`.
+   *
+   * `diagnostic` (§ "Vingt-septième déclenchement", docs/FBI.md) : rempli
+   * UNIQUEMENT quand `documents` est vide, avec la même trace/dump riche
+   * qu'un échec dur — l'appelant (`process-discover-emarque.ts`) le
+   * persiste dans `fbi_jobs.last_error` (même colonne que pour un VRAI
+   * échec) pour qu'il soit consultable directement en base sans dépendre
+   * des logs Vercel (que seul un humain avec accès au dashboard peut lire
+   * et coller manuellement — un aller-retour coûteux répété à chaque
+   * itération de correctif).
    */
-  async findEmarqueDocuments(session: BrowserFbiSession, matchNumber: string, season: string | null = null): Promise<{ url: string; fileName: string }[]> {
+  async findEmarqueDocuments(session: BrowserFbiSession, matchNumber: string, season: string | null = null): Promise<{ documents: { url: string; fileName: string }[]; diagnostic: string | null }> {
     const { page } = session;
 
     const trace: string[] = [];
@@ -238,6 +247,7 @@ export class BrowserFbiClient {
      * ressort à zéro mérite la même preuve — sinon c'est encore un cycle de
      * correctif à l'aveugle sur le prochain échec identique.
      */
+    let diagnostic: string | null = null;
     if (links.length === 0) {
       const title = await page.title().catch(() => "?");
       const visibleLinks = await selectors.listVisibleLinks(page, 60);
@@ -249,6 +259,15 @@ export class BrowserFbiClient {
           : "(aucun champ de formulaire trouvé sur la page)";
       const formHtml = await selectors.formHtmlSnippet(page);
       const searchControlsHtml = await selectors.searchControlsHtmlSnippet(page);
+
+      diagnostic =
+        `[info, pas une erreur] Page confirmée pour la rencontre ${matchNumber} (page actuelle : "${title}", ${page.url()}) mais aucun document retenu après filtrage. ` +
+        `Trace de navigation : [1] ${trace[0]} — [2] ${trace[1]} — [3] ${trace[2]} — [4] ${trace[3]}. ` +
+        `Champs de formulaire sur cette page : ${formFieldsSummary}. ` +
+        `Liens visibles sur cette page : ${linksSummary}. ` +
+        `HTML autour du bouton de recherche : ${searchControlsHtml}. ` +
+        `HTML du formulaire : ${formHtml}`;
+
       logInfo(`Job discover_emarque : page confirmée pour la rencontre ${matchNumber} mais aucun document retenu après filtrage`, {
         matchNumber,
         title,
@@ -261,10 +280,13 @@ export class BrowserFbiClient {
       });
     }
 
-    return links.map((link) => ({
-      url: new URL(link.href, page.url()).toString(),
-      fileName: this.fileNameFromLabelOrUrl(link),
-    }));
+    return {
+      documents: links.map((link) => ({
+        url: new URL(link.href, page.url()).toString(),
+        fileName: this.fileNameFromLabelOrUrl(link),
+      })),
+      diagnostic,
+    };
   }
 
   /**
@@ -419,6 +441,37 @@ export class BrowserFbiClient {
     const inputName = (await input.getAttribute("name").catch(() => null)) ?? "?";
 
     const urlBefore = page.url();
+
+    /**
+     * Capture réseau (§ "Vingt-septième déclenchement", docs/FBI.md) :
+     * après plusieurs cycles à deviner depuis le DOM (saison/case/bouton
+     * tous confirmés corrects, toujours aucun résultat), la seule preuve
+     * définitive de ce que fait RÉELLEMENT le clic sur "Rechercher" est la
+     * requête HTTP elle-même — jamais une hypothèse sur le DOM. Capture
+     * toute requête XHR/fetch/POST survenant après le clic : son URL, le
+     * corps envoyé (révèle si saison/numéro sont bien transmis au serveur),
+     * et un extrait de la réponse (révèle si le serveur renvoie déjà les
+     * bonnes lignes — auquel cas le problème serait côté rendu client,
+     * jamais côté recherche — ou rien du tout).
+     */
+    const capturedRequests: string[] = [];
+    const onResponse = async (response: import("playwright-core").Response): Promise<void> => {
+      try {
+        const req = response.request();
+        if (req.resourceType() !== "xhr" && req.resourceType() !== "fetch" && req.method() !== "POST") return;
+        const postData = req.postData();
+        const bodySnippet = await response.text().catch(() => null);
+        capturedRequests.push(
+          `${req.method()} ${response.url()} → HTTP ${response.status()}` +
+            (postData ? ` | corps envoyé (${postData.length} car.) : ${postData.slice(0, 800)}` : " | aucun corps envoyé") +
+            (bodySnippet ? ` | réponse (${bodySnippet.length} car.) : ${bodySnippet.slice(0, 2000)}` : " | réponse illisible"),
+        );
+      } catch {
+        // Best effort — jamais interrompre le flux principal pour un souci de capture diagnostique.
+      }
+    };
+    page.on("response", onResponse);
+
     try {
       await input.fill(matchNumber);
 
@@ -458,11 +511,19 @@ export class BrowserFbiClient {
 
       const urlAfter = page.url();
       const submitNote = submitText ? ` (bouton "${submitText}" cliqué)` : " (aucun bouton trouvé, Entrée pressée)";
-      return urlAfter === urlBefore
-        ? `champ "${inputName}" rempli ("${matchNumber}") et recherche soumise${submitNote}, mais l'URL n'a pas changé (${urlAfter})`
-        : `champ "${inputName}" rempli et recherche soumise${submitNote}, url → ${urlAfter}`;
+      const networkNote =
+        capturedRequests.length > 0
+          ? ` — requêtes réseau capturées : ${capturedRequests.join(" || ")}`
+          : " — aucune requête XHR/fetch/POST capturée après le clic (soumission peut-être purement côté client, ou non déclenchée)";
+      return (
+        (urlAfter === urlBefore
+          ? `champ "${inputName}" rempli ("${matchNumber}") et recherche soumise${submitNote}, mais l'URL n'a pas changé (${urlAfter})`
+          : `champ "${inputName}" rempli et recherche soumise${submitNote}, url → ${urlAfter}`) + networkNote
+      );
     } catch (error) {
       return `champ de recherche "${inputName}" trouvé mais le remplissage/la soumission a échoué : ${error instanceof Error ? error.message : String(error)}`;
+    } finally {
+      page.off("response", onResponse);
     }
   }
 

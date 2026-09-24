@@ -32,6 +32,12 @@ beforeEach(() => {
   server.setRoute({ path: "/rechercherRencontreSaisieResultat.fbi", contentType: "text/html", body: fixture("rechercher-rencontre.html") });
   server.setRoute({ path: "/detail.fbi", contentType: "text/html", body: fixture("detail.html") });
   server.setRoute({ path: "/export/2813.zip", contentType: "application/zip", body: Buffer.from("contenu-zip-synthetique") });
+  // Beacon fetch() déclenché par la fixture rechercher-rencontre.html au
+  // clic sur "Rechercher" — reproduit une vraie requête XHR/fetch pour
+  // vérifier que la capture réseau (§ "Vingt-septième déclenchement",
+  // docs/FBI.md) fonctionne réellement, pas seulement son repli "aucune
+  // requête capturée".
+  server.setRoute({ path: "/telemetry-beacon", method: "POST", contentType: "application/json", body: JSON.stringify({ received: true }) });
 });
 
 describe("BrowserFbiClient.login (contre un serveur HTML local synthétique, jamais le vrai FBI)", () => {
@@ -95,7 +101,7 @@ describe("BrowserFbiClient.findEmarqueDocuments (§ 'Dix-huitième déclenchemen
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 100 });
     const session = await client.login({ username: "club1234", password: "secret" });
 
-    const documents = await client.findEmarqueDocuments(session, "2813");
+    const { documents } = await client.findEmarqueDocuments(session, "2813");
 
     expect(documents).toContainEqual(expect.objectContaining({ fileName: "2813.zip" }));
     expect(documents.some((d) => /feuille/i.test(d.fileName) || d.url.includes("feuille"))).toBe(true);
@@ -108,7 +114,7 @@ describe("BrowserFbiClient.findEmarqueDocuments (§ 'Dix-huitième déclenchemen
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 100 });
     const session = await client.login({ username: "club1234", password: "secret" });
 
-    const documents = await client.findEmarqueDocuments(session, "2813");
+    const { documents } = await client.findEmarqueDocuments(session, "2813");
 
     // Le lien-leurre logiciel (fixture detail.html : "Télécharger e-Marque
     // V2" → /logiciel/emarque-v2.pdf) ne doit JAMAIS apparaître.
@@ -140,9 +146,15 @@ describe("BrowserFbiClient.findEmarqueDocuments (§ 'Dix-huitième déclenchemen
     // on reste sur la page de résultats — qui mentionne bien "9999" (colonne
     // N°), donc PAS d'EMARQUE_MATCH_PAGE_NOT_REACHED — mais ne contient
     // aucun lien de document, donc une liste vide.
-    const documents = await client.findEmarqueDocuments(session, "9999");
+    const { documents, diagnostic } = await client.findEmarqueDocuments(session, "9999");
 
     expect(documents).toEqual([]);
+    // Régression production 2026-09-24 (§ "Vingt-septième déclenchement") :
+    // le diagnostic riche est désormais renvoyé à l'appelant (pas juste
+    // loggé) pour être persisté dans fbi_jobs.last_error, consultable
+    // directement en base sans dépendre des logs Vercel.
+    expect(diagnostic).toContain("[info, pas une erreur]");
+    expect(diagnostic).toContain("9999");
     await client.closeSession(session);
   });
 
@@ -196,6 +208,20 @@ describe("BrowserFbiClient.findEmarqueDocuments (§ 'Dix-huitième déclenchemen
     expect((error as Error).message).toContain('name="numeroRencontre"');
     expect((error as Error).message).toContain("RECHERCHER");
     expect((error as Error).message).toContain("(tronqué"); // preuve que le formulaire complet dépasse bien la limite dans ce test
+    // Régression production 2026-09-24 (§ "Vingt-septième déclenchement") :
+    // capture réseau du clic sur "Rechercher" — plus jamais deviner depuis
+    // le DOM ce que fait réellement le clic. La fixture déclenche un
+    // fetch() POST vers /telemetry-beacon au clic (en plus de sa soumission
+    // GET classique, jamais interrompue) ; le message doit capturer cette
+    // requête (méthode, URL, corps envoyé). Sa navigation immédiate (GET
+    // classique non bloquée) fait généralement échouer la lecture du corps
+    // de la réponse (course avec la navigation) — comportement attendu, pas
+    // une régression : le message le signale ("réponse illisible") plutôt
+    // que de planter ou de rester muet.
+    expect((error as Error).message).toContain("requêtes réseau capturées");
+    expect((error as Error).message).toContain("POST");
+    expect((error as Error).message).toContain("/telemetry-beacon");
+    expect((error as Error).message).toContain('corps envoyé (24 car.) : {"event":"search_click"}');
 
     await client.closeSession(session);
   });

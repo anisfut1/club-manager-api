@@ -1285,6 +1285,47 @@ remplissage (reproduisant la taille réelle) pour vérifier que le dump
 ciblé atteint bien le bouton "Rechercher" et le champ numéro malgré la
 troncature du formulaire complet.
 
+**Vingt-septième déclenchement — capture réseau du clic, et le
+diagnostic devient consultable directement en base (plus besoin de
+relayer les logs Vercel à la main).** Le club a fait remarquer, à raison,
+que le cycle "coller un log → attendre un correctif → recliquer →
+recoller un autre log" est lourd et lent — et a proposé un accès direct à
+FBI. Vérifié sur preuve : cet environnement bloque TOUT accès réseau
+sortant non explicitement autorisé (confirmé par un test direct vers
+`extranet.ffbb.com` ET vers le propre déploiement Vercel de l'API — les
+deux rejetés par la politique réseau de l'environnement), donc même avec
+des identifiants un accès direct est impossible. Deux améliorations
+concrètes réduisent quand même le coût de chaque cycle :
+
+1. **Capture réseau du clic sur "Rechercher"** (`trySearchByMatchNumber`,
+   `browser-client.ts`) : après plusieurs cycles à deviner depuis le DOM
+   (saison/case/bouton tous confirmés corrects, toujours aucun résultat),
+   la seule preuve définitive de ce qui se passe RÉELLEMENT au clic est
+   la requête HTTP elle-même. Capture désormais toute requête
+   XHR/fetch/POST survenant après le clic — méthode, URL, corps envoyé
+   (révèle si saison/numéro sont bien transmis au serveur), et un extrait
+   de la réponse (révèle si le serveur renvoie déjà les bonnes données —
+   auquel cas le problème serait côté rendu client, jamais côté
+   recherche — ou rien du tout). Inclus dans la trace de navigation,
+   donc dans le message d'erreur ET le diagnostic "aucun document
+   retenu".
+2. **Le diagnostic "aucun document retenu" (Vingt-troisième
+   déclenchement) est désormais renvoyé par `findEmarqueDocuments` à
+   l'appelant** (nouveau champ `diagnostic: string | null` sur son type
+   de retour, `{ documents, diagnostic }` au lieu d'un simple tableau),
+   PAS SEULEMENT loggé — `process-discover-emarque.ts` le persiste dans
+   `fbi_jobs.last_error` (même colonne déjà utilisée pour un vrai échec,
+   préfixé `[info, pas une erreur]` pour éviter toute confusion). Cette
+   colonne est directement consultable via une requête SQL sur Supabase —
+   sans dépendre des logs Vercel, que seul un humain avec accès au
+   dashboard peut lire et coller manuellement à chaque itération.
+
+Le club doit toujours déclencher le job (bouton "Traiter les jobs FBI en
+attente" côté SCSB) — ça, rien ne peut le remplacer depuis cet
+environnement — mais le RÉSULTAT (succès, échec dur, ou "aucun document
+retenu" avec sa trace complète incluant maintenant la capture réseau)
+devient consultable directement, sans étape de copier-coller.
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque

@@ -112,11 +112,19 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
 
   try {
     const season = resolveSeasonLabel(match.match_datetime);
-    const documents = await client.findEmarqueDocuments(session, match.numero, season);
+    const { documents, diagnostic } = await client.findEmarqueDocuments(session, match.numero, season);
 
     if (documents.length === 0) {
       await supabase.from("matches").update({ emarque_status: "waiting_for_emarque" }).eq("id", job.match_id);
-      await rescheduleJob(supabase, job, nextWaitingBackoffSeconds(job.attempt_count), null);
+      /**
+       * Le diagnostic riche (trace/champs/HTML) est persisté dans
+       * `last_error` MÊME si ce n'est pas une vraie erreur (§ "Vingt-
+       * septième déclenchement", docs/FBI.md) — même colonne déjà utilisée
+       * pour un échec dur, directement consultable en base sans dépendre
+       * des logs Vercel. Le préfixe `[info, pas une erreur]` (déjà dans
+       * `diagnostic`) évite toute confusion en le relisant plus tard.
+       */
+      await rescheduleJob(supabase, job, nextWaitingBackoffSeconds(job.attempt_count), diagnostic);
       logInfo("Job discover_emarque : aucun document trouvé pour l'instant, nouvelle tentative planifiée", { clubId: job.club_id, jobId: job.id, matchId: job.match_id });
       return false;
     }
