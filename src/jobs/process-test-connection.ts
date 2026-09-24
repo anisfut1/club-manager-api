@@ -18,13 +18,13 @@ import { logError, logInfo } from "../logger.js";
  * appelant (retry différé, diagnostic admin en arrière-plan) de créer un
  * job `test_connection` plutôt que d'appeler le chemin synchrone.
  */
-export async function processTestConnectionJob(supabase: DbClient, job: FbiJobRow): Promise<void> {
+export async function processTestConnectionJob(supabase: DbClient, job: FbiJobRow): Promise<boolean> {
   const credentials = await getFbiCredentials(supabase, job.club_id);
   const testedAt = new Date().toISOString();
 
   if (!credentials) {
     await supabase.from("fbi_jobs").update({ status: "failed", finished_at: testedAt, last_error: "Aucun identifiant FBI enregistré." }).eq("id", job.id);
-    return;
+    return false;
   }
 
   const attempt = await attemptBrowserFbiLogin(credentials);
@@ -50,8 +50,10 @@ export async function processTestConnectionJob(supabase: DbClient, job: FbiJobRo
   if (attempt.success) {
     await supabase.from("fbi_jobs").update({ status: "succeeded", finished_at: testedAt, result: { loginStatus: attempt.loginStatus } }).eq("id", job.id);
     logInfo("Job test_connection réussi (navigateur)", { clubId: job.club_id, jobId: job.id });
-  } else {
-    await supabase.from("fbi_jobs").update({ status: "failed", finished_at: testedAt, last_error: attempt.message, result: { loginStatus: attempt.loginStatus } }).eq("id", job.id);
-    logError("Job test_connection en échec (navigateur)", new Error(attempt.message), { clubId: job.club_id, jobId: job.id, loginStatus: attempt.loginStatus });
+    return true;
   }
+
+  await supabase.from("fbi_jobs").update({ status: "failed", finished_at: testedAt, last_error: attempt.message, result: { loginStatus: attempt.loginStatus } }).eq("id", job.id);
+  logError("Job test_connection en échec (navigateur)", new Error(attempt.message), { clubId: job.club_id, jobId: job.id, loginStatus: attempt.loginStatus });
+  return false;
 }

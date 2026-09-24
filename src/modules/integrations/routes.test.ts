@@ -381,8 +381,8 @@ describe("POST /integrations/fbi/process-jobs (§9 : traiter les jobs FBI en att
   it("traite un lot de jobs de ce club, dispatché par type", async () => {
     const jobs = [makeJob({ id: "job-1", type: "discover_emarque" }), makeJob({ id: "job-2", type: "test_connection" })];
     mockClaimNextJobForClub.mockImplementation(() => Promise.resolve(jobs.shift() ?? null));
-    mockProcessDiscoverEmarqueJob.mockResolvedValue(undefined);
-    mockProcessTestConnectionJob.mockResolvedValue(undefined);
+    mockProcessDiscoverEmarqueJob.mockResolvedValue(true);
+    mockProcessTestConnectionJob.mockResolvedValue(true);
 
     const res = await request("/integrations/fbi/process-jobs", { method: "POST" });
 

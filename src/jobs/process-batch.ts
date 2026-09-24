@@ -28,14 +28,25 @@ export async function processJobBatch(supabase: DbClient, batchSize: number, cla
     logInfo("Job FBI réclamé", { jobId: job.id, clubId: job.club_id, type: job.type });
 
     try {
+      let jobSucceeded: boolean;
       if (job.type === "test_connection") {
         const { processTestConnectionJob } = await import("./process-test-connection.js");
-        await processTestConnectionJob(supabase, job);
+        jobSucceeded = await processTestConnectionJob(supabase, job);
       } else {
         const { processDiscoverEmarqueJob } = await import("./process-discover-emarque.js");
-        await processDiscoverEmarqueJob(supabase, job);
+        jobSucceeded = await processDiscoverEmarqueJob(supabase, job);
       }
-      succeeded += 1;
+      // Les deux fonctions ci-dessus gèrent LEURS PROPRES échecs en
+      // interne (reschedule/fail, jamais de `throw` vers cette boucle) —
+      // se fier au fait que l'appel "n'a pas levé d'exception" comptait
+      // TOUJOURS un job comme réussi, y compris un job simplement
+      // replanifié (page introuvable, rien à télécharger pour l'instant),
+      // constaté en production le 2026-09-24 : "3 réussis" affiché côté
+      // SCSB alors qu'un seul job avait réellement abouti. `catch`
+      // ci-dessous ne couvre donc que le cas vraiment inattendu (crash
+      // avant que la fonction gère elle-même son erreur).
+      if (jobSucceeded) succeeded += 1;
+      else failed += 1;
     } catch (error) {
       failed += 1;
       logError("Erreur non gérée en traitant un job FBI", error, { jobId: job.id, clubId: job.club_id });

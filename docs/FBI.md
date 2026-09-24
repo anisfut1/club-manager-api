@@ -688,6 +688,37 @@ chaque tentative, le cœur du correctif (distinguer succès réel d'échec
 silencieux) est validé ; seule la fragilité inhérente d'un numéro à un
 seul chiffre reste en jeu.
 
+**Quinzième déclenchement — "3 jobs traités, 3 réussis" affiché côté
+SCSB alors qu'un seul avait réellement abouti.** Après déploiement des
+correctifs ci-dessus, le club a reclique sur "Traiter les jobs FBI en
+attente" : le bouton a affiché un succès complet pour un lot de 3, mais
+les logs Vercel montraient deux `FbiError EMARQUE_MATCH_PAGE_NOT_REACHED`
+(n°1481 et n°4516) DANS CE MÊME LOT, et la base ne montrait qu'UN SEUL
+job réellement `finished_at`/`succeeded` (n°1) sur toute la fenêtre —
+les deux autres étaient simplement repassés en `pending` (replanifiés).
+
+**Cause** : `processDiscoverEmarqueJob`/`processTestConnectionJob` gèrent
+LEURS PROPRES échecs en interne (`rescheduleJob`/`failJob`, voir plus
+haut) et ne lèvent JAMAIS d'exception vers leur appelant, par design (pour
+que la boucle de `processJobBatch` ne plante jamais sur un job en
+particulier). Mais `processJobBatch` comptait `succeeded += 1` dès que
+l'appel `await processXxxJob(...)` se terminait SANS lever d'exception —
+confondant "n'a pas crashé" avec "a réellement réussi". Un job simplement
+replanifié (page introuvable, rien à télécharger pour l'instant) se
+comptait donc TOUJOURS comme un succès dans le résultat agrégé renvoyé à
+SCSB, même si la vraie ligne `fbi_jobs` repassait en `pending`.
+
+**Corrigé** : les deux fonctions renvoient maintenant `Promise<boolean>`
+(`true` UNIQUEMENT sur le chemin qui atteint réellement `status:
+"succeeded"`, `false` sur tout chemin de reschedule/fail interne) au lieu
+de `Promise<void>` — `processJobBatch` utilise cette valeur de retour au
+lieu de la simple absence d'exception. Le `catch` autour de l'appel reste
+en place pour le cas vraiment inattendu (crash avant que la fonction
+gère elle-même son erreur). Couvert par deux tests dans
+`process-batch.test.ts` : un job qui lève toujours compté en échec
+(inchangé), et un NOUVEAU test explicite pour un job qui renvoie `false`
+SANS lever d'exception — le vrai scénario de cette régression.
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque

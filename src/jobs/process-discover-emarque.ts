@@ -48,11 +48,22 @@ async function recordLoginOutcome(supabase: DbClient, clubId: string, success: b
  * puis une ligne `match_documents` PAR fichier. Le PARSING du ZIP n'a pas
  * lieu ici — voir src/jobs/parse-downloaded-documents.ts (route/cron léger,
  * sans Playwright) qui consomme `match_documents.status = 'downloaded'`.
+ *
+ * Renvoie `true` UNIQUEMENT quand le job atteint réellement `status:
+ * "succeeded"` — jamais juste "n'a pas levé d'exception jusqu'à l'appelant".
+ * Constaté en production le 2026-09-24 : cette fonction gère ELLE-MÊME ses
+ * échecs (reschedule/fail en interne, jamais de `throw` vers
+ * `processJobBatch`), donc l'ancien `Promise<void>` faisait compter
+ * `processJobBatch` un job comme "réussi" dès que l'appel se terminait
+ * sans exception — y compris pour un job simplement REPLANIFIÉ (page de
+ * résultat introuvable, aucun document trouvé pour l'instant...). Un
+ * admin cliquant "Traiter les jobs FBI en attente" voyait "3 réussis"
+ * alors qu'un seul job avait réellement abouti.
  */
-export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobRow): Promise<void> {
+export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobRow): Promise<boolean> {
   if (!job.match_id) {
     await failJob(supabase, job, "Job discover_emarque sans match_id (ne devrait jamais arriver, voir la contrainte NOT NULL applicative).");
-    return;
+    return false;
   }
 
   const { data: match, error: matchError } = await supabase
@@ -63,13 +74,13 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
 
   if (matchError || !match || !match.numero) {
     await failJob(supabase, job, `Match introuvable ou sans numéro de rencontre : ${matchError?.message ?? "numero manquant"}`);
-    return;
+    return false;
   }
 
   const credentials = await getFbiCredentials(supabase, job.club_id);
   if (!credentials) {
     await failJob(supabase, job, "Aucun identifiant FBI enregistré pour ce club.");
-    return;
+    return false;
   }
 
   const browser = await launchServerlessBrowser();
@@ -96,7 +107,7 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
 
     logError("Job discover_emarque : connexion FBI échouée", error, { clubId: job.club_id, jobId: job.id, loginStatus: status });
     await browser.close();
-    return;
+    return false;
   }
 
   try {
@@ -106,7 +117,7 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
       await supabase.from("matches").update({ emarque_status: "waiting_for_emarque" }).eq("id", job.match_id);
       await rescheduleJob(supabase, job, nextWaitingBackoffSeconds(job.attempt_count), null);
       logInfo("Job discover_emarque : aucun document trouvé pour l'instant, nouvelle tentative planifiée", { clubId: job.club_id, jobId: job.id, matchId: job.match_id });
-      return;
+      return false;
     }
 
     await supabase.from("matches").update({ emarque_status: "downloading" }).eq("id", job.match_id);
@@ -153,6 +164,7 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
       .eq("id", job.id);
 
     logInfo("Job discover_emarque réussi", { clubId: job.club_id, jobId: job.id, matchId: job.match_id, documentsDownloaded: downloadedCount });
+    return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
 
@@ -164,6 +176,7 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
 
     await supabase.from("matches").update({ emarque_status: "error" }).eq("id", job.match_id);
     logError("Job discover_emarque en erreur", error, { clubId: job.club_id, jobId: job.id, matchId: job.match_id });
+    return false;
   } finally {
     await client.closeSession(session);
     await browser.close();

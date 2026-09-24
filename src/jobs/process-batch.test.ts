@@ -48,7 +48,7 @@ describe("processJobBatch", () => {
   it("réclame jusqu'à batchSize jobs et s'arrête dès que la file est vide", async () => {
     const jobs = [makeJob({ id: "job-1" }), makeJob({ id: "job-2" })];
     const claimJob = vi.fn(() => Promise.resolve(jobs.shift() ?? null));
-    mockProcessDiscoverEmarqueJob.mockResolvedValue(undefined);
+    mockProcessDiscoverEmarqueJob.mockResolvedValue(true);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await processJobBatch(makeFakeSupabase() as any, 5, claimJob);
@@ -60,7 +60,7 @@ describe("processJobBatch", () => {
 
   it("ne réclame jamais plus que batchSize jobs, même si la file en contient davantage", async () => {
     const claimJob = vi.fn(() => Promise.resolve(makeJob()));
-    mockProcessDiscoverEmarqueJob.mockResolvedValue(undefined);
+    mockProcessDiscoverEmarqueJob.mockResolvedValue(true);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await processJobBatch(makeFakeSupabase() as any, 3, claimJob);
@@ -72,8 +72,8 @@ describe("processJobBatch", () => {
   it("dispatche selon job.type : test_connection vs discover_emarque", async () => {
     const jobs = [makeJob({ id: "job-1", type: "test_connection" }), makeJob({ id: "job-2", type: "discover_emarque" })];
     const claimJob = vi.fn(() => Promise.resolve(jobs.shift() ?? null));
-    mockProcessTestConnectionJob.mockResolvedValue(undefined);
-    mockProcessDiscoverEmarqueJob.mockResolvedValue(undefined);
+    mockProcessTestConnectionJob.mockResolvedValue(true);
+    mockProcessDiscoverEmarqueJob.mockResolvedValue(true);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await processJobBatch(makeFakeSupabase() as any, 5, claimJob);
@@ -82,10 +82,21 @@ describe("processJobBatch", () => {
     expect(mockProcessDiscoverEmarqueJob).toHaveBeenCalledTimes(1);
   });
 
-  it("compte un job en échec sans interrompre le traitement du lot", async () => {
+  it("compte un job en échec (exception non gérée) sans interrompre le traitement du lot", async () => {
     const jobs = [makeJob({ id: "job-1" }), makeJob({ id: "job-2" })];
     const claimJob = vi.fn(() => Promise.resolve(jobs.shift() ?? null));
-    mockProcessDiscoverEmarqueJob.mockRejectedValueOnce(new Error("panne simulée")).mockResolvedValueOnce(undefined);
+    mockProcessDiscoverEmarqueJob.mockRejectedValueOnce(new Error("panne simulée")).mockResolvedValueOnce(true);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await processJobBatch(makeFakeSupabase() as any, 5, claimJob);
+
+    expect(result).toEqual({ claimed: 2, succeeded: 1, failed: 1 });
+  });
+
+  it("compte un job en échec quand la fonction renvoie false SANS lever d'exception (régression production 2026-09-24 : un job simplement replanifié — page introuvable, rien à télécharger — se comptait comme réussi car processDiscoverEmarqueJob/processTestConnectionJob gèrent leurs propres échecs en interne et ne lèvent jamais)", async () => {
+    const jobs = [makeJob({ id: "job-1" }), makeJob({ id: "job-2" })];
+    const claimJob = vi.fn(() => Promise.resolve(jobs.shift() ?? null));
+    mockProcessDiscoverEmarqueJob.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await processJobBatch(makeFakeSupabase() as any, 5, claimJob);
