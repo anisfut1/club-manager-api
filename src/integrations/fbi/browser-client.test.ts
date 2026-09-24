@@ -91,7 +91,7 @@ describe("BrowserFbiClient.isSessionValid", () => {
 });
 
 describe("BrowserFbiClient.findEmarqueDocuments (§ 'Dix-huitième déclenchement', docs/FBI.md : navigation confirmée par capture d'écran du vrai FBI, jamais devinée)", () => {
-  it("navigue directement vers l'écran de recherche RÉEL, remplit N° Rencontre, et clique le lien de la colonne EM pour trouver les documents", async () => {
+  it("navigue directement vers l'écran de recherche RÉEL, remplit N° Rencontre (jamais la checkbox « non joué » qui précède ce champ dans le DOM), et clique le lien de la colonne EM pour trouver les documents — régression production 2026-09-24 : § 'Dix-neuvième déclenchement', docs/FBI.md", async () => {
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 100 });
     const session = await client.login({ username: "club1234", password: "secret" });
 

@@ -167,14 +167,32 @@ export async function pageMentionsMatchNumber(page: Page, matchNumber: string): 
   return matchNumberAsIsolatedText(matchNumber).test(bodyText);
 }
 
-/** Champ de recherche par numéro de rencontre : basé sur un attribut name/placeholder évocateur, jamais une position. */
+/**
+ * Champ de recherche par numéro de rencontre : basé sur un attribut
+ * name/placeholder évocateur, jamais une position.
+ *
+ * Constaté en production le 2026-09-24 (§ "Dix-neuvième déclenchement",
+ * docs/FBI.md) : le vrai formulaire `rechercherRencontreSaisieResultat.fbi`
+ * contient AUSSI une checkbox "non joué" dont le `name` est
+ * `rechercheRencontreSaisieResultatForm.rechercherRencontreSaisieResultatBean.nonJoue`
+ * — elle matche le motif `name*="rencontre"` tout autant qu'un vrai champ
+ * texte. Playwright résout une liste de sélecteurs CSS séparés par des
+ * virgules dans l'ORDRE DU DOM (comme `querySelectorAll`), jamais dans
+ * l'ordre d'écriture des alternatives : comme cette checkbox apparaît
+ * AVANT le vrai champ numéro dans le markup, `.first()` la sélectionnait
+ * à tort, et `.fill()` plantait ("Input of type checkbox cannot be
+ * filled"). Exclure explicitement les types non-texte (checkbox, radio,
+ * hidden, submit, button) élimine ce faux positif quel que soit l'ordre
+ * du DOM, sans avoir à deviner une position.
+ */
 export function matchNumberSearchInput(page: Page): Locator {
+  const nonTextTypes = ':not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="submit"]):not([type="button"])';
   return page.locator(
     [
-      'input[name*="numero" i]',
-      'input[name*="rencontre" i]',
-      'input[placeholder*="numéro" i]',
-      'input[placeholder*="rencontre" i]',
+      `input[name*="numero" i]${nonTextTypes}`,
+      `input[name*="rencontre" i]${nonTextTypes}`,
+      `input[placeholder*="numéro" i]${nonTextTypes}`,
+      `input[placeholder*="rencontre" i]${nonTextTypes}`,
     ].join(", "),
   );
 }

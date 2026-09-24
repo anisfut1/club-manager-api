@@ -878,6 +878,50 @@ confiance nettement plus élevée que les dix-sept précédentes, mais reste
 non confirmée en production tant que le prochain déploiement n'aura pas
 été testé sur un vrai match SC Sète.
 
+**Dix-neuvième déclenchement — la navigation directe fonctionne enfin
+(première fois que la page réelle de recherche est atteinte en
+production), mais le champ de recherche sélectionné est une checkbox.**
+Test isolé sur 3 matchs réels (2813, 1481, 4516, file d'attente réduite
+volontairement à ces 3 jobs pour ne pas bombarder FBI de requêtes
+pendant le débogage) après déploiement du correctif précédent :
+
+- **Étape [1] (navigation) RÉUSSIE** pour la première fois de toute cette
+  série de corrections — `page.title()` confirme "FBI - Rechercher une
+  rencontre pour la saisie des résultats", exactement la page attendue.
+  Valide définitivement l'URL `rechercherRencontreSaisieResultat.fbi` et
+  l'abandon de l'ancienne stratégie de clic sur un lien depuis l'accueil.
+- **Étape [2] (remplissage du champ) EN ÉCHEC** : `locator.fill: Error:
+  Input of type "checkbox" cannot be filled`. Le formulaire réel contient
+  une checkbox "non joué" avec l'attribut
+  `name="rechercheRencontreSaisieResultatForm.rechercherRencontreSaisieResultatBean.nonJoue"`
+  — elle matche le motif `input[name*="rencontre" i]` de
+  `selectors.matchNumberSearchInput` tout autant qu'un vrai champ texte.
+  Playwright résout une liste de sélecteurs CSS séparés par des virgules
+  dans l'ORDRE DU DOM (comme `querySelectorAll`), jamais dans l'ordre
+  d'écriture des alternatives du code : cette checkbox apparaît AVANT le
+  vrai champ numéro dans le markup réel, donc `.first()` la sélectionnait
+  à tort.
+
+**Corrigé** : `matchNumberSearchInput` exclut désormais explicitement les
+types non-texte (`checkbox`, `radio`, `hidden`, `submit`, `button`) de
+chacune de ses alternatives — élimine ce faux positif quel que soit
+l'ordre du DOM, sans avoir à deviner une position ou un ordre de
+priorité. La fixture `__fixtures__/rechercher-rencontre.html` reproduit
+maintenant fidèlement cette checkbox (même `name`, placée avant le champ
+texte) pour que le test de bout en bout (`browser-client.test.ts`,
+premier test du bloc `findEmarqueDocuments`) couvre cette régression
+exacte en continu.
+
+**Méthode de test adoptée pour la suite** : plutôt que de relancer les
+~400 jobs `discover_emarque` en attente à chaque itération (risque de
+marteler FBI avec des identifiants réels pendant qu'on corrige des bugs
+un par un), les jobs de TOUS les autres matchs sont repoussés de 30 jours
+(`fbi_jobs.scheduled_at`) et seuls 2813/1481/4516 restent immédiatement
+réclamables. Réinitialisés à chaque nouveau correctif (`attempt_count`,
+`last_error`, `scheduled_at` remis à zéro) pour un cycle de test rapide
+et ciblé. Le reste de la file ne sera réactivé qu'une fois ces 3 matchs
+validés de bout en bout (document téléchargé ET parsé).
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque
