@@ -1200,6 +1200,41 @@ soit corriger l'interaction (cliquer le widget custom au lieu du
 `<select>` natif, si c'est bien le problème), soit découvrir la vraie
 cause si ce n'est pas ça.
 
+**Vingt-cinquième déclenchement — le dump HTML révèle qu'il dumpait le
+MAUVAIS formulaire depuis le début.** Premier retour en production du
+correctif précédent (via le log "aucun document retenu", niveau `info` —
+le club a dû déplier une entrée de log Vercel groupant plusieurs lignes
+pour le trouver). Le `formHtml` obtenu pour la rencontre n°1481 est :
+
+```html
+<form id="identificationEntete" name="identificationEntete" action="/fbi/identification.fbi" method="post">
+  <input type="hidden" name="identificationForm.identificationBean.identifiant" value="">
+  <input type="hidden" name="utilisateurId" value="">
+  <input type="hidden" name="isConnexionEntete" value="true">
+</form>
+```
+
+Un formulaire d'EN-TÊTE minuscule (3 champs cachés d'identification),
+PAS le formulaire de recherche — alors que `formFields`
+(`listFormFields`, qui lit DANS TOUS les formulaires de la page, pas
+juste un seul) montrait bien les vrais champs de recherche
+(saison/case/numéro/bouton) juste à côté dans le MÊME log. Cause : la
+page a PLUSIEURS `<form>`, et ce formulaire d'en-tête précède le vrai
+formulaire de recherche dans le DOM — `formHtmlSnippet`
+(`page.locator("form").first()`) prenait donc systématiquement le
+mauvais. Toute la piste des widgets JS "boutons jumeaux" du Vingt-quatrième
+déclenchement reste valide (visible dans `formFields`), mais on n'avait
+en réalité JAMAIS vu le HTML du bon formulaire pour la confirmer/l'infirmer.
+
+**Corrigé** : `formHtmlSnippet` s'ancre désormais sur `seasonSelect` (un
+champ connu du VRAI formulaire de recherche) puis remonte à SON `<form>`
+ancêtre via `xpath=ancestor::form[1]` — même principe que `loginForm`
+plus haut dans ce fichier pour le formulaire de connexion, jamais une
+position DOM devinée. Couvert par un nouveau `<form id="identificationEntete">`
+décoy ajouté à la fixture `rechercher-rencontre.html` (avant le vrai
+formulaire, reproduisant exactement la structure de production) et une
+assertion que le dump NE contient PAS `identificationEntete`.
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque

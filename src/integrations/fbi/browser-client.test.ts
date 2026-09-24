@@ -182,6 +182,11 @@ describe("BrowserFbiClient.findEmarqueDocuments (§ 'Dix-huitième déclenchemen
     // la structure réelle des widgets plutôt que deviner une 5e fois.
     expect((error as Error).message).toContain("HTML du formulaire");
     expect((error as Error).message).toContain('name="idSaison"');
+    // Régression production 2026-09-24 (§ "Vingt-cinquième déclenchement") :
+    // le premier <form> de la fixture est un DÉCOY (identificationEntete,
+    // mêmes 3 champs cachés que le vrai formulaire d'en-tête FBI) — le dump
+    // doit venir du VRAI formulaire de recherche, jamais de celui-là.
+    expect((error as Error).message).not.toContain("identificationEntete");
 
     await client.closeSession(session);
   });

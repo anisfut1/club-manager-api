@@ -447,25 +447,28 @@ export function seasonSelect(page: Page): Locator {
 }
 
 /**
- * Diagnostic — dump du HTML BRUT du (premier) `<form>` de la page,
- * plafonné. Constaté en production le 2026-09-24 (§ "Vingt-quatrième
- * déclenchement", docs/FBI.md) : saison correctement sélectionnée, case
- * "non joué" correctement décochée, bon bouton "Rechercher" cliqué —
- * mais toujours aucune ligne de résultat, pour un match confirmé joué
- * (preuve visuelle du code EM). Le dump des champs (`listFormFields`)
- * révèle qu'à côté de chaque `<select>` existe un `<button type="button">`
- * jumeau affichant la MÊME valeur (ex: `Saison 2025-2026`) — signe d'un
- * widget JS (React/Vue/PrimeFaces-like) enrichissant un `<select>` natif
- * cosmétique, dont l'état RÉEL utilisé par le bouton "Rechercher" pourrait
- * être un état JS interne jamais synchronisé par un `Locator.selectOption()`
- * programmatique (qui écrit dans le DOM natif, pas nécessairement dans
- * l'état du framework). Le HTML brut du formulaire révélera la structure
- * exacte de ces widgets — nécessaire pour interagir avec eux comme un
- * VRAI utilisateur (clic sur le bouton, clic sur l'option dans le menu
- * qu'il ouvre) plutôt que de continuer à deviner.
+ * Diagnostic — dump du HTML BRUT du formulaire de RECHERCHE (jamais "le
+ * premier `<form>` de la page"), plafonné.
+ *
+ * Constaté en production le 2026-09-24 (§ "Vingt-cinquième déclenchement",
+ * docs/FBI.md) : `page.locator("form").first()` (version initiale de cette
+ * fonction) renvoyait `<form id="identificationEntete" ...>` — un MINUSCULE
+ * formulaire d'en-tête (juste 3 champs cachés d'identification) qui précède
+ * le vrai formulaire de recherche dans le DOM. `listFormFields` (qui lit
+ * DANS TOUS les formulaires de la page, jamais juste le premier) montrait
+ * bien les vrais champs de recherche — d'où l'incohérence entre un dump de
+ * champs pertinent et un dump HTML complètement à côté de la plaque.
+ *
+ * Ancré maintenant sur `seasonSelect` (un champ connu du VRAI formulaire de
+ * recherche) puis remonté à SON `<form>` ancêtre — même principe que
+ * `loginForm` (`passwordInput(page).locator("xpath=ancestor::form[1]")`)
+ * plus haut dans ce fichier, jamais une position DOM devinée.
  */
 export async function formHtmlSnippet(page: Page, maxLength = 4000): Promise<string> {
-  const form = page.locator("form").first();
+  const anchor = seasonSelect(page);
+  const anchorFound = (await anchor.count().catch(() => 0)) > 0;
+  const form = anchorFound ? anchor.locator("xpath=ancestor::form[1]") : page.locator("form").first();
+
   if ((await form.count().catch(() => 0)) === 0) return "(aucun <form> trouvé sur la page)";
 
   const html = await form.evaluate((node) => node.outerHTML).catch(() => null);

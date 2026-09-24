@@ -1,6 +1,11 @@
 <html>
   <body>
     <h1>Recherche de rencontre</h1>
+    <form id="identificationEntete" name="identificationEntete" action="/fbi/identification.fbi" method="post">
+      <input type="hidden" name="identificationForm.identificationBean.identifiant" value="" />
+      <input type="hidden" name="utilisateurId" value="" />
+      <input type="hidden" name="isConnexionEntete" value="true" />
+    </form>
     <form>
       <label>Saison <select name="idSaison"><option value="12">Saison 2025-2026</option><option value="13" selected>Saison 2026-2027</option></select></label>
       <label><input type="checkbox" id="nonJoueCheck" class="fbi-checkbox" name="rechercheRencontreSaisieResultatForm.rechercherRencontreSaisieResultatBean.nonJoue" value="true" checked /> Non joué</label>
