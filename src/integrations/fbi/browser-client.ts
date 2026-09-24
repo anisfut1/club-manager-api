@@ -126,9 +126,10 @@ export class BrowserFbiClient {
   async findEmarqueDocuments(session: BrowserFbiSession, matchNumber: string): Promise<{ url: string; fileName: string }[]> {
     const { page } = session;
 
-    await this.tryNavigateToSearchScreen(page);
-    await this.trySearchByMatchNumber(page, matchNumber);
-    await this.tryOpenMatchResult(page, matchNumber);
+    const trace: string[] = [];
+    trace.push(await this.tryNavigateToSearchScreen(page));
+    trace.push(await this.trySearchByMatchNumber(page, matchNumber));
+    trace.push(await this.tryOpenMatchResult(page, matchNumber));
 
     /**
      * Constaté en production le 2026-09-24 : les trois étapes ci-dessus
@@ -142,16 +143,36 @@ export class BrowserFbiClient {
      * `findDocumentLinks` sans avoir d'abord vérifié qu'on est bien sur
      * une page qui mentionne CE numéro de rencontre.
      */
-    if (!(await selectors.pageMentionsMatchNumber(page, matchNumber))) {
+    /**
+     * Préférer une correspondance EXACTE de cellule "N°" (si un tableau de
+     * résultats est présent sur la page courante) à la recherche floue de
+     * `pageMentionsMatchNumber` — régression production 2026-09-24 pour la
+     * rencontre n°1 : l'en-tête de colonne "Score 1" contient un "1" isolé
+     * qui déclenchait un faux positif sur `pageMentionsMatchNumber` alors
+     * qu'aucune ligne "1" n'existe dans le tableau (voir
+     * `selectors.matchNumberInResultsTable`). Le texte de page libre reste
+     * le seul recours sur une page SANS tableau (ex : page de détail après
+     * clic sur le lien EM).
+     */
+    const tableMatch = await selectors.matchNumberInResultsTable(page, matchNumber);
+    const pageConfirmsMatch = tableMatch !== null ? tableMatch : await selectors.pageMentionsMatchNumber(page, matchNumber);
+    if (!pageConfirmsMatch) {
       const title = await page.title().catch(() => "?");
-      // Diagnostic riche (§ "Quinzième déclenchement", docs/FBI.md) :
-      // révèle les libellés RÉELS des liens de la page où la navigation
-      // reste bloquée, pour ajuster tryNavigateToSearchScreen sur le vrai
-      // markup FBI plutôt qu'à l'aveugle.
-      const links = await selectors.listVisibleLinks(page);
+      /**
+       * Diagnostic riche (§ "Seizième déclenchement", docs/FBI.md) : les
+       * 25 premiers liens visibles se sont révélés être le menu global du
+       * site ffbb.com (Fédération, Compétitions, Boutique...), pas la
+       * navigation spécifique FBI — insuffisant pour savoir à QUELLE étape
+       * (1/2/3 ci-dessus) la navigation décroche. `trace` répond
+       * précisément à ça : ce que chaque étape a trouvé/cliqué, et vers
+       * quelle URL, AVANT que la vérification finale échoue.
+       */
+      const links = await selectors.listVisibleLinks(page, 60);
       const linksSummary = links.length > 0 ? links.map((l) => `"${l.text}" → ${l.href}`).join(" | ") : "(aucun lien trouvé sur la page)";
       throw new FbiError(
-        `Page de résultat introuvable pour la rencontre ${matchNumber} : ni la recherche ni l'ouverture du résultat n'ont abouti (page actuelle : "${title}", ${page.url()}). Liens visibles sur cette page : ${linksSummary}`,
+        `Page de résultat introuvable pour la rencontre ${matchNumber} : ni la recherche ni l'ouverture du résultat n'ont abouti (page actuelle : "${title}", ${page.url()}). ` +
+          `Trace de navigation : [1] ${trace[0]} — [2] ${trace[1]} — [3] ${trace[2]}. ` +
+          `Liens visibles sur cette page : ${linksSummary}`,
         "EMARQUE_MATCH_PAGE_NOT_REACHED",
       );
     }
@@ -169,49 +190,110 @@ export class BrowserFbiClient {
     return `${link.label.replace(/[^a-z0-9-_]+/gi, "_").slice(0, 60) || "document"}.pdf`;
   }
 
-  private async tryNavigateToSearchScreen(page: Page): Promise<void> {
-    const entry = page.getByRole("link", { name: /rencontre|compétition|calendrier/i }).first();
-    if ((await entry.count()) > 0) {
-      try {
-        await entry.click();
-        await this.settle(page);
-      } catch {
-        // Best effort — voir la note de statut en tête de fichier.
+  /** Chaque étape "best effort" renvoie une trace lisible (jamais d'exception) — voir le diagnostic de `findEmarqueDocuments`. */
+  private async tryNavigateToSearchScreen(page: Page): Promise<string> {
+    /**
+     * Constaté en production le 2026-09-24 (capture d'écran du VRAI FBI
+     * fournie par le club, § "Dix-huitième déclenchement", docs/FBI.md) :
+     * l'écran de recherche de rencontre est
+     * `{baseUrl}/rechercherRencontreSaisieResultat.fbi` — une URL CONFIRMÉE,
+     * jamais devinée. Navigation directe plutôt que de deviner un lien à
+     * cliquer sur l'accueil (l'ancienne approche cliquait à tort le menu
+     * global ffbb.com, voir plus haut). Repli sur l'ancien clic de lien
+     * (même origine uniquement) si la navigation directe échoue — au cas
+     * où cette URL ne serait pas valide pour tous les contextes/rôles FBI.
+     */
+    const targetUrl = `${this.baseUrl}/rechercherRencontreSaisieResultat.fbi`;
+    try {
+      await page.goto(targetUrl, { waitUntil: "domcontentloaded" });
+      await this.settle(page);
+      return `navigation directe vers ${targetUrl} réussie, url → ${page.url()}`;
+    } catch (error) {
+      const gotoError = error instanceof Error ? error.message : String(error);
+
+      const candidates = await page.getByRole("link", { name: /rencontre|compétition|calendrier/i }).all();
+      const pageOrigin = new URL(page.url()).origin;
+
+      for (const candidate of candidates) {
+        const href = await candidate.getAttribute("href").catch(() => null);
+        if (!href) continue;
+
+        let isSameOrigin: boolean;
+        try {
+          isSameOrigin = new URL(href, page.url()).origin === pageOrigin;
+        } catch {
+          continue;
+        }
+        if (!isSameOrigin) continue;
+
+        const text = (await candidate.textContent().catch(() => null))?.trim() ?? "?";
+        try {
+          await candidate.click();
+          await this.settle(page);
+          return `navigation directe échouée (${gotoError}), repli sur le lien "${text}" (même origine) cliqué, url → ${page.url()}`;
+        } catch (clickError) {
+          return `navigation directe échouée (${gotoError}), repli sur le lien "${text}" trouvé mais le clic a échoué : ${clickError instanceof Error ? clickError.message : String(clickError)}`;
+        }
       }
+
+      return `navigation directe vers ${targetUrl} échouée (${gotoError}), et aucun lien de repli (même origine) trouvé`;
     }
   }
 
-  private async trySearchByMatchNumber(page: Page, matchNumber: string): Promise<void> {
+  private async trySearchByMatchNumber(page: Page, matchNumber: string): Promise<string> {
     const input = selectors.matchNumberSearchInput(page).first();
-    if ((await input.count()) === 0) return;
+    const count = await input.count().catch(() => 0);
+    if (count === 0) return "aucun champ de recherche par numéro trouvé (name/placeholder évocateur)";
 
+    const urlBefore = page.url();
     try {
       await input.fill(matchNumber);
-      await input.press("Enter");
+
+      /**
+       * Constaté en production le 2026-09-24 (capture d'écran du VRAI FBI) :
+       * un bouton "RECHERCHER" explicite valide le formulaire — `press
+       * ("Enter")` seul ne suffit pas toujours à soumettre un formulaire
+       * non natif (JS intercepté). Bouton en priorité, Entrée en repli.
+       */
+      const submit = selectors.searchSubmitControl(page).first();
+      if ((await submit.count().catch(() => 0)) > 0) {
+        await submit.click();
+      } else {
+        await input.press("Enter");
+      }
+
       await this.settle(page);
-    } catch {
-      // Best effort — voir la note de statut en tête de fichier.
+      const urlAfter = page.url();
+      return urlAfter === urlBefore ? `champ rempli ("${matchNumber}") et recherche soumise, mais l'URL n'a pas changé (${urlAfter})` : `champ rempli et recherche soumise, url → ${urlAfter}`;
+    } catch (error) {
+      return `champ de recherche trouvé mais le remplissage/la soumission a échoué : ${error instanceof Error ? error.message : String(error)}`;
     }
   }
 
-  private async tryOpenMatchResult(page: Page, matchNumber: string): Promise<void> {
+  private async tryOpenMatchResult(page: Page, matchNumber: string): Promise<string> {
     /**
-     * Constaté en production le 2026-09-24 : `getByText(matchNumber, {
-     * exact: false })` est un test de SOUS-CHAÎNE — pour un numéro court
-     * ("1"), ça matche le premier élément contenant "1" n'importe où sur
-     * la page (pagination, footer, item de liste...), pas forcément le
-     * bon résultat de recherche. `selectors.matchNumberAsIsolatedText`
-     * applique le même principe de bordure que `pageMentionsMatchNumber`
-     * (jamais un fragment d'un nombre plus grand).
+     * Constaté en production le 2026-09-24 (capture d'écran du VRAI FBI
+     * fournie par le club) : le tableau de résultats a une colonne "EM"
+     * dédiée — un code cliquable ("DCBLRCA7"...) ou une icône "FDM" pour
+     * une rencontre déjà jouée avec un e-Marque disponible, VIDE sinon.
+     * `selectors.emarqueColumnLinkForMatch` localise CE lien précisément
+     * (par libellé de colonne, jamais une position devinée) plutôt que le
+     * générique "premier élément contenant ce numéro" d'avant (qui pouvait
+     * cliquer n'importe quoi sur la ligne, jamais spécifiquement la
+     * colonne e-Marque).
      */
-    const resultLink = page.getByText(selectors.matchNumberAsIsolatedText(matchNumber)).first();
-    if ((await resultLink.count()) === 0) return;
+    const emLink = await selectors.emarqueColumnLinkForMatch(page, matchNumber).catch(() => null);
+    if (!emLink) return `pas de lien e-Marque trouvé pour la rencontre "${matchNumber}" (colonne EM absente, ligne introuvable, ou colonne EM vide — match pas encore joué)`;
 
+    const text = (await emLink.textContent().catch(() => null))?.trim() ?? "?";
+    const urlBefore = page.url();
     try {
-      await resultLink.click();
+      await emLink.click();
       await this.settle(page);
-    } catch {
-      // Best effort — voir la note de statut en tête de fichier.
+      const urlAfter = page.url();
+      return urlAfter === urlBefore ? `lien EM "${text}" cliqué, mais l'URL n'a pas changé (${urlAfter})` : `lien EM "${text}" cliqué, url → ${urlAfter}`;
+    } catch (error) {
+      return `lien EM "${text}" trouvé mais le clic a échoué : ${error instanceof Error ? error.message : String(error)}`;
     }
   }
 

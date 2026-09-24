@@ -34,7 +34,8 @@ export class TestServer {
         return;
       }
 
-      res.writeHead(200, { "content-type": route.contentType });
+      const contentType = /^text\//.test(route.contentType) && !/charset=/i.test(route.contentType) ? `${route.contentType}; charset=utf-8` : route.contentType;
+      res.writeHead(200, { "content-type": contentType });
       res.end(route.body);
     });
 

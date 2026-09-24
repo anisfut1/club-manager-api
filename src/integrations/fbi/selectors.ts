@@ -178,3 +178,106 @@ export function matchNumberSearchInput(page: Page): Locator {
     ].join(", "),
   );
 }
+
+/**
+ * Bouton "RECHERCHER" de validation d'un formulaire de recherche : type
+ * submit d'abord, sinon un bouton dont le texte visible évoque une
+ * recherche — même logique que `submitControl`/`submitButtonByText` pour
+ * le formulaire de login. Un simple `input.press("Enter")` ne suffit pas
+ * toujours à soumettre un formulaire non natif (JS intercepté).
+ */
+export function searchSubmitControl(page: Page): Locator {
+  return page.locator('button[type="submit"], input[type="submit"]').or(page.getByRole("button", { name: /recherch/i }));
+}
+
+/**
+ * Index des colonnes "N°" et "EM" du tableau de résultats — lu depuis les
+ * EN-TÊTES du tableau à chaque appel, jamais une position `nth-child`
+ * câblée en dur. Partagé par `emarqueColumnLinkForMatch` et
+ * `matchNumberInResultsTable`. `null` quand la page courante n'a pas cette
+ * forme (pas la bonne page).
+ */
+async function resultsTableColumns(page: Page): Promise<{ numeroColIndex: number; emColIndex: number } | null> {
+  const headerCells = page.locator("table th, table thead td");
+  const headerTexts = await headerCells.allTextContents().catch(() => []);
+  const trimmedHeaders = headerTexts.map((t) => t.trim());
+
+  const numeroColIndex = trimmedHeaders.findIndex((t) => t === "N°" || /^n°?\s*rencontre$/i.test(t));
+  const emColIndex = trimmedHeaders.findIndex((t) => t === "EM");
+  if (numeroColIndex === -1 || emColIndex === -1) return null;
+
+  return { numeroColIndex, emColIndex };
+}
+
+/**
+ * Localise, DANS la ligne du tableau de résultats correspondant à CE
+ * numéro de rencontre, le lien/bouton de la colonne "EM" (e-Marque) —
+ * confirmé en production le 2026-09-24 par une capture d'écran du VRAI
+ * FBI (page `rechercherRencontreSaisieResultat.fbi`) : le tableau de
+ * résultats a des colonnes `Division | N° | Equipe 1 | Equipe 2 | Date
+ * de rencontre | Heure | Salle | EM | Score...`, où la colonne "EM"
+ * contient un CODE cliquable (ex: "DCBLRCA7") ou une icône "FDM" pour
+ * une rencontre déjà jouée avec un e-Marque disponible — VIDE sinon
+ * (rencontre pas encore jouée, ou sans e-Marque).
+ *
+ * Renvoie `null` — jamais une erreur — quand le tableau n'a pas cette
+ * forme (pas la bonne page), quand aucune ligne ne correspond à CE
+ * numéro, ou quand la colonne "EM" de la ligne trouvée est vide (match
+ * pas encore joué/sans e-Marque — cas légitime, pas un échec).
+ */
+export async function emarqueColumnLinkForMatch(page: Page, matchNumber: string): Promise<Locator | null> {
+  const columns = await resultsTableColumns(page);
+  if (!columns) return null;
+
+  const rows = page.locator("table tbody tr");
+  const rowCount = await rows.count().catch(() => 0);
+
+  for (let i = 0; i < rowCount; i += 1) {
+    const row = rows.nth(i);
+    const cells = row.locator("td");
+    const numeroText = (await cells.nth(columns.numeroColIndex).textContent().catch(() => null))?.trim();
+    if (numeroText !== matchNumber) continue;
+
+    const emCell = cells.nth(columns.emColIndex);
+    const emLink = emCell.locator("a, button").first();
+    if ((await emLink.count().catch(() => 0)) > 0) return emLink;
+
+    return null; // Ligne trouvée, mais colonne EM vide — match pas encore joué/sans e-Marque.
+  }
+
+  return null;
+}
+
+/**
+ * Preuve qu'une ligne du tableau de résultats correspond EXACTEMENT (jamais
+ * une sous-chaîne) à ce numéro de rencontre — `null` quand la page courante
+ * n'a pas la forme d'un tableau de résultats (colonnes "N°"/"EM"
+ * introuvables), auquel cas l'appelant doit se rabattre sur
+ * `pageMentionsMatchNumber` (page de détail après clic sur le lien EM, sans
+ * tableau).
+ *
+ * Régression production 2026-09-24 pour la rencontre n°1 : rester sur la
+ * page de résultats (colonne EM vide/ligne introuvable) puis vérifier avec
+ * `pageMentionsMatchNumber` sur le texte ENTIER de la page faisait un faux
+ * positif — l'en-tête de colonne "Score 1" contient elle-même un "1" isolé
+ * (précédé d'un espace, suivi d'un saut de ligne), non lié au numéro de
+ * rencontre recherché. Une comparaison EXACTE sur la cellule "N°" de chaque
+ * ligne (déjà utilisée par `emarqueColumnLinkForMatch`) n'a pas ce problème :
+ * "1" ne correspond jamais exactement à une cellule contenant "2813" ou
+ * "9999".
+ */
+export async function matchNumberInResultsTable(page: Page, matchNumber: string): Promise<boolean | null> {
+  const columns = await resultsTableColumns(page);
+  if (!columns) return null;
+
+  const rows = page.locator("table tbody tr");
+  const rowCount = await rows.count().catch(() => 0);
+
+  for (let i = 0; i < rowCount; i += 1) {
+    const cells = rows.nth(i).locator("td");
+    const numeroText = (await cells.nth(columns.numeroColIndex).textContent().catch(() => null))?.trim();
+    if (numeroText === matchNumber) return true;
+  }
+
+  return false;
+}

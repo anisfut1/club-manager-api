@@ -752,6 +752,132 @@ d'erreur complet du prochain job en échec (logs Vercel ou colonne
 `fbi_jobs.last_error`) et l'analyser avant tout nouveau correctif de
 sélecteur.
 
+**Dix-septième déclenchement — le dump de liens révèle le MENU GLOBAL
+ffbb.com, pas la navigation FBI ; trace étape par étape ajoutée.** Le
+diagnostic ci-dessus a livré ses premiers résultats en production
+(rencontre n°178) : les 25 premiers liens de la page "FBI - Accueil"
+sont "Fédération", "Compétitions", "La Boulangère Wonderligue", "Ligue
+Féminine 2", "Coupe de France", "Billetterie", "FFBB Store", "e-Marque"
+(→ `ffbb.com/e-marque-v2`, confirme définitivement l'origine des
+documents génériques du tout premier bug de cette section), "Calendriers",
+"Désignations arbitrage" (→ pointe vers `connexion.fbi`, pas une page
+FBI authentifiée), etc. — c'est le MENU GLOBAL du portail ffbb.com
+(fédération, compétitions, boutique...), embarqué comme en-tête
+persistant sur la page FBI, pas une navigation spécifique à l'extranet
+FBI. Il matche `/compétition|calendrier/i` (§ `tryNavigateToSearchScreen`)
+alors que ce lien mène à un AUTRE DOMAINE (`competitions.ffbb.com`),
+jamais la recherche de rencontre FBI elle-même.
+
+Ce dump de liens (plafonné à 25) ne suffisait PAS à savoir si le clic
+avait seulement échoué, ou avait réussi mais changé de domaine sans
+jamais revenir sur une page utile : il manquait une TRACE de ce que
+chaque étape avait réellement fait. **Corrigé** : `tryNavigateToSearchScreen`/
+`trySearchByMatchNumber`/`tryOpenMatchResult` renvoient chacune une
+phrase de diagnostic (élément trouvé ou non, clic réussi ou non, URL
+avant/après) au lieu de `Promise<void>` — la prochaine
+`EMARQUE_MATCH_PAGE_NOT_REACHED` inclura une "Trace de navigation : [1]
+... — [2] ... — [3] ..." précise, en plus de la liste de liens (portée à
+60 pour dépasser le menu global répété et atteindre, si elle existe,
+une vraie navigation FBI plus bas dans le DOM). **Prochaine étape** :
+lire cette trace sur le prochain échec — si l'étape [1] montre que le
+clic change bien de domaine vers `competitions.ffbb.com` (confirmant
+l'hypothèse ci-dessus), la vraie correction sera de RETIRER
+`compétition|calendrier` du regex de `tryNavigateToSearchScreen` (garder
+`rencontre` seul, ou cibler un lien spécifiquement DANS le domaine
+`extranet.ffbb.com`) et/ou chercher directement le champ de recherche
+sans cette étape de clic intermédiaire, désormais contre-productive.
+
+**Dix-huitième déclenchement — navigation reconstruite à partir d'une
+capture d'écran du VRAI FBI, plus jamais devinée.** Après dix-sept
+tentatives de correctifs basés uniquement sur des messages d'erreur et
+des dumps de liens (jamais le markup réel, le réseau `*.ffbb.com` étant
+bloqué depuis cet environnement — voir `docs/FBI_AUTHENTICATED_SPIKE.md`),
+le club a fourni la première preuve visuelle directe de cette
+intégration : deux captures d'écran de
+`https://extranet.ffbb.com/fbi/rechercherRencontreSaisieResultat.fbi`
+(l'écran de recherche de rencontre lui-même, et son tableau de
+résultats). Elles révèlent :
+
+- L'URL exacte de l'écran de recherche : `rechercherRencontreSaisieResultat.fbi`
+  — jamais un lien à deviner/cliquer depuis l'accueil.
+- Le tableau de résultats a des colonnes `Division | N° | Equipe 1 |
+  Equipe 2 | Date de rencontre | Heure | Salle | EM | Score...`.
+- La colonne **"EM"** contient le document e-Marque : un code cliquable
+  (ex. "DCBLRCA7") ou une icône "FDM" pour une rencontre déjà jouée avec
+  un e-Marque disponible, **vide** sinon (rencontre pas encore jouée, ou
+  sans e-Marque) — ce n'était PAS un lien texte générique ("feuille de
+  match", etc.) à chercher n'importe où sur la ligne ou la page, comme le
+  supposait tout le code précédent.
+
+**Corrigé — réécriture complète des trois étapes de navigation sur cette
+base, jamais sur une hypothèse** :
+
+- `tryNavigateToSearchScreen` navigue maintenant DIRECTEMENT vers
+  `{baseUrl}/rechercherRencontreSaisieResultat.fbi` (`page.goto`) au lieu
+  de chercher un lien à cliquer depuis l'accueil — élimine d'un coup
+  toute la classe de bugs des seizième/dix-septième déclenchements
+  (lien introuvable, ou menu global ffbb.com cliqué par erreur). L'ancien
+  clic sur un lien de même origine reste en repli si cette URL directe
+  échoue, au cas où elle ne serait pas valide pour tous les
+  rôles/contextes FBI.
+- `trySearchByMatchNumber` clique désormais le bouton "RECHERCHER"
+  (`selectors.searchSubmitControl`, type submit en priorité) plutôt que
+  de compter sur `Enter` seul (un formulaire non natif peut intercepter
+  la soumission en JS).
+- `tryOpenMatchResult` utilise un nouveau sélecteur
+  `selectors.emarqueColumnLinkForMatch` : il lit l'index des colonnes
+  "N°" et "EM" depuis les EN-TÊTES du tableau (jamais une position
+  `nth-child` câblée en dur, conformément à la philosophie du fichier —
+  voir l'en-tête de `selectors.ts`), trouve la ligne dont la cellule "N°"
+  correspond EXACTEMENT (pas une sous-chaîne) au numéro recherché, puis
+  clique le lien/bouton de SA cellule "EM" — renvoie `null` (jamais une
+  erreur) si le tableau n'a pas cette forme, si la ligne n'existe pas, ou
+  si sa colonne EM est vide (match pas encore joué : cas légitime, pas un
+  échec).
+
+**Découvert en écrivant les tests contre cette nouvelle logique (jamais
+en production) — deux bugs supplémentaires, corrigés avant tout
+déploiement** :
+
+1. Le serveur HTTP de test synthétique (`src/test-support/static-server.ts`,
+   utilisé UNIQUEMENT par les tests, jamais par le vrai FBI) ne déclarait
+   pas `charset=utf-8` sur ses réponses `text/html` : Chromium décodait
+   alors les octets UTF-8 du fichier fixture avec un autre charset par
+   défaut, transformant "N°" en "NÂ°" — la recherche de colonne par
+   libellé échouait donc silencieusement même avec la bonne logique.
+   Corrigé en ajoutant `; charset=utf-8` aux réponses textuelles qui n'en
+   déclarent pas déjà un.
+2. Une fois ce problème d'encodage réglé, un test délibérément conçu pour
+   piéger un faux positif de numéro court ("1") a quand même échoué :
+   rester sur la page de résultats (ligne "1" introuvable, donc
+   `emarqueColumnLinkForMatch` renvoie `null`) puis vérifier avec
+   `pageMentionsMatchNumber` sur le texte ENTIER de la page matchait à
+   tort — l'en-tête de colonne **"Score 1"** contient lui-même un "1"
+   isolé (précédé d'un espace, suivi d'un saut de ligne), sans rapport
+   avec le numéro de rencontre recherché. Corrigé avec un nouveau
+   sélecteur `matchNumberInResultsTable` : quand un tableau de résultats
+   est présent sur la page courante, la vérification finale de
+   `findEmarqueDocuments` compare désormais la cellule "N°" de chaque
+   ligne EXACTEMENT au numéro recherché (aucun risque de faux positif
+   textuel) plutôt que de scanner tout le texte de la page ; le texte de
+   page libre (`pageMentionsMatchNumber`) reste le seul recours sur une
+   page SANS tableau (ex. la page de détail atteinte après un clic sur le
+   lien EM).
+
+Couvert par une réécriture complète de la fixture de test
+(`__fixtures__/rechercher-rencontre.html`, qui reproduit fidèlement la
+structure de colonnes observée) et du bloc de tests
+`BrowserFbiClient.findEmarqueDocuments` (`browser-client.test.ts`) :
+succès (colonne EM avec code cliquable), liste vide sans erreur (colonne
+EM vide, rencontre pas encore jouée), `EMARQUE_MATCH_PAGE_NOT_REACHED`
+pour une rencontre absente du tableau, et spécifiquement la régression du
+faux positif "1"/"Score 1" décrite ci-dessus. C'est la première
+correction de cette section entièrement basée sur une observation directe
+du vrai FBI plutôt que sur une inférence à partir de logs d'erreur —
+confiance nettement plus élevée que les dix-sept précédentes, mais reste
+non confirmée en production tant que le prochain déploiement n'aura pas
+été testé sur un vrai match SC Sète.
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque
