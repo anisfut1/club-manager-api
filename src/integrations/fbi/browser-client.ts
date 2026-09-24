@@ -189,7 +189,16 @@ export class BrowserFbiClient {
   }
 
   private async tryOpenMatchResult(page: Page, matchNumber: string): Promise<void> {
-    const resultLink = page.getByText(matchNumber, { exact: false }).first();
+    /**
+     * Constaté en production le 2026-09-24 : `getByText(matchNumber, {
+     * exact: false })` est un test de SOUS-CHAÎNE — pour un numéro court
+     * ("1"), ça matche le premier élément contenant "1" n'importe où sur
+     * la page (pagination, footer, item de liste...), pas forcément le
+     * bon résultat de recherche. `selectors.matchNumberAsIsolatedText`
+     * applique le même principe de bordure que `pageMentionsMatchNumber`
+     * (jamais un fragment d'un nombre plus grand).
+     */
+    const resultLink = page.getByText(selectors.matchNumberAsIsolatedText(matchNumber)).first();
     if ((await resultLink.count()) === 0) return;
 
     try {

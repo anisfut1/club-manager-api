@@ -92,6 +92,21 @@ function escapeRegExp(value: string): string {
 }
 
 /**
+ * Le numéro de rencontre comme nombre ISOLÉ (bordures non-chiffres des
+ * deux côtés), jamais un fragment d'un nombre plus grand — même principe
+ * que `pageMentionsMatchNumber`, réutilisé par `tryOpenMatchResult`
+ * (`browser-client.ts`) : `getByText(matchNumber, { exact: false })` est
+ * un test de sous-chaîne, qui pour un numéro court ("1") clique le
+ * premier élément contenant "1" n'importe où sur la page (pagination,
+ * footer...) plutôt que le vrai résultat de recherche — même régression
+ * que celle documentée plus bas, constatée le 2026-09-24 pour la
+ * rencontre n°1 malgré le premier correctif de `pageMentionsMatchNumber`.
+ */
+export function matchNumberAsIsolatedText(matchNumber: string): RegExp {
+  return new RegExp(`(?<!\\d)${escapeRegExp(matchNumber)}(?!\\d)`);
+}
+
+/**
  * Preuve qu'on est bien sur (ou a atteint) la page de LA rencontre
  * demandée, jamais retombé sur une page générique (accueil, aide) après un
  * échec silencieux des étapes "best effort" de navigation — constaté en
@@ -119,8 +134,7 @@ function escapeRegExp(value: string): string {
  */
 export async function pageMentionsMatchNumber(page: Page, matchNumber: string): Promise<boolean> {
   const bodyText = (await page.locator("body").textContent()) ?? "";
-  const isolatedNumberPattern = new RegExp(`(?<!\\d)${escapeRegExp(matchNumber)}(?!\\d)`);
-  return isolatedNumberPattern.test(bodyText);
+  return matchNumberAsIsolatedText(matchNumber).test(bodyText);
 }
 
 /** Champ de recherche par numéro de rencontre : basé sur un attribut name/placeholder évocateur, jamais une position. */

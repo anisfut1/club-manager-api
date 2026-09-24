@@ -137,6 +137,27 @@ describe("BrowserFbiClient.findEmarqueDocuments (navigation générique, best-ef
     await client.closeSession(session);
   });
 
+  it("ne clique jamais un élément décoratif contenant le numéro comme fragment (§ régression production 2026-09-24, deuxième round : getByText(matchNumber, { exact: false }) dans tryOpenMatchResult est AUSSI un test de sous-chaîne — pour \"1\", il cliquait le premier élément contenant \"1\" n'importe où (ex: \"page 10\"), atterrissant sur une page fausse mais différente de resultats.fbi", async () => {
+    server.setRoute({
+      path: "/resultats.fbi",
+      contentType: "text/html",
+      body: '<html><body><h1>Résultats de recherche</h1><p>Aucune rencontre trouvée. <a href="/decoy.fbi">Voir la page 10</a></p></body></html>',
+    });
+    server.setRoute({
+      path: "/decoy.fbi",
+      contentType: "text/html",
+      body: '<html><body><h1>Page décorative</h1><a href="/export/decoy.pdf">Télécharger e-Marque V2</a></body></html>',
+    });
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 100 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    // "page 10" contient "1" comme fragment de "10", jamais isolé —
+    // tryOpenMatchResult ne doit jamais cliquer ce lien décoratif.
+    await expect(client.findEmarqueDocuments(session, "1")).rejects.toMatchObject({ code: "EMARQUE_MATCH_PAGE_NOT_REACHED" });
+
+    await client.closeSession(session);
+  });
+
   it("lève EMARQUE_MATCH_PAGE_NOT_REACHED plutôt que de remonter à tort les documents d'une autre page (§ régression 2026-09-24 : jamais faire confiance à findDocumentLinks sur une page qui ne mentionne pas la rencontre demandée)", async () => {
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 100 });
     const session = await client.login({ username: "club1234", password: "secret" });

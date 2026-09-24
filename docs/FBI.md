@@ -648,10 +648,45 @@ numéro à 1-2 chiffres très court (un vrai chiffre isolé identique
 ailleurs sur la page resterait un faux positif possible), mais nettement
 plus fiable qu'un `.includes()` nu. Testé explicitement contre ce cas
 précis (numéro "1", page contenant "2813"). Le job de la rencontre n°1
-déjà "réussi" à tort (5 documents génériques déjà en base) devra être
-nettoyé et retenté manuellement une fois ce correctif déployé — pas fait
-automatiquement, aucun mécanisme de nettoyage rétroactif construit à ce
-stade.
+déjà "réussi" à tort (5 documents génériques déjà en base) a été nettoyé
+manuellement en base (SQL direct) et remis en attente.
+
+**Quatorzième déclenchement — même faux positif persistant après le
+correctif ci-dessus, toujours sur la rencontre n°1.** Une fois le
+correctif "nombre isolé" déployé, la rencontre n°1 a de nouveau "réussi"
+avec EXACTEMENT les mêmes 5 documents génériques — alors que n°4516 et
+n°1481, elles, échouaient correctement avec le diagnostic attendu. Cause
+trouvée : `pageMentionsMatchNumber` protège bien la vérification FINALE,
+mais `tryOpenMatchResult` (l'étape de navigation qui clique sur le
+résultat de recherche) utilisait ENCORE `getByText(matchNumber, { exact:
+false })` — un test de sous-chaîne — AVANT cette vérification. Pour "1",
+ça cliquait le premier élément de la page contenant "1" n'importe où (ex:
+un lien de pagination "page 10"), atterrissant sur une page DIFFÉRENTE de
+la page d'accueil (donc pas rattrapée par le garde-fou précédent) mais
+qui n'est toujours pas la vraie page de la rencontre — et qui contenait,
+par coïncidence ou par structure de page générique, de quoi passer aussi
+le test "nombre isolé" (une page réellement inconnue peut légitimement
+contenir un "1" isolé n'importe où : numéro de version, élément de liste,
+etc.).
+
+**Corrigé** : nouvelle fonction partagée `selectors.matchNumberAsIsolatedText`
+(même regex bordures non-chiffres que `pageMentionsMatchNumber`, factorisée)
+— `tryOpenMatchResult` l'utilise maintenant pour son `getByText(...)` AU
+LIEU de `{ exact: false }`, donc ne clique plus jamais un élément dont le
+texte ne contient le numéro que comme fragment d'un nombre plus grand.
+Testé explicitement : une page de résultats sans correspondance réelle
+mais contenant un lien décorateur "Voir la page 10" ne doit jamais être
+cliquée pour la rencontre "1", jamais aboutir à `EMARQUE_MATCH_PAGE_NOT_
+REACHED` cette fois via un vrai chemin de clic plutôt qu'une coïncidence
+de texte. Rencontre n°1 de nouveau nettoyée en base — À CONFIRMER une
+fois ce troisième correctif déployé : si le problème persiste encore
+pour ce numéro précis, la piste la plus probable devient l'observation
+directe du VRAI markup FBI (impossible depuis cet environnement, réseau
+*.ffbb.com bloqué) plutôt qu'un nouvel ajustement de regex à l'aveugle —
+les numéros n°4516/n°1481 étant, eux, correctement diagnostiqués à
+chaque tentative, le cœur du correctif (distinguer succès réel d'échec
+silencieux) est validé ; seule la fragilité inhérente d'un numéro à un
+seul chiffre reste en jeu.
 
 ## Dérogations / licenciés FBI
 
