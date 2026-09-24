@@ -154,10 +154,12 @@ formulaire d'identifiants.
 
 `POST /v1/clubs/:clubId/integrations/fbi/test` teste réellement
 `HttpFbiClient` (chemin synchrone, rapide). Si l'échec est
-`LOGIN_FORM_NOT_RECOGNIZED` (structure de page changée) ET que
-`BROWSER_FBI_ENABLED=true`, un job `test_connection` (navigateur) est
-empilé en secours et son id renvoyé (`202`) pour suivi via
-`GET /v1/jobs/:jobId` — voir `docs/API.md` §Async.
+`LOGIN_FORM_NOT_RECOGNIZED` ou `LOGIN_FAILED` ET que
+`BROWSER_FBI_ENABLED=true`, un login navigateur (`attemptBrowserFbiLogin`,
+`BrowserFbiClient`) est tenté DANS LA MÊME REQUÊTE (2026-09-24 — voir
+"Huitième déclenchement" plus bas ; jusque-là un job `test_connection`
+était empilé et son id renvoyé en `202` pour suivi via
+`GET /v1/jobs/:jobId`, retiré).
 
 **Premier test réel, identifiants corrects côté club, échoue avec
 `LOGIN_FAILED` ("identifiant ou mot de passe incorrect").** Comme pour
@@ -337,6 +339,54 @@ avant de retester. Pas de nouveau test route-level ajouté (la route
 `/fbi/test` n'a aucune couverture existante nécessitant de mocker
 `HttpFbiClient`/`fbi_jobs` — lift disproportionné pour ce correctif
 d'une ligne, urgence du diagnostic en direct).
+
+**Sixième déclenchement réel : succès, via le job navigateur.** Après
+avoir déclenché manuellement `/internal/cron/fbi-jobs` depuis le
+dashboard Vercel (le cron ne tourne qu'une fois par jour, voir
+vercel.json), le job navigateur confirme `loginStatus: "CONNECTED"` — le
+club a bien les bons identifiants, HTTP direct était structurellement
+bloqué (protection anti-bot). `fbi_integration_status.last_login_success`
+passe à `true`.
+
+**Septième correctif : `last_error` restait affiché malgré le succès.**
+Les deux chemins de succès (`routes.ts` synchrone, `process-test-
+connection.ts` asynchrone) ne réinitialisaient jamais `last_error` —
+`/admin/intégrations` aurait affiché "Connecté ✅" à côté du message
+d'erreur HTTP périmé. Corrigé : `last_error: null` explicite sur les
+deux chemins de succès. Nettoyage ponctuel en production (SQL direct)
+de la ligne déjà incohérente pour le club pilote.
+
+**Huitième déclenchement — retour du club : "je ne veux pas que ça
+marche avec le bouton Vercel, je veux que tout passe par l'appli".**
+Juste après confirmation du succès, devoir déclencher manuellement le
+cron depuis le dashboard Vercel à chaque test (et pour chaque futur
+`discover_emarque` en attente, même limitation) est exactement ce que
+le pattern job+cron devait éviter pour une action interactive — un
+admin qui clique "Tester la connexion" attend un résultat immédiat.
+
+**Corrigé** : `attemptBrowserFbiLogin` (nouveau module
+`integrations/fbi/browser-login-attempt.ts`, factorisé depuis
+`process-test-connection.ts`) est appelé DIRECTEMENT et de façon
+SYNCHRONE par `POST .../fbi/test` — plus de job `fbi_jobs` créé pour ce
+type d'appel, plus de `202`/`jobId`, plus besoin du cron. Vérifié :
+`maxDuration: 300` (vercel.json) laisse largement la place pour un
+login navigateur (`launchServerlessBrowser` + `BrowserFbiClient.login`),
+qui prend quelques secondes en pratique (voir déclenchements
+précédents). `TestFbiConnectionButton.tsx` (SCSB) n'a nécessité AUCUN
+changement : il gérait déjà les deux cas (`result.jobId` → polling,
+sinon → résultat direct), donc le cas direct fonctionne immédiatement.
+
+`processTestConnectionJob`/le traitement `test_connection` du cron
+`/internal/cron/fbi-jobs` restent en place (refactorés pour réutiliser
+`attemptBrowserFbiLogin`) — plus rien ne crée ce type de job aujourd'hui,
+mais rien n'empêche un futur appelant (retry différé en arrière-plan) de
+le faire plutôt que d'utiliser le chemin synchrone. La synchronisation
+FFBB (`POST .../ffbb/sync`, bouton "Relancer maintenant") était déjà
+entièrement synchrone, sans dépendance à un job/cron — aucun changement
+nécessaire là. Couvert par 2 nouveaux tests route-level (`BROWSER_FBI_
+ENABLED=true` + `resetEnvCacheForTests()`, mock de
+`attemptBrowserFbiLogin`) : succès navigateur sans `jobId` dans la
+réponse, échec navigateur enregistré comme `last_error`.
 
 ## Dérogations / licenciés FBI
 

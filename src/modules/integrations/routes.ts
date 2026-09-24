@@ -5,6 +5,7 @@ import { createServiceSupabaseClient } from "../../db/client.js";
 import { badRequest, conflict } from "../../api-error.js";
 import { getFbiCredentials, getFbiUsername, saveFbiCredentials } from "../../integrations/fbi/credentials-store.js";
 import { HttpFbiClient } from "../../integrations/fbi/http-client.js";
+import { attemptBrowserFbiLogin } from "../../integrations/fbi/browser-login-attempt.js";
 import { FbiError, type FbiErrorCode } from "../../integrations/fbi/errors.js";
 import { FfbbPublicProvider } from "../../integrations/ffbb/public-provider.js";
 import { syncFfbb } from "../../integrations/ffbb/sync.js";
@@ -166,10 +167,18 @@ integrationsRouter.patch("/fbi", requireClubRole("club_admin"), async (c) => {
 /**
  * POST /v1/clubs/:clubId/integrations/fbi/test — teste réellement la
  * stratégie principale (`HttpFbiClient`, §35 de la demande). Chemin
- * synchrone : le login HTTP est rapide, pas besoin du pattern 202+jobId ici.
+ * synchrone : le login HTTP est rapide.
+ *
  * Si l'échec est `LOGIN_FORM_NOT_RECOGNIZED` OU `LOGIN_FAILED` et que
- * `BROWSER_FBI_ENABLED=true`, un job `test_connection` (navigateur) est
- * empilé en secours et son id renvoyé pour suivi via `GET /v1/jobs/:jobId`.
+ * `BROWSER_FBI_ENABLED=true`, un login navigateur (`attemptBrowserFbiLogin`,
+ * `BrowserFbiClient`) est tenté ICI, DANS LA MÊME REQUÊTE — plus de pattern
+ * 202+jobId (retiré le 2026-09-24, voir docs/FBI.md) : un admin cliquant
+ * "Tester la connexion" attend un résultat immédiat, jamais besoin de
+ * déclencher `/internal/cron/fbi-jobs` à la main sur le dashboard Vercel
+ * (le cron ne tourne qu'une fois par jour, voir vercel.json — bloquant
+ * constaté en production le 2026-09-24). `maxDuration: 300` (vercel.json)
+ * laisse largement la place pour un login navigateur en plus du login HTTP
+ * (quelques secondes en pratique, voir docs/FBI.md).
  *
  * `LOGIN_FAILED` ajouté au déclencheur (2026-09-22, voir docs/FBI.md) :
  * un premier club a confirmé des identifiants corrects (login manuel
@@ -207,23 +216,41 @@ integrationsRouter.post("/fbi/test", requireClubRole("club_admin"), async (c) =>
 
     return c.json({ success: true, message: "FBI connecté ✅" });
   } catch (error) {
-    const message = error instanceof FbiError ? messageForFbiErrorCode(error.code) : "Connexion FBI impossible.";
-
-    await serviceSupabase.from("fbi_integration_status").upsert(
-      { club_id: club.id, configured: true, last_test_at: testedAt, last_test_success: false, last_test_message: message, last_login_success: false, last_error: message, updated_at: testedAt },
-      { onConflict: "club_id" },
-    );
-
-    logError("Test de connexion FBI échoué", error, { clubId: club.id });
+    logError("Connexion FBI (HTTP) échouée, tentative navigateur si activée", error, { clubId: club.id });
 
     if (
       error instanceof FbiError &&
       (error.code === "LOGIN_FORM_NOT_RECOGNIZED" || error.code === "LOGIN_FAILED") &&
       getEnv().BROWSER_FBI_ENABLED
     ) {
-      const { data: job } = await serviceSupabase.from("fbi_jobs").insert({ club_id: club.id, type: "test_connection" }).select("id").single();
-      if (job) return c.json({ success: false, message, jobId: job.id }, 202);
+      const attempt = await attemptBrowserFbiLogin(credentials);
+
+      await serviceSupabase.from("fbi_integration_status").upsert(
+        {
+          club_id: club.id,
+          configured: true,
+          last_test_at: testedAt,
+          last_test_success: attempt.success,
+          last_test_message: attempt.message,
+          last_login_at: attempt.success ? testedAt : undefined,
+          last_login_success: attempt.success,
+          last_error: attempt.success ? null : attempt.message,
+          updated_at: testedAt,
+        },
+        { onConflict: "club_id" },
+      );
+
+      if (!attempt.success) logError("Test de connexion FBI échoué (navigateur)", new Error(attempt.message), { clubId: club.id, loginStatus: attempt.loginStatus });
+
+      return c.json({ success: attempt.success, message: attempt.message });
     }
+
+    const message = error instanceof FbiError ? messageForFbiErrorCode(error.code) : "Connexion FBI impossible.";
+
+    await serviceSupabase.from("fbi_integration_status").upsert(
+      { club_id: club.id, configured: true, last_test_at: testedAt, last_test_success: false, last_test_message: message, last_login_success: false, last_error: message, updated_at: testedAt },
+      { onConflict: "club_id" },
+    );
 
     return c.json({ success: false, message });
   }

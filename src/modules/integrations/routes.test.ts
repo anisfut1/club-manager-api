@@ -28,7 +28,11 @@ vi.mock("../../integrations/fbi/http-client.js", () => ({
   },
 }));
 
+const { mockAttemptBrowserFbiLogin } = vi.hoisted(() => ({ mockAttemptBrowserFbiLogin: vi.fn() }));
+vi.mock("../../integrations/fbi/browser-login-attempt.js", () => ({ attemptBrowserFbiLogin: mockAttemptBrowserFbiLogin }));
+
 const { app } = await import("../../app.js");
+const { resetEnvCacheForTests } = await import("../../config/env.js");
 
 const CLUB_A = {
   id: "aaaaaaaa-0000-0000-0000-000000000000",
@@ -57,6 +61,9 @@ beforeEach(() => {
   mockSyncFfbb.mockResolvedValue({ syncRunId: "run-1", status: "success", stats: {} });
   mockHttpLogin.mockReset();
   mockHttpLogin.mockResolvedValue({ cookieJar: {} });
+  mockAttemptBrowserFbiLogin.mockReset();
+  delete process.env.BROWSER_FBI_ENABLED;
+  resetEnvCacheForTests();
   state = makeFakeClubSupabaseState({
     clubs: [{ ...CLUB_A }],
     memberships: [
@@ -267,5 +274,57 @@ describe("POST /integrations/fbi/test", () => {
     const body = await res.json();
     expect(body.success).toBe(false);
     expect(state.fbiIntegrationStatus.find((r) => r.club_id === CLUB_A.id)?.last_error).not.toBeNull();
+  });
+
+  it("HTTP refusé + BROWSER_FBI_ENABLED=true : bascule sur le navigateur DANS LA MÊME REQUÊTE (jamais un job/202 — un admin qui clique attend un résultat immédiat, voir docs/FBI.md)", async () => {
+    process.env.BROWSER_FBI_ENABLED = "true";
+    resetEnvCacheForTests();
+
+    const encrypted = encryptSecret("s3cret-fbi-password", CLUB_A.id);
+    state.fbiCredentials.push({
+      club_id: CLUB_A.id,
+      username: "club-a-fbi",
+      password_ciphertext: encrypted.ciphertext,
+      password_iv: encrypted.iv,
+      password_auth_tag: encrypted.authTag,
+    });
+    mockHttpLogin.mockRejectedValue(new FbiError("refusé côté HTTP", "LOGIN_FAILED"));
+    mockAttemptBrowserFbiLogin.mockResolvedValue({ success: true, message: "Connexion réussie (navigateur).", loginStatus: "CONNECTED" });
+
+    const res = await request("/integrations/fbi/test", { method: "POST" });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.jobId).toBeUndefined();
+    expect(body.success).toBe(true);
+    expect(body.message).toBe("Connexion réussie (navigateur).");
+    expect(mockAttemptBrowserFbiLogin).toHaveBeenCalledOnce();
+    const status = state.fbiIntegrationStatus.find((r) => r.club_id === CLUB_A.id);
+    expect(status?.last_login_success).toBe(true);
+    expect(status?.last_error).toBeNull();
+  });
+
+  it("échec HTTP puis navigateur : enregistre le message du navigateur comme dernière erreur", async () => {
+    process.env.BROWSER_FBI_ENABLED = "true";
+    resetEnvCacheForTests();
+
+    const encrypted = encryptSecret("s3cret-fbi-password", CLUB_A.id);
+    state.fbiCredentials.push({
+      club_id: CLUB_A.id,
+      username: "club-a-fbi",
+      password_ciphertext: encrypted.ciphertext,
+      password_iv: encrypted.iv,
+      password_auth_tag: encrypted.authTag,
+    });
+    mockHttpLogin.mockRejectedValue(new FbiError("refusé côté HTTP", "LOGIN_FAILED"));
+    mockAttemptBrowserFbiLogin.mockResolvedValue({ success: false, message: "Vos identifiants ne sont pas corrects.", loginStatus: "INVALID_CREDENTIALS" });
+
+    const res = await request("/integrations/fbi/test", { method: "POST" });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(false);
+    expect(body.message).toBe("Vos identifiants ne sont pas corrects.");
+    expect(state.fbiIntegrationStatus.find((r) => r.club_id === CLUB_A.id)?.last_error).toBe("Vos identifiants ne sont pas corrects.");
   });
 });
