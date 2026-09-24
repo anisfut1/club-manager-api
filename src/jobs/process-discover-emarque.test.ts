@@ -157,6 +157,21 @@ describe("processDiscoverEmarqueJob", () => {
     expect(recorders.matchUpdates).toContainEqual({ id: "match-1", patch: { emarque_status: "waiting_for_emarque" } });
   });
 
+  it("replanifie avec l'erreur en last_error (jamais un succès silencieux) quand la page de la rencontre n'est jamais atteinte (régression 2026-09-24)", async () => {
+    getFbiCredentialsMock.mockResolvedValue({ username: "clubxxxx", password: "correct" });
+    loginMock.mockResolvedValue({ context: {}, page: {} });
+    findEmarqueDocumentsMock.mockRejectedValue(new FbiError("Page de résultat introuvable pour la rencontre 2813", "EMARQUE_MATCH_PAGE_NOT_REACHED"));
+
+    const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [] };
+    const supabase = makeFakeSupabase({ match: { id: "match-1", club_id: "club-1", numero: "2813", match_datetime: null }, recorders });
+
+    await processDiscoverEmarqueJob(supabase, baseJob());
+
+    expect(recorders.jobUpdates.at(-1)).toMatchObject({ patch: expect.objectContaining({ status: "pending", last_error: expect.stringContaining("2813") }) });
+    expect(recorders.matchUpdates).toContainEqual({ id: "match-1", patch: { emarque_status: "error" } });
+    expect(recorders.documentInserts).toEqual([]);
+  });
+
   it("marque le job en échec (jamais de retry) sur des identifiants invalides", async () => {
     getFbiCredentialsMock.mockResolvedValue({ username: "clubxxxx", password: "mauvais" });
     loginMock.mockRejectedValue(new FbiError("refusé", "LOGIN_FAILED"));

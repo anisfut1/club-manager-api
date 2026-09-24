@@ -103,7 +103,16 @@ describe("BrowserFbiClient.findEmarqueDocuments (navigation générique, best-ef
     await client.closeSession(session);
   });
 
-  it("renvoie une liste vide (jamais une erreur) quand aucun document n'est encore disponible", async () => {
+  it("renvoie une liste vide (jamais une erreur) quand la page de LA rencontre est bien atteinte mais n'a encore aucun document", async () => {
+    // resultats.fbi doit lier vers CE numéro précis — sinon tryOpenMatchResult
+    // ne trouve rien à cliquer et on ne quitte jamais resultats.fbi (voir le
+    // commentaire d'EMARQUE_MATCH_PAGE_NOT_REACHED plus bas : ce test doit
+    // vraiment atteindre detail.fbi, pas juste échouer discrètement dessus).
+    server.setRoute({
+      path: "/resultats.fbi",
+      contentType: "text/html",
+      body: '<html><body><h1>Résultats de recherche</h1><a href="/detail.fbi?numero=9999">Rencontre n°9999 - SC Sète / Thuir</a></body></html>',
+    });
     server.setRoute({ path: "/detail.fbi", contentType: "text/html", body: fixture("detail-no-documents.html") });
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 100 });
     const session = await client.login({ username: "club1234", password: "secret" });
@@ -111,6 +120,18 @@ describe("BrowserFbiClient.findEmarqueDocuments (navigation générique, best-ef
     const documents = await client.findEmarqueDocuments(session, "9999");
 
     expect(documents).toEqual([]);
+    await client.closeSession(session);
+  });
+
+  it("lève EMARQUE_MATCH_PAGE_NOT_REACHED plutôt que de remonter à tort les documents d'une autre page (§ régression 2026-09-24 : jamais faire confiance à findDocumentLinks sur une page qui ne mentionne pas la rencontre demandée)", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 100 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    // Aucune fixture ne mentionne "77777" nulle part (recherche 2813
+    // uniquement) : la navigation best-effort n'aboutit jamais à une page
+    // de CETTE rencontre.
+    await expect(client.findEmarqueDocuments(session, "77777")).rejects.toMatchObject({ code: "EMARQUE_MATCH_PAGE_NOT_REACHED" });
+
     await client.closeSession(session);
   });
 });

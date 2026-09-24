@@ -87,6 +87,25 @@ export async function findDocumentLinks(page: Page): Promise<DiscoveredDocumentL
   return found;
 }
 
+/**
+ * Preuve qu'on est bien sur (ou a atteint) la page de LA rencontre
+ * demandée, jamais retombé sur une page générique (accueil, aide) après un
+ * échec silencieux des étapes "best effort" de navigation — constaté en
+ * production le 2026-09-24 : `findDocumentLinks` remontait systématiquement
+ * les MÊMES documents génériques ("Télécharger e-Marque V2.pdf",
+ * "Télécharger e-Marque MiniBasket.pdf" — des liens de téléchargement du
+ * LOGICIEL e-Marque, pas des documents de match) pour des dizaines de
+ * numéros de rencontre différents : preuve que la navigation vers la page
+ * de résultat spécifique n'aboutissait jamais, et que `findDocumentLinks`
+ * scannait alors une page d'accueil/aide contenant ces liens permanents
+ * (`DOCUMENT_EXTENSION_PATTERN` matche N'IMPORTE QUEL lien .pdf/.zip sur la
+ * page, quelle qu'elle soit — pas seulement les liens pertinents).
+ */
+export async function pageMentionsMatchNumber(page: Page, matchNumber: string): Promise<boolean> {
+  const bodyText = (await page.locator("body").textContent()) ?? "";
+  return bodyText.includes(matchNumber);
+}
+
 /** Champ de recherche par numéro de rencontre : basé sur un attribut name/placeholder évocateur, jamais une position. */
 export function matchNumberSearchInput(page: Page): Locator {
   return page.locator(

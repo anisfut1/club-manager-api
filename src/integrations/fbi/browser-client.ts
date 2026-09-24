@@ -130,6 +130,26 @@ export class BrowserFbiClient {
     await this.trySearchByMatchNumber(page, matchNumber);
     await this.tryOpenMatchResult(page, matchNumber);
 
+    /**
+     * Constaté en production le 2026-09-24 : les trois étapes ci-dessus
+     * sont volontairement "best effort" (elles avalent leurs erreurs) —
+     * si AUCUNE n'aboutit, `findDocumentLinks` scannait silencieusement la
+     * page où on était déjà (souvent la page d'accueil post-login), dont
+     * les liens permanents de téléchargement du LOGICIEL e-Marque
+     * matchent `DOCUMENT_EXTENSION_PATTERN` (n'importe quel .pdf/.zip) —
+     * remontés à tort comme documents DE CE MATCH, pour chaque match,
+     * identiques à chaque fois. Ne JAMAIS faire confiance à
+     * `findDocumentLinks` sans avoir d'abord vérifié qu'on est bien sur
+     * une page qui mentionne CE numéro de rencontre.
+     */
+    if (!(await selectors.pageMentionsMatchNumber(page, matchNumber))) {
+      const title = await page.title().catch(() => "?");
+      throw new FbiError(
+        `Page de résultat introuvable pour la rencontre ${matchNumber} : ni la recherche ni l'ouverture du résultat n'ont abouti (page actuelle : "${title}", ${page.url()}).`,
+        "EMARQUE_MATCH_PAGE_NOT_REACHED",
+      );
+    }
+
     const links = await selectors.findDocumentLinks(page);
     return links.map((link) => ({
       url: new URL(link.href, page.url()).toString(),

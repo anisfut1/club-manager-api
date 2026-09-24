@@ -495,16 +495,64 @@ diagnostics distincts, tous deux constatés en production le 2026-09-24 :
    2025-2026 déjà `imported` (pas besoin d'attendre un match de la
    nouvelle saison).
 
-   **Reste identifié, pas encore traité** : au dernier comptage, 416 jobs
-   `discover_emarque` encore `pending` pour le club pilote (créés d'un
-   coup par `/internal/cron/fbi-enqueue` une fois FBI connecté, couvrant
-   tout l'historique de matchs joués jamais synchronisé) — à raison de
-   `CLUB_JOB_BATCH_SIZE = 3` par clic, vider cette file au bouton prendrait
-   des dizaines de clics. Le cron quotidien (`JOB_BATCH_SIZE = 3` lui
-   aussi) continuera en tâche de fond, mais à ce rythme le rattrapage de
-   l'historique prendrait des mois. Piste non retenue à ce stade (pas
-   demandée) : augmenter les tailles de lot et/ou plafonner l'enqueue aux
-   matchs récents plutôt qu'à tout l'historique.
+   **Débit constaté** : 416 jobs `discover_emarque` `pending` pour le
+   club pilote (créés d'un coup par `/internal/cron/fbi-enqueue` une fois
+   FBI connecté, couvrant tout l'historique de matchs joués jamais
+   synchronisé) — à raison de `CLUB_JOB_BATCH_SIZE = 3` par appel, vider
+   cette file aurait demandé des dizaines de clics manuels. Voir "Onzième
+   déclenchement" plus bas : `ProcessFbiJobsButton`/`ParseFbiDocumentsButton`
+   relancent désormais l'appel automatiquement tant qu'il reste des
+   candidats, plus besoin de recliquer.
+
+**Onzième déclenchement — "on a récupéré quoi là" (suite) : les
+documents téléchargés n'étaient PAS de vrais documents e-Marque.**
+En creusant pourquoi `parse-documents` répondait systématiquement "rien
+à parser" malgré des dizaines de documents `downloaded`, inspection
+directe de `match_documents` en base : tous les documents partagent EXACTEMENT
+les mêmes noms de fichier ("e-Marque.pdf", "Télécharger_e-Marque_V2.pdf",
+"Télécharger_e-Marque_MiniBasket.pdf"), pour des dizaines de numéros de
+rencontre DIFFÉRENTS, tous classés `type: "other"` (jamais `emarque_zip`).
+Ces noms sont ceux des liens de téléchargement du LOGICIEL e-Marque
+(l'appli de saisie desktop), pas des documents d'UN match — un contenu
+permanent, identique sur n'importe quelle page FBI.
+
+**Cause racine** : `findEmarqueDocuments` (`browser-client.ts`) enchaîne
+trois étapes de navigation volontairement "best effort" (`tryNavigate
+ToSearchScreen`/`trySearchByMatchNumber`/`tryOpenMatchResult`, chacune
+avale ses propres erreurs — conçu ainsi faute d'avoir pu observer le vrai
+markup FBI, voir plus haut) puis scanne la page COURANTE, quelle qu'elle
+soit, via `findDocumentLinks` — dont `DOCUMENT_EXTENSION_PATTERN` matche
+N'IMPORTE QUEL lien `.pdf`/`.zip` sur la page, indépendamment du texte.
+Si les trois étapes échouent silencieusement (sélecteurs qui ne
+correspondent pas au vrai FBI), on reste sur la page où on était déjà
+(probablement l'accueil post-login) — et ses liens permanents
+"Télécharger e-Marque" matchent l'extension `.pdf`, remontés à tort comme
+documents DE LA rencontre demandée. Le job se marquait alors "réussi" à
+chaque fois : succès silencieux sur des données fausses, pire qu'un échec
+visible.
+
+**Corrigé** : `findEmarqueDocuments` vérifie maintenant explicitement
+(`selectors.pageMentionsMatchNumber`) que la page atteinte mentionne bien
+le numéro de rencontre demandé AVANT de faire confiance à
+`findDocumentLinks` — sinon elle lève `EMARQUE_MATCH_PAGE_NOT_REACHED`
+(diagnostic : titre + URL de la page réellement atteinte, exploitable
+depuis les logs Vercel exactement comme pour le diagnostic de login
+plus haut dans ce document). Le job passe alors en erreur/replanifié
+(`emarque_status: error`, `last_error` renseigné) plutôt qu'en faux
+succès. Les sélecteurs de navigation réels (pourquoi les trois étapes
+échouent) restent À DÉTERMINER — cette correction ne les répare pas,
+elle empêche seulement l'échec de navigation de produire des données
+fausses. Prochaine étape si le problème persiste après ce correctif :
+récupérer le diagnostic (titre/URL de la page réellement atteinte) depuis
+les logs Vercel d'un prochain job en échec, pour ajuster les sélecteurs
+de `tryNavigateToSearchScreen`/`trySearchByMatchNumber`/`tryOpenMatchResult`
+sur le VRAI markup FBI (même méthode que pour le formulaire de login).
+
+**Nettoyage** : les documents déjà téléchargés à tort (type `other`,
+noms génériques) n'ont pas été supprimés en base à ce stade — ils sont
+inertes (jamais matchés par `parseDownloadedEmarqueDocuments`, qui ne
+regarde que `type = emarque_zip`), donc sans risque immédiat, mais
+polluent `match_documents`. Nettoyage différé, pas demandé.
 
 ## Dérogations / licenciés FBI
 
