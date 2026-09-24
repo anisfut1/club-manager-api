@@ -1421,6 +1421,68 @@ fixture n°5555 reste volontairement un simple `fetch()` de télémétrie
 mécanique de fusion `discoveredDocument` → `documents` est, elle, prouvée
 par preuve de production ci-dessus plutôt que par une simulation locale.
 
+**Trentième déclenchement — le ZIP e-Marque est confirmé téléchargé en
+production (n°1481), mais deux bugs distincts empêchaient son parsing
+d'aboutir, tous deux de la même famille que le correctif `pdfjs-dist`
+(un fichier lu dynamiquement par `fs`, jamais tracé par le pipeline de
+build Vercel).**
+
+1. **`pdfjs-dist` — confirmé résolu par le correctif du déclenchement
+   précédent.** Le parsing du PDF a bien progressé au-delà de l'étape
+   d'extraction de texte natif (0 caractère, comme attendu pour un
+   e-Marque V2 — voir `pdf-text-extractor.ts`), donc est bien tombé sur le
+   repli rastérisation + OCR (`pdf-raster-ocr-extractor.ts`).
+2. **`tesseract.js-core` — même famille de bug, jamais rencontrée avant
+   d'avoir un vrai document à parser.** Erreur en production :
+   `Setting up fake worker failed: Cannot find module '/var/task/
+   node_modules/tesseract.js-core/tesseract-core-relaxedsimd.wasm'`.
+   `tesseract.js` (`worker-script/node/getCore.js`) détecte au RUNTIME le
+   support WASM SIMD de l'environnement (`wasm-feature-detect`) puis
+   `require()` UN des 6 fichiers `tesseract-core-*.js`/`.wasm` possibles
+   selon le résultat — un choix qui ne peut être connu qu'à l'exécution,
+   jamais par l'analyse statique de la pipeline de build Vercel (§
+   déclenchement précédent pour `pdfjs-dist`, même cause). Contrairement
+   au worker `pdfjs-dist`, `tesseract.js-core` n'expose aucun point
+   d'extension type `globalThis.pdfjsWorker` pour contourner ce `require`
+   dynamique — la seule solution robuste est de forcer Vercel à inclure
+   physiquement TOUT le paquet dans le déploiement, peu importe la
+   variante réellement choisie à l'exécution (qui peut d'ailleurs varier
+   selon la version exacte du runtime Node/V8 de la Lambda).
+3. **Le modèle de langue OCR (`fra.traineddata`) n'a en réalité JAMAIS été
+   porté depuis SCSB lors de la migration vers ce repo — bug distinct,
+   resté invisible car jamais atteint avant que le point 2 ne soit
+   corrigé.** `pdf-raster-ocr-extractor.ts` pointait
+   `OCR_LANG_PATH` vers `src/server/emarque/ocr-data` — une convention
+   Next.js de l'ancien monolithe SCSB (répertoire déclaré via
+   `next.config.ts#outputFileTracingIncludes`, voir l'historique Git de
+   SCSB, commit `5db6b6a`), jamais adaptée à la structure de
+   `club-manager-api` (pas de `src/server/`, voir `ARCHITECTURE.md`) ni
+   au mécanisme d'inclusion propre à ce repo (`vercel.json`, pas
+   `next.config.ts`) — ce dossier n'a jamais existé ici.
+
+**Corrigé** (les trois, docs/EMARQUE.md pour le détail) :
+- `fra.traineddata` (+ son `README.md`, licence Apache 2.0,
+  `tesseract-ocr/tessdata_fast`) porté depuis l'historique Git de SCSB
+  vers `src/integrations/emarque/ocr-data/` (checksum SHA-256 vérifié
+  identique à l'original) — emplacement cohérent avec la structure de ce
+  repo (sibling de `extractors/`, `normalizers/`, etc.), `OCR_LANG_PATH`
+  mis à jour en conséquence.
+- `vercel.json` (`functions."api/index.ts".includeFiles`) force
+  désormais l'inclusion de `node_modules/tesseract.js-core/**` (~44 Mo,
+  négligeable à côté de `@sparticuz/chromium` déjà embarqué pour
+  `BrowserFbiClient`) et de `src/integrations/emarque/ocr-data/**` — les
+  deux catégories de fichiers lus dynamiquement par `fs`, jamais par
+  `require`/`import` statique, donc jamais tracés automatiquement.
+
+Aucun de ces trois bugs ne remet en cause le correctif FBI du
+déclenchement précédent : la découverte et le téléchargement du document
+e-Marque fonctionnent bout en bout en production, confirmé sur preuve
+(n°1481). Ce qui restait cassé se situait entièrement en aval, dans le
+pipeline de parsing PDF/OCR — hérité verbatim de SCSB (§ "Ce module est
+un report quasi verbatim", docs/EMARQUE.md) sans qu'aucun document réel
+n'ait jamais auparavant atteint cette étape en production sur
+`club-manager-api` pour révéler ces deux angles morts de la migration.
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque

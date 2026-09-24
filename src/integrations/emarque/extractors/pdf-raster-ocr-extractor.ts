@@ -14,12 +14,19 @@ import type { DocumentExtractor, ExtractedText, ZoneFraction } from "./types.js"
 const RENDER_SCALE = 300 / 72;
 
 /**
- * Chemin du modèle de langue vendorisé (voir ocr-data/README.md). Résolu
- * depuis `process.cwd()` : c'est la convention documentée par Next.js pour
- * les fichiers déclarés via `outputFileTracingIncludes` (voir
- * next.config.ts) dans une fonction serverless Vercel.
+ * Chemin du modèle de langue vendorisé (voir `../ocr-data/README.md`).
+ * Résolu depuis `process.cwd()` (racine du repo dans une Function Vercel),
+ * déclaré dans `vercel.json` (`functions."api/index.ts".includeFiles`) pour
+ * finir physiquement dans le déploiement — Vercel ne trace jamais un
+ * fichier lu dynamiquement via `fs` (voir `docs/EMARQUE.md`).
+ *
+ * Constaté en production le 2026-09-24 (§ "Trentième déclenchement",
+ * docs/FBI.md) : ce chemin pointait vers `src/server/emarque/ocr-data`,
+ * une convention Next.js de l'ancien monolithe SCSB jamais adaptée lors de
+ * la migration — ce dossier n'a jamais existé dans club-manager-api, et le
+ * fichier `fra.traineddata` lui-même n'avait jamais été porté.
  */
-const OCR_LANG_PATH = path.join(process.cwd(), "src/server/emarque/ocr-data");
+const OCR_LANG_PATH = path.join(process.cwd(), "src/integrations/emarque/ocr-data");
 
 /**
  * Extraction par rendu image + OCR ciblé (Tesseract), pour les documents

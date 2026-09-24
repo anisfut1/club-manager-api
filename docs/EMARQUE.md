@@ -109,6 +109,22 @@ correctement inclus par l'analyse statique, assigné à ce global avant
 tout appel à `getDocument()` — l'import dynamique interne à `pdfjs-dist`
 n'a alors jamais lieu.
 
+**Deux bugs supplémentaires de la même famille, découverts juste après
+(§ "Trentième déclenchement", docs/FBI.md, détail complet là-bas) :**
+`tesseract.js-core` choisit lui aussi UN de ses 6 fichiers `.wasm` via un
+`require()` dynamique basé sur une détection runtime du support SIMD —
+jamais tracé statiquement non plus, et sans point d'extension équivalent
+à `globalThis.pdfjsWorker` pour le contourner ; et le modèle de langue OCR
+(`fra.traineddata`) n'avait en réalité **jamais été porté** depuis SCSB
+lors de la migration (`OCR_LANG_PATH` pointait vers un chemin Next.js de
+l'ancien monolithe qui n'a jamais existé dans ce repo). Corrigé : le
+fichier est maintenant vendorisé sous
+`src/integrations/emarque/ocr-data/` (voir son `README.md`), et
+`vercel.json` (`functions."api/index.ts".includeFiles`) force
+l'inclusion de tout `node_modules/tesseract.js-core/` ainsi que de ce
+dossier — les deux catégories de fichiers lus dynamiquement par `fs`
+plutôt que par `require`/`import` statique.
+
 ## Cron
 
 `GET /internal/cron/emarque-parse` (toutes les 10 minutes, voir

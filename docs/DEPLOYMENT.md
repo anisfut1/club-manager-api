@@ -69,6 +69,22 @@ deux.
   est absent — d'où le dossier `public/` (vide, un simple `README.md`
   explicatif) : jamais servi tel quel, `rewrites` route tout vers l'API.
 
+**`functions."api/index.ts".includeFiles` — nécessaire pour tout fichier
+lu dynamiquement via `fs` (jamais `require`/`import`).** Constaté en
+production (§ "Trentième déclenchement", docs/FBI.md) : ni l'empaquetage
+esbuild ni le traçage de fichiers de Vercel ne suivent un `fs.readFileSync`
+(ou un `require()`/`import()` dont la cible est calculée au runtime, ex :
+`tesseract.js-core` qui choisit sa variante WASM selon le support SIMD
+détecté à l'exécution) — seuls les `require`/`import` avec une chaîne
+LITTÉRALE, résolus par l'analyse statique du bundler, sont automatiquement
+inclus. `includeFiles` force l'inclusion physique de tout le reste :
+aujourd'hui `node_modules/tesseract.js-core/**` (les 6 variantes WASM
+possibles) et `src/integrations/emarque/ocr-data/**` (le modèle de langue
+OCR vendorisé). Tout futur ajout d'un fichier lu par `fs` (nouveau modèle,
+nouvelle dépendance native) doit être ajouté à ce glob — sinon il
+fonctionnera en local (où `node_modules`/`src` sont intégralement
+présents) mais échouera silencieusement en production avec `ENOENT`.
+
 ## Variables d'environnement requises
 
 | Variable | Rôle |
