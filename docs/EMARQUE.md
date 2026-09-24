@@ -91,6 +91,24 @@ Ce module est un report quasi verbatim de `src/server/emarque/**` de SCSB
 (voir `docs/MIGRATION.md`) — la logique d'extraction ne dépend d'aucune
 API Next.js, seul l'import `@/types/database` → `@/db/types` a changé.
 
+**Constaté en production le 2026-09-24 (rencontre n°1481) : le ZIP
+e-Marque était bien téléchargé (§ "Vingt-neuvième déclenchement",
+docs/FBI.md) mais son parsing échouait systématiquement sur Vercel** avec
+`Setting up fake worker failed: Cannot find module
+'/var/task/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs'`. Cause :
+`pdfjs-dist` (`legacy/build/pdf.mjs`) charge son worker via un
+`import(this.workerSrc)` **dynamique et relatif**, invisible à l'analyse
+statique de la pipeline de build Vercel (empaquetage esbuild d'une
+Function unique, voir `docs/DEPLOYMENT.md`) — ce fichier n'est donc jamais
+copié dans le déploiement. `pdfjs-dist` prévoit exactement ce cas :
+`PDFWorker.#mainThreadWorkerMessageHandler` vérifie d'abord
+`globalThis.pdfjsWorker?.WorkerMessageHandler` et ne tente l'import
+dynamique QUE si ce global est absent. **Corrigé** dans
+`pdfjs-loader.ts` : un import STATIQUE (littéral) du module worker,
+correctement inclus par l'analyse statique, assigné à ce global avant
+tout appel à `getDocument()` — l'import dynamique interne à `pdfjs-dist`
+n'a alors jamais lieu.
+
 ## Cron
 
 `GET /internal/cron/emarque-parse` (toutes les 10 minutes, voir
