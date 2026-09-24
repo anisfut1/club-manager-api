@@ -1138,6 +1138,26 @@ s'appliquera jamais à lui) ou si la vraie page de détail expose aussi un
 ZIP que la découverte n'a pas trouvé — seul un prochain succès "propre"
 (post-correctifs ci-dessus) le confirmera.
 
+**Vingt-troisième déclenchement — le chemin "aucun document trouvé" (retry
+silencieux) n'avait AUCUN diagnostic, contrairement au chemin d'échec dur.**
+Nouveau test sur les 3 matchs isolés après déploiement des correctifs
+précédents (batch size 1, auto-guérison, exclusion leurre/dédup) : la
+rencontre n°2813 (preuve visuelle du code EM "DCBLRCA7") ressort avec
+`documents.length === 0` — `processDiscoverEmarqueJob` traite ça comme un
+cas légitime ("pas encore de document disponible"), reschedule
+silencieusement, sans lever `EMARQUE_MATCH_PAGE_NOT_REACHED` et donc SANS
+la trace de navigation/dump de champs/liens visibles qu'on a mis deux
+déclenchements à construire. Un match confirmé comme ayant un vrai
+document qui ressort à zéro mérite la même preuve qu'un échec dur — sinon
+le prochain cycle repart à l'aveugle.
+
+**Corrigé** : `findEmarqueDocuments` (`browser-client.ts`) logue
+désormais (`logInfo`, jamais une exception — ce cas reste légitime et le
+retry programmé reste le bon comportement) la trace de navigation
+complète ET les liens visibles de la page dès que `documents.length ===
+0` APRÈS confirmation qu'on est sur la bonne page pour ce match — visible
+dans les logs Vercel au prochain passage, sans attendre un échec dur.
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque

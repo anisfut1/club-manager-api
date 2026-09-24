@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Browser, BrowserContext, Page } from "playwright-core";
 import { FbiError } from "./errors.js";
 import * as selectors from "./selectors.js";
+import { logInfo } from "../../logger.js";
 
 /**
  * BrowserFbiClient — automatisation Playwright de FBI, utilisée UNIQUEMENT
@@ -204,6 +205,32 @@ export class BrowserFbiClient {
     }
 
     const links = await selectors.findDocumentLinks(page);
+
+    /**
+     * Constaté en production le 2026-09-24 (rencontre n°2813, § "Vingt-
+     * troisième déclenchement", docs/FBI.md) : `documents.length === 0`
+     * (page confirmée pour CE match, mais aucun lien de document retenu
+     * après filtrage) déclenche un simple retry planifié côté appelant
+     * (`process-discover-emarque.ts`), SANS AUCUN diagnostic — contrairement
+     * au chemin d'échec dur (`EMARQUE_MATCH_PAGE_NOT_REACHED`) qui embarque
+     * trace/champs/liens dans son message. Un match confirmé via capture
+     * d'écran comme ayant un vrai document (2813, code EM "DCBLRCA7") qui
+     * ressort à zéro mérite la même preuve — sinon c'est encore un cycle de
+     * correctif à l'aveugle sur le prochain échec identique.
+     */
+    if (links.length === 0) {
+      const title = await page.title().catch(() => "?");
+      const visibleLinks = await selectors.listVisibleLinks(page, 60);
+      const linksSummary = visibleLinks.length > 0 ? visibleLinks.map((l) => `"${l.text}" → ${l.href}`).join(" | ") : "(aucun lien trouvé sur la page)";
+      logInfo(`Job discover_emarque : page confirmée pour la rencontre ${matchNumber} mais aucun document retenu après filtrage`, {
+        matchNumber,
+        title,
+        url: page.url(),
+        trace,
+        visibleLinks: linksSummary,
+      });
+    }
+
     return links.map((link) => ({
       url: new URL(link.href, page.url()).toString(),
       fileName: this.fileNameFromLabelOrUrl(link),
