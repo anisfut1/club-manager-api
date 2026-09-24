@@ -554,6 +554,42 @@ inertes (jamais matchés par `parseDownloadedEmarqueDocuments`, qui ne
 regarde que `type = emarque_zip`), donc sans risque immédiat, mais
 polluent `match_documents`. Nettoyage différé, pas demandé.
 
+**Incident — la boucle auto (§10 de la demande, SCSB) a fait échouer ~190
+connexions FBI en quelques minutes.** Livré sans aucun garde-fou de
+rythme : `ProcessFbiJobsButton` rappelait `POST .../fbi/process-jobs` en
+boucle immédiatement après chaque réponse, sans pause. Constaté en
+production quelques minutes après déploiement : `fbi_integration_status.
+last_error` passe de "Connecté ✅" à "Formulaire de connexion FBI non
+reconnu (aucun champ mot de passe trouvé)" — `LOGIN_FORM_NOT_RECOGNIZED`
+au niveau du LOGIN lui-même (`HttpFbiClient`/`BrowserFbiClient`), pas de
+la découverte de documents. Classé `AUTH_FLOW_CHANGED` par
+`classifyFbiLoginStatus` → jamais retried automatiquement (§ commentaire
+`process-discover-emarque.ts` : "ne se corrigera jamais tout seul en
+réessayant") → ~190 jobs `discover_emarque` marqués `failed`
+PERMANENTS en quelques minutes, alors que des dizaines de connexions
+manuelles espacées (~30s+ entre clics) n'avaient jamais déclenché cette
+erreur. Signature cohérente avec un blocage anti-bot FBI déclenché par le
+rythme (jamais confirmé formellement — aucun accès pour inspecter la
+réponse FBI réelle reçue à ce moment-là).
+
+**Réaction immédiate** (pendant l'incident, avant le correctif) :
+`fbi_jobs.scheduled_at` des jobs `pending` restants repoussé de 2h en
+base directement (arrête la boucle proprement : le prochain lot réclamé
+renvoie `claimed: 0`, la boucle s'arrête d'elle-même) ; les ~190 jobs
+`failed` par cette erreur précise remis en `pending` (`attempt_count`,
+`last_error`, `finished_at` réinitialisés, `scheduled_at` +2h) — la cause
+la plus probable étant transitoire (rythme), pas un vrai changement
+définitif du formulaire FBI.
+
+**Corrigé** : `ProcessFbiJobsButton` (le seul des deux boutons qui pilote
+un vrai login FBI — `ParseFbiDocumentsButton` ne fait que de l'OCR/PDF
+local, aucun risque équivalent) ajoute désormais `ROUND_DELAY_MS = 5000`
+(pause entre deux lots) ET un coupe-circuit : `MAX_CONSECUTIVE_FULL_
+FAILURES = 2` lots consécutifs entièrement en échec (`succeeded === 0`
+alors que `claimed > 0`) interrompt la boucle plutôt que de vider toute
+la file restante en échecs — un vrai blocage ne se corrige jamais en
+insistant plus vite.
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque
