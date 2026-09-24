@@ -11,9 +11,12 @@ import { logError, logInfo } from "../logger.js";
  * Traite un job `test_connection` via `BrowserFbiClient` — utilisé UNIQUEMENT
  * en secours quand `HttpFbiClient` (chemin synchrone principal, voir
  * src/modules/integrations/routes.ts) échoue avec `LOGIN_FORM_NOT_RECOGNIZED`
- * ET que `BROWSER_FBI_ENABLED=true` (§35 de la demande). Un navigateur
- * réussissant là où le HTTP direct échoue indique un changement de
- * structure de page plutôt qu'une vraie panne.
+ * OU `LOGIN_FAILED`, ET que `BROWSER_FBI_ENABLED=true` (§35 de la demande,
+ * élargi à `LOGIN_FAILED` le 2026-09-22 — voir docs/FBI.md). Un navigateur
+ * réussissant là où le HTTP direct échoue indique soit un changement de
+ * structure de page, soit une protection anti-bot (empreinte TLS/JS)
+ * qu'un `fetch` brut ne peut pas contourner mais qu'un vrai Chromium peut
+ * franchir — confirmé en production pour un premier club.
  */
 export async function processTestConnectionJob(supabase: DbClient, job: FbiJobRow): Promise<void> {
   const credentials = await getFbiCredentials(supabase, job.club_id);
@@ -32,7 +35,12 @@ export async function processTestConnectionJob(supabase: DbClient, job: FbiJobRo
     await client.closeSession(session);
 
     await supabase.from("fbi_integration_status").upsert(
-      { club_id: job.club_id, configured: true, last_test_at: testedAt, last_test_success: true, last_test_message: "Connexion réussie (navigateur).", last_login_at: testedAt, last_login_success: true, updated_at: testedAt },
+      // last_error: null — sinon l'échec HTTP qui a déclenché ce repli
+      // navigateur (LOGIN_FAILED, voir routes.ts) reste affiché
+      // indéfiniment sur /admin/intégrations à côté d'un statut
+      // "Connecté ✅", contradiction constatée en production le
+      // 2026-09-22 (voir docs/FBI.md).
+      { club_id: job.club_id, configured: true, last_test_at: testedAt, last_test_success: true, last_test_message: "Connexion réussie (navigateur).", last_login_at: testedAt, last_login_success: true, last_error: null, updated_at: testedAt },
       { onConflict: "club_id" },
     );
     await supabase.from("fbi_jobs").update({ status: "succeeded", finished_at: testedAt, result: { loginStatus: "CONNECTED" } }).eq("id", job.id);

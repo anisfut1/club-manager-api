@@ -197,7 +197,11 @@ integrationsRouter.post("/fbi/test", requireClubRole("club_admin"), async (c) =>
     await client.login(credentials);
 
     await serviceSupabase.from("fbi_integration_status").upsert(
-      { club_id: club.id, configured: true, last_test_at: testedAt, last_test_success: true, last_test_message: "Connexion réussie.", last_login_at: testedAt, last_login_success: true, updated_at: testedAt },
+      // last_error: null — sinon un échec précédent (ex: LOGIN_FAILED HTTP,
+      // avant le repli navigateur) reste affiché indéfiniment sur
+      // /admin/intégrations à côté d'un statut "Connecté ✅", contradiction
+      // constatée en production le 2026-09-22 (voir docs/FBI.md).
+      { club_id: club.id, configured: true, last_test_at: testedAt, last_test_success: true, last_test_message: "Connexion réussie.", last_login_at: testedAt, last_login_success: true, last_error: null, updated_at: testedAt },
       { onConflict: "club_id" },
     );
 

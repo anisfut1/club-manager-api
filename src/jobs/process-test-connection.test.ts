@@ -71,7 +71,7 @@ describe("processTestConnectionJob", () => {
     await processTestConnectionJob(supabase, baseJob());
 
     expect(recorders.jobUpdates).toContainEqual(expect.objectContaining({ status: "succeeded" }));
-    expect(recorders.statusUpserts).toContainEqual(expect.objectContaining({ last_test_success: true, last_login_success: true }));
+    expect(recorders.statusUpserts).toContainEqual(expect.objectContaining({ last_test_success: true, last_login_success: true, last_error: null }));
     expect(closeSessionMock).toHaveBeenCalledOnce();
     expect(closeBrowserMock).toHaveBeenCalledOnce();
   });
