@@ -2,6 +2,28 @@ import type { DbClient } from "../db/client.js";
 import type { FbiJobRow } from "../db/types.js";
 
 /**
+ * `claim_next_fbi_job`/`claim_next_fbi_job_for_club` sont déclarées
+ * `returns public.fbi_jobs` (une seule ligne composite, jamais `SETOF`) —
+ * quand rien n'est disponible, la fonction PL/pgSQL fait `return null`,
+ * mais un appel RPC sur une fonction à ligne unique renvoie TOUJOURS
+ * exactement une ligne, y compris quand cette ligne EST null : PostgREST
+ * la sérialise alors comme un objet dont CHAQUE colonne vaut `null`
+ * (`{ id: null, club_id: null, ... }`), jamais un `null` JSON bare — confirmé
+ * en production le 2026-09-24 via `select * from
+ * claim_next_fbi_job_for_club(...)` directement. Sans ce garde-fou, le
+ * *ligne fantôme* passait le test `!job` de `processJobBatch` (un objet
+ * est toujours "truthy"), incrémentait `claimed` à tort et partait en
+ * traitement avec un job aux champs tous `null` — la file ne se vidait
+ * donc jamais (`claimed` ne retombait jamais à 0), et chaque appel RPC
+ * "réclamait" un job fantôme en plus des vrais. `id === null` est le
+ * même sentinel que la fonction SQL utilise déjà en interne
+ * (`if claimed_job.id is null then return null`).
+ */
+function isPhantomRow(row: FbiJobRow | null): boolean {
+  return row === null || row.id === null;
+}
+
+/**
  * Réclame le prochain job éligible via `claim_next_fbi_job` (FOR UPDATE
  * SKIP LOCKED côté Postgres, voir supabase/migrations/20260921110000_fbi_jobs.sql)
  * — c'est CETTE fonction SQL, jamais une logique applicative, qui garantit
@@ -18,7 +40,7 @@ export async function claimNextJob(supabase: DbClient, workerId: string): Promis
     throw new Error(`Réclamation d'un job FBI échouée : ${error.message}`);
   }
 
-  return data ?? null;
+  return isPhantomRow(data) ? null : data;
 }
 
 /**
@@ -34,5 +56,5 @@ export async function claimNextJobForClub(supabase: DbClient, clubId: string, wo
     throw new Error(`Réclamation d'un job FBI (club) échouée : ${error.message}`);
   }
 
-  return data ?? null;
+  return isPhantomRow(data) ? null : data;
 }

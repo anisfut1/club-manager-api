@@ -590,6 +590,42 @@ alors que `claimed > 0`) interrompt la boucle plutôt que de vider toute
 la file restante en échecs — un vrai blocage ne se corrige jamais en
 insistant plus vite.
 
+**Douzième déclenchement — la boucle auto ne s'arrêtait jamais (même
+avec 0 job réellement disponible) : "ligne fantôme" de PostgREST.**
+Repéré via les logs Vercel collés par le club juste après le repoussement
+des `scheduled_at` (déclenchement précédent) : `"Job FBI réclamé"` avec
+`jobId: null, clubId: null, type: null` — alors que `processJobBatch`
+vérifie `if (!job) break;` avant de logger quoi que ce soit. Vérifié
+directement en SQL : `select * from claim_next_fbi_job_for_club(...)`
+quand rien n'est disponible renvoie **une ligne** dont CHAQUE colonne
+vaut `null` (`{ id: null, club_id: null, ... }`), jamais zéro ligne — une
+fonction PL/pgSQL `returns public.fbi_jobs` (composite, pas `SETOF`) est
+appelée comme une fonction SCALAIRE : elle produit toujours exactement
+une valeur de sortie, y compris quand cette valeur EST `null` en interne
+(`if claimed_job.id is null then return null`) ; PostgREST sérialise
+alors un objet aux champs tous `null`, jamais un `null` JSON bare. Ce
+même bug affecte `claim_next_fbi_job` (le cron global) depuis le début —
+jamais détecté car les tests unitaires existants mockent `{ data: null }`
+directement, sans jamais exercer la vraie sérialisation PostgREST.
+
+Conséquence concrète : `processJobBatch`'s `if (!job) break;` ne se
+déclenchait JAMAIS (un objet est toujours "truthy" en JS) — `claimed`
+était incrémenté à tort à chaque appel, la boucle continuait indéfiniment
+(jusqu'à `MAX_ROUNDS`/le coupe-circuit du déclenchement précédent), et
+chaque "job fantôme" partait en traitement avec `match_id: null` →
+`processDiscoverEmarqueJob` échouait immédiatement à l'étape "Match
+introuvable" (AVANT tout contact FBI, donc sans risque de blocage
+anti-bot cette fois — les timestamps très rapprochés dans les logs du
+club, ~200ms d'écart, en étaient déjà la preuve).
+
+**Corrigé** : `claimNextJob`/`claimNextJobForClub` (`jobs/claim.ts`)
+détectent maintenant cette ligne fantôme via `row.id === null` (même
+sentinel que la fonction SQL elle-même) et renvoient `null` — jamais une
+correction de la fonction SQL (compliquée à faire proprement pour une
+fonction à ligne unique appelée via PostgREST), le garde-fou côté
+application est plus simple et suffisant. Couvert par un test dans
+`claim.test.ts` reproduisant exactement cette forme de réponse.
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque
