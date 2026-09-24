@@ -164,6 +164,18 @@ describe("BrowserFbiClient.findEmarqueDocuments (§ 'Dix-huitième déclenchemen
     expect(message).toContain('champ "numeroRencontre" rempli');
     expect(message).toContain("Champs de formulaire sur cette page");
     expect(message).toContain('select[name=idSaison]="Saison 2026-2027"');
+    // Régression production 2026-09-24 (§ "Vingtième déclenchement") :
+    // le dump n'incluait pas les <button>, impossible de vérifier quel
+    // bouton searchSubmitControl avait réellement ciblé.
+    expect(message).toContain('button[type=submit,name=]="RECHERCHER"');
+    expect(message).toContain('bouton "RECHERCHER" cliqué');
+    // Et confondait la valeur de soumission fixe d'une checkbox ("true")
+    // avec son état coché réel — corrigé pour lire isChecked(). Le dump
+    // ci-dessous reflète la page rechargée par le serveur de test
+    // STATIQUE (qui ignore les query params, sert toujours le fixture
+    // par défaut — checkbox cochée) : preuve que le format "checked"
+    // (jamais l'ancien "true" de l'attribut value) est bien utilisé.
+    expect(message).toContain('input[type=checkbox,name=rechercheRencontreSaisieResultatForm.rechercherRencontreSaisieResultatBean.nonJoue]="checked"');
 
     await client.closeSession(session);
   });

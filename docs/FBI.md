@@ -1017,6 +1017,50 @@ effectivement `idSaison=12` (la valeur de l'option choisie) — preuve que
 la sélection a réellement été soumise, pas juste rapportée dans la
 trace.
 
+**Vingt-et-unième déclenchement — saison corrigée en production
+(confirmée "Saison 2025-2026" dans le dump), mais toujours aucun
+résultat ; deux angles morts du diagnostic comblés.** Nouveau test sur
+les 3 mêmes matchs isolés après déploiement du correctif de saison. Le
+dump confirme que la saison est bien passée à "Saison 2025-2026" — mais
+la recherche pour n°2813 (preuve visuelle du code EM) ne trouve toujours
+rien. Deux limites du diagnostic empêchaient d'aller plus loin :
+
+1. `listFormFields` ne listait QUE `input`/`select`/`textarea` — jamais
+   les `<button>`. Impossible de vérifier si `searchSubmitControl` avait
+   réellement ciblé le bouton "RECHERCHER" plutôt qu'un autre bouton du
+   même formulaire.
+2. Le dump affichait la valeur de SOUMISSION fixe (`value="true"`) d'une
+   checkbox comme si c'était son état coché — deux choses différentes.
+   Ça avait fait conclure à tort, au déclenchement précédent, que la
+   checkbox "non joué" était cochée par défaut alors que ce n'était pas
+   prouvé (elle s'est révélée déjà décochée à l'exécution, la trace ne
+   mentionnant "décochée" que quand une action a réellement eu lieu).
+
+**Corrigé** : `listFormFields` inclut maintenant les `<button>` (texte
+visible comme "valeur"), et lit l'état RÉEL d'une checkbox/radio via
+`Locator.isChecked()` (`"checked"`/`"unchecked"`) au lieu de son
+attribut `value` figé. Le texte du bouton effectivement cliqué est aussi
+ajouté à la trace de `trySearchByMatchNumber`.
+
+**Corrigé en même temps (amélioration défensive, pas une preuve directe
+d'un bug — les noms de champs `identificationForm.identificationBean`,
+`rechercheRencontreSaisieResultatForm...` évoquent une appli Java legacy
+de type JSF, où un bouton peut soumettre en AJAX sans navigation ni
+changement d'URL)** : `trySearchByMatchNumber` attend désormais AUSSI
+`page.waitForLoadState("networkidle", { timeout: 5000 })` (best-effort,
+en plus du délai fixe existant) après avoir soumis la recherche — un
+délai fixe de 500ms pourrait ne pas suffire à un aller-retour serveur
+réel en production pour un formulaire soumis en XHR.
+
+Couvert par des tests étendus qui vérifient la présence de
+`button[type=submit,name=]="RECHERCHER"` et `bouton "RECHERCHER"
+cliqué"` dans le message, ainsi que le nouveau format `"checked"` (au
+lieu de l'ancien `"true"` trompeur) pour l'état d'une checkbox.
+**Prochaine étape** : le prochain échec en production révélera enfin,
+sur preuve, si le bon bouton est ciblé et si un problème de timing AJAX
+était en jeu — ou pointera vers autre chose (ex. un des champs encore
+sur leur valeur "placeholder" : `idDivision`, `idPoule`, `numeroEquipe`).
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque

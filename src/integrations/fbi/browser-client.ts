@@ -353,19 +353,40 @@ export class BrowserFbiClient {
        * un bouton "RECHERCHER" explicite valide le formulaire — `press
        * ("Enter")` seul ne suffit pas toujours à soumettre un formulaire
        * non natif (JS intercepté). Bouton en priorité, Entrée en repli.
+       * Le texte du bouton réellement cliqué est ajouté à la trace (§
+       * "Vingtième déclenchement", docs/FBI.md) : le dump des champs de
+       * formulaire n'incluait pas les boutons, impossible de vérifier que
+       * `searchSubmitControl` visait le bon.
        */
       const submit = selectors.searchSubmitControl(page).first();
-      if ((await submit.count().catch(() => 0)) > 0) {
+      const submitCount = await submit.count().catch(() => 0);
+      const submitText = submitCount > 0 ? ((await submit.textContent().catch(() => null))?.trim() ?? "?") : null;
+      if (submitCount > 0) {
         await submit.click();
       } else {
         await input.press("Enter");
       }
 
+      /**
+       * Attente réseau EN PLUS du délai fixe (§ "Vingtième déclenchement",
+       * docs/FBI.md) : les noms de champs réels
+       * (`identificationForm.identificationBean...`,
+       * `rechercheRencontreSaisieResultatForm...`) évoquent une appli Java
+       * legacy (JSF), où un bouton peut soumettre en AJAX (XHR patchant le
+       * DOM en place, sans navigation ni changement d'URL) plutôt qu'en
+       * rechargement de page classique — un délai fixe de 500ms pourrait
+       * ne pas suffire à un aller-retour serveur réel en production.
+       * Best-effort : `networkidle` peut ne jamais être atteint sur une
+       * page avec du polling, d'où le timeout court et le `catch`.
+       */
       await this.settle(page);
+      await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+
       const urlAfter = page.url();
+      const submitNote = submitText ? ` (bouton "${submitText}" cliqué)` : " (aucun bouton trouvé, Entrée pressée)";
       return urlAfter === urlBefore
-        ? `champ "${inputName}" rempli ("${matchNumber}") et recherche soumise, mais l'URL n'a pas changé (${urlAfter})`
-        : `champ "${inputName}" rempli et recherche soumise, url → ${urlAfter}`;
+        ? `champ "${inputName}" rempli ("${matchNumber}") et recherche soumise${submitNote}, mais l'URL n'a pas changé (${urlAfter})`
+        : `champ "${inputName}" rempli et recherche soumise${submitNote}, url → ${urlAfter}`;
     } catch (error) {
       return `champ de recherche "${inputName}" trouvé mais le remplissage/la soumission a échoué : ${error instanceof Error ? error.message : String(error)}`;
     }

@@ -143,7 +143,16 @@ export interface FormFieldSnapshot {
  * RÉEL de chaque champ du formulaire.
  */
 export async function listFormFields(page: Page, limit = 40): Promise<FormFieldSnapshot[]> {
-  const fields = page.locator("form input, form select, form textarea");
+  /**
+   * Constaté en production le 2026-09-24 (§ "Vingtième déclenchement",
+   * docs/FBI.md) : ce dump n'incluait pas les `<button>` du formulaire —
+   * impossible donc de vérifier, sur une recherche restée sans résultat
+   * malgré une saison/case correctement ajustées, si `searchSubmitControl`
+   * a bien ciblé le VRAI bouton "RECHERCHER" plutôt qu'un autre bouton du
+   * même formulaire (réinitialiser, etc.). Les boutons sont maintenant
+   * inclus, avec leur texte visible comme "valeur".
+   */
+  const fields = page.locator("form input, form select, form textarea, form button");
   const count = Math.min(await fields.count().catch(() => 0), limit);
   const snapshots: FormFieldSnapshot[] = [];
 
@@ -157,6 +166,26 @@ export async function listFormFields(page: Page, limit = 40): Promise<FormFieldS
       const value = (await field.inputValue().catch(() => "")) ?? "";
       const selectedLabel = (await field.locator("option:checked").first().textContent().catch(() => null))?.trim();
       snapshots.push({ tag, name, value, selectedLabel });
+      continue;
+    }
+
+    if (tag === "button") {
+      const value = ((await field.textContent().catch(() => "")) ?? "").trim().replace(/\s+/g, " ");
+      snapshots.push({ tag, type, name, value });
+      continue;
+    }
+
+    /**
+     * Le `value` d'une checkbox/radio est sa valeur de SOUMISSION (ex :
+     * "true"), FIXE dans le markup — indépendante de son état coché ou
+     * non. La confondre avec l'état coché a induit en erreur au
+     * déclenchement précédent (dump montrant `nonJoue]="true"`, lu à tort
+     * comme "cochée" alors que ça ne prouvait rien). L'état RÉEL est lu
+     * via `isChecked()`.
+     */
+    if (type === "checkbox" || type === "radio") {
+      const checked = await field.isChecked().catch(() => false);
+      snapshots.push({ tag, type, name, value: checked ? "checked" : "unchecked" });
       continue;
     }
 
