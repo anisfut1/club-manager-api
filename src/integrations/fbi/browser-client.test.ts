@@ -187,6 +187,15 @@ describe("BrowserFbiClient.findEmarqueDocuments (§ 'Dix-huitième déclenchemen
     // mêmes 3 champs cachés que le vrai formulaire d'en-tête FBI) — le dump
     // doit venir du VRAI formulaire de recherche, jamais de celui-là.
     expect((error as Error).message).not.toContain("identificationEntete");
+    // Régression production 2026-09-24 (§ "Vingt-sixième déclenchement") :
+    // le vrai formulaire FBI fait ~43000 caractères (liste de divisions) —
+    // le dump plafonné du formulaire entier se coupe AVANT d'atteindre le
+    // bouton de recherche/le champ numéro. Un dump ciblé sur leur conteneur
+    // doit les inclure malgré la troncature du formulaire complet.
+    expect((error as Error).message).toContain("HTML autour du bouton de recherche");
+    expect((error as Error).message).toContain('name="numeroRencontre"');
+    expect((error as Error).message).toContain("RECHERCHER");
+    expect((error as Error).message).toContain("(tronqué"); // preuve que le formulaire complet dépasse bien la limite dans ce test
 
     await client.closeSession(session);
   });

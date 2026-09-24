@@ -476,3 +476,29 @@ export async function formHtmlSnippet(page: Page, maxLength = 4000): Promise<str
 
   return html.length > maxLength ? `${html.slice(0, maxLength)}… (tronqué, ${html.length} caractères au total)` : html;
 }
+
+/**
+ * Diagnostic — dump du HTML BRUT autour du bouton "Rechercher" et du champ
+ * numéro de rencontre spécifiquement, jamais le formulaire entier.
+ *
+ * Constaté en production le 2026-09-24 (§ "Vingt-sixième déclenchement",
+ * docs/FBI.md) : le vrai formulaire de recherche fait ~43000 caractères
+ * (le sélecteur "Division" seul liste des centaines d'`<option>`) —
+ * `formHtmlSnippet` (plafonné à 4000 caractères) se coupe systématiquement
+ * bien avant d'atteindre le bouton "Rechercher" ou le champ numéro,
+ * pourtant les deux éléments les plus pertinents pour comprendre pourquoi
+ * la recherche ne renvoie jamais de résultat. Cible directement leur
+ * conteneur ancêtre le plus proche (jamais tout le formulaire).
+ */
+export async function searchControlsHtmlSnippet(page: Page, maxLength = 3000): Promise<string> {
+  const button = searchSubmitControl(page).first();
+  if ((await button.count().catch(() => 0)) === 0) return "(bouton de recherche introuvable)";
+
+  const container = button.locator("xpath=ancestor::div[contains(concat(' ', normalize-space(@class), ' '), ' row ')][1]");
+  const target = (await container.count().catch(() => 0)) > 0 ? container : button;
+
+  const html = await target.evaluate((node) => node.outerHTML).catch(() => null);
+  if (!html) return "(HTML du bouton de recherche illisible)";
+
+  return html.length > maxLength ? `${html.slice(0, maxLength)}… (tronqué, ${html.length} caractères au total)` : html;
+}

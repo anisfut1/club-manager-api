@@ -1235,6 +1235,56 @@ décoy ajouté à la fixture `rechercher-rencontre.html` (avant le vrai
 formulaire, reproduisant exactement la structure de production) et une
 assertion que le dump NE contient PAS `identificationEntete`.
 
+**Vingt-sixième déclenchement — le dump du bon formulaire arrive enfin,
+mais tronqué à 4000 caractères sur un formulaire qui en fait ~43000 :
+révèle que c'est le widget jQuery `bootstrap-select`, mais se coupe
+avant d'atteindre le bouton "Rechercher".** Nouveau test sur les 3
+matchs isolés : le `formHtml` pour la rencontre n°1481 montre enfin le
+VRAI formulaire (`id="rechercheRencontreSaisieResultatForm"`,
+confirmé) — mais le sélecteur "Division" seul liste des centaines
+d'`<option>` (ex : "0034 - Coupes et tournois - CH U9M-2"...), poussant
+le formulaire bien au-delà de la limite de troncature AVANT même
+d'atteindre le champ numéro ou le bouton de recherche, plus loin dans
+le DOM.
+
+Ce dump confirme malgré tout une hypothèse en suspens depuis le
+Vingt-quatrième déclenchement : c'est le widget jQuery **bootstrap-select**
+(bibliothèque très répandue, bien documentée), pas un framework JS
+propriétaire exotique. Structure observée pour le `<select>` de saison :
+```html
+<div class="dropdown bootstrap-select ...">
+  <select name="...idSaison" id="idSaison" class="selectpicker ...">
+    <option value="1037" selected="selected">Saison 2026-2027</option>
+    <option value="1036">Saison 2025-2026</option>
+    ...
+  </select>
+  <button type="button" class="btn dropdown-toggle ..." title="Saison 2025-2026">...</button>
+  <div class="dropdown-menu">...</div>
+</div>
+```
+L'attribut HTML `selected="selected"` reste figé sur l'option par
+défaut d'origine (2026-2027) même après notre sélection — ARTEFACT
+CONNU du DOM (l'attribut HTML `selected` reflète le rendu initial côté
+serveur, jamais resynchronisé automatiquement par le navigateur après
+une sélection programmatique ; c'est la PROPRIÉTÉ `selected`, invisible
+dans un dump `outerHTML`, qui change réellement). Le bouton affichant
+bien "Saison 2025-2026" (sa valeur RÉELLEMENT affichée à l'écran, lue
+depuis le DOM live) est la preuve que `bootstrap-select` écoute
+correctement l'événement `change` du `<select>` natif et se resynchronise
+— la sélection de saison fonctionne donc réellement, contrairement à
+l'hypothèse "état JS jamais synchronisé" envisagée au déclenchement
+précédent.
+
+**Corrigé** : nouveau `selectors.searchControlsHtmlSnippet`, qui cible
+directement le conteneur `.row` le plus proche du bouton de recherche
+(`searchSubmitControl`) plutôt que le formulaire entier — inclus dans le
+message d'erreur ET le log "aucun document retenu", aux côtés du dump
+du formulaire complet (toujours utile pour les champs en amont comme la
+saison). Couvert par une fixture étendue avec ~150 `<option>` de
+remplissage (reproduisant la taille réelle) pour vérifier que le dump
+ciblé atteint bien le bouton "Rechercher" et le champ numéro malgré la
+troncature du formulaire complet.
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque

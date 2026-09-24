@@ -204,11 +204,21 @@ export class BrowserFbiClient {
        */
       const formHtml = await selectors.formHtmlSnippet(page);
 
+      /**
+       * Diagnostic riche (§ "Vingt-sixième déclenchement", docs/FBI.md) :
+       * le vrai formulaire fait ~43000 caractères (le sélecteur Division
+       * seul liste des centaines d'options) — `formHtml` (plafonné à 4000)
+       * se coupe systématiquement avant d'atteindre le bouton "Rechercher"
+       * ou le champ numéro, pourtant les éléments les plus pertinents ici.
+       */
+      const searchControlsHtml = await selectors.searchControlsHtmlSnippet(page);
+
       throw new FbiError(
         `Page de résultat introuvable pour la rencontre ${matchNumber} : ni la recherche ni l'ouverture du résultat n'ont abouti (page actuelle : "${title}", ${page.url()}). ` +
           `Trace de navigation : [1] ${trace[0]} — [2] ${trace[1]} — [3] ${trace[2]} — [4] ${trace[3]}. ` +
           `Champs de formulaire sur cette page : ${formFieldsSummary}. ` +
           `Liens visibles sur cette page : ${linksSummary}. ` +
+          `HTML autour du bouton de recherche : ${searchControlsHtml}. ` +
           `HTML du formulaire : ${formHtml}`,
         "EMARQUE_MATCH_PAGE_NOT_REACHED",
       );
@@ -238,6 +248,7 @@ export class BrowserFbiClient {
           ? formFields.map((f) => (f.tag === "select" ? `select[name=${f.name}]="${f.selectedLabel ?? f.value}"` : `${f.tag}[type=${f.type ?? "?"},name=${f.name}]="${f.value}"`)).join(" | ")
           : "(aucun champ de formulaire trouvé sur la page)";
       const formHtml = await selectors.formHtmlSnippet(page);
+      const searchControlsHtml = await selectors.searchControlsHtmlSnippet(page);
       logInfo(`Job discover_emarque : page confirmée pour la rencontre ${matchNumber} mais aucun document retenu après filtrage`, {
         matchNumber,
         title,
@@ -245,6 +256,7 @@ export class BrowserFbiClient {
         trace,
         visibleLinks: linksSummary,
         formFields: formFieldsSummary,
+        searchControlsHtml,
         formHtml,
       });
     }

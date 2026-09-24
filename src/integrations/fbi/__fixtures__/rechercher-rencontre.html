@@ -9,8 +9,170 @@
     <form>
       <label>Saison <select name="idSaison"><option value="12">Saison 2025-2026</option><option value="13" selected>Saison 2026-2027</option></select></label>
       <label><input type="checkbox" id="nonJoueCheck" class="fbi-checkbox" name="rechercheRencontreSaisieResultatForm.rechercherRencontreSaisieResultatBean.nonJoue" value="true" checked /> Non joué</label>
-      <label>N° Rencontre <input type="text" name="numeroRencontre" /></label>
-      <button type="submit">RECHERCHER</button>
+      <!--
+        Bloc de remplissage reproduisant la taille réelle du formulaire FBI
+        (~43000 caractères, essentiellement la liste des divisions) —
+        constaté en production le 2026-09-24 (§ "Vingt-sixième
+        déclenchement", docs/FBI.md) : formHtmlSnippet (plafonné à 4000
+        caractères) se coupe avant d'atteindre le bouton RECHERCHER.
+      -->
+      <select name="idDivision" style="display:none">
+        <option value="">Division</option>
+        <option value="1">Division 1 - Some Long Descriptive Label For Padding</option>
+<option value="2">Division 2 - Some Long Descriptive Label For Padding</option>
+<option value="3">Division 3 - Some Long Descriptive Label For Padding</option>
+<option value="4">Division 4 - Some Long Descriptive Label For Padding</option>
+<option value="5">Division 5 - Some Long Descriptive Label For Padding</option>
+<option value="6">Division 6 - Some Long Descriptive Label For Padding</option>
+<option value="7">Division 7 - Some Long Descriptive Label For Padding</option>
+<option value="8">Division 8 - Some Long Descriptive Label For Padding</option>
+<option value="9">Division 9 - Some Long Descriptive Label For Padding</option>
+<option value="10">Division 10 - Some Long Descriptive Label For Padding</option>
+<option value="11">Division 11 - Some Long Descriptive Label For Padding</option>
+<option value="12">Division 12 - Some Long Descriptive Label For Padding</option>
+<option value="13">Division 13 - Some Long Descriptive Label For Padding</option>
+<option value="14">Division 14 - Some Long Descriptive Label For Padding</option>
+<option value="15">Division 15 - Some Long Descriptive Label For Padding</option>
+<option value="16">Division 16 - Some Long Descriptive Label For Padding</option>
+<option value="17">Division 17 - Some Long Descriptive Label For Padding</option>
+<option value="18">Division 18 - Some Long Descriptive Label For Padding</option>
+<option value="19">Division 19 - Some Long Descriptive Label For Padding</option>
+<option value="20">Division 20 - Some Long Descriptive Label For Padding</option>
+<option value="21">Division 21 - Some Long Descriptive Label For Padding</option>
+<option value="22">Division 22 - Some Long Descriptive Label For Padding</option>
+<option value="23">Division 23 - Some Long Descriptive Label For Padding</option>
+<option value="24">Division 24 - Some Long Descriptive Label For Padding</option>
+<option value="25">Division 25 - Some Long Descriptive Label For Padding</option>
+<option value="26">Division 26 - Some Long Descriptive Label For Padding</option>
+<option value="27">Division 27 - Some Long Descriptive Label For Padding</option>
+<option value="28">Division 28 - Some Long Descriptive Label For Padding</option>
+<option value="29">Division 29 - Some Long Descriptive Label For Padding</option>
+<option value="30">Division 30 - Some Long Descriptive Label For Padding</option>
+<option value="31">Division 31 - Some Long Descriptive Label For Padding</option>
+<option value="32">Division 32 - Some Long Descriptive Label For Padding</option>
+<option value="33">Division 33 - Some Long Descriptive Label For Padding</option>
+<option value="34">Division 34 - Some Long Descriptive Label For Padding</option>
+<option value="35">Division 35 - Some Long Descriptive Label For Padding</option>
+<option value="36">Division 36 - Some Long Descriptive Label For Padding</option>
+<option value="37">Division 37 - Some Long Descriptive Label For Padding</option>
+<option value="38">Division 38 - Some Long Descriptive Label For Padding</option>
+<option value="39">Division 39 - Some Long Descriptive Label For Padding</option>
+<option value="40">Division 40 - Some Long Descriptive Label For Padding</option>
+<option value="41">Division 41 - Some Long Descriptive Label For Padding</option>
+<option value="42">Division 42 - Some Long Descriptive Label For Padding</option>
+<option value="43">Division 43 - Some Long Descriptive Label For Padding</option>
+<option value="44">Division 44 - Some Long Descriptive Label For Padding</option>
+<option value="45">Division 45 - Some Long Descriptive Label For Padding</option>
+<option value="46">Division 46 - Some Long Descriptive Label For Padding</option>
+<option value="47">Division 47 - Some Long Descriptive Label For Padding</option>
+<option value="48">Division 48 - Some Long Descriptive Label For Padding</option>
+<option value="49">Division 49 - Some Long Descriptive Label For Padding</option>
+<option value="50">Division 50 - Some Long Descriptive Label For Padding</option>
+<option value="51">Division 51 - Some Long Descriptive Label For Padding</option>
+<option value="52">Division 52 - Some Long Descriptive Label For Padding</option>
+<option value="53">Division 53 - Some Long Descriptive Label For Padding</option>
+<option value="54">Division 54 - Some Long Descriptive Label For Padding</option>
+<option value="55">Division 55 - Some Long Descriptive Label For Padding</option>
+<option value="56">Division 56 - Some Long Descriptive Label For Padding</option>
+<option value="57">Division 57 - Some Long Descriptive Label For Padding</option>
+<option value="58">Division 58 - Some Long Descriptive Label For Padding</option>
+<option value="59">Division 59 - Some Long Descriptive Label For Padding</option>
+<option value="60">Division 60 - Some Long Descriptive Label For Padding</option>
+<option value="61">Division 61 - Some Long Descriptive Label For Padding</option>
+<option value="62">Division 62 - Some Long Descriptive Label For Padding</option>
+<option value="63">Division 63 - Some Long Descriptive Label For Padding</option>
+<option value="64">Division 64 - Some Long Descriptive Label For Padding</option>
+<option value="65">Division 65 - Some Long Descriptive Label For Padding</option>
+<option value="66">Division 66 - Some Long Descriptive Label For Padding</option>
+<option value="67">Division 67 - Some Long Descriptive Label For Padding</option>
+<option value="68">Division 68 - Some Long Descriptive Label For Padding</option>
+<option value="69">Division 69 - Some Long Descriptive Label For Padding</option>
+<option value="70">Division 70 - Some Long Descriptive Label For Padding</option>
+<option value="71">Division 71 - Some Long Descriptive Label For Padding</option>
+<option value="72">Division 72 - Some Long Descriptive Label For Padding</option>
+<option value="73">Division 73 - Some Long Descriptive Label For Padding</option>
+<option value="74">Division 74 - Some Long Descriptive Label For Padding</option>
+<option value="75">Division 75 - Some Long Descriptive Label For Padding</option>
+<option value="76">Division 76 - Some Long Descriptive Label For Padding</option>
+<option value="77">Division 77 - Some Long Descriptive Label For Padding</option>
+<option value="78">Division 78 - Some Long Descriptive Label For Padding</option>
+<option value="79">Division 79 - Some Long Descriptive Label For Padding</option>
+<option value="80">Division 80 - Some Long Descriptive Label For Padding</option>
+<option value="81">Division 81 - Some Long Descriptive Label For Padding</option>
+<option value="82">Division 82 - Some Long Descriptive Label For Padding</option>
+<option value="83">Division 83 - Some Long Descriptive Label For Padding</option>
+<option value="84">Division 84 - Some Long Descriptive Label For Padding</option>
+<option value="85">Division 85 - Some Long Descriptive Label For Padding</option>
+<option value="86">Division 86 - Some Long Descriptive Label For Padding</option>
+<option value="87">Division 87 - Some Long Descriptive Label For Padding</option>
+<option value="88">Division 88 - Some Long Descriptive Label For Padding</option>
+<option value="89">Division 89 - Some Long Descriptive Label For Padding</option>
+<option value="90">Division 90 - Some Long Descriptive Label For Padding</option>
+<option value="91">Division 91 - Some Long Descriptive Label For Padding</option>
+<option value="92">Division 92 - Some Long Descriptive Label For Padding</option>
+<option value="93">Division 93 - Some Long Descriptive Label For Padding</option>
+<option value="94">Division 94 - Some Long Descriptive Label For Padding</option>
+<option value="95">Division 95 - Some Long Descriptive Label For Padding</option>
+<option value="96">Division 96 - Some Long Descriptive Label For Padding</option>
+<option value="97">Division 97 - Some Long Descriptive Label For Padding</option>
+<option value="98">Division 98 - Some Long Descriptive Label For Padding</option>
+<option value="99">Division 99 - Some Long Descriptive Label For Padding</option>
+<option value="100">Division 100 - Some Long Descriptive Label For Padding</option>
+<option value="101">Division 101 - Some Long Descriptive Label For Padding</option>
+<option value="102">Division 102 - Some Long Descriptive Label For Padding</option>
+<option value="103">Division 103 - Some Long Descriptive Label For Padding</option>
+<option value="104">Division 104 - Some Long Descriptive Label For Padding</option>
+<option value="105">Division 105 - Some Long Descriptive Label For Padding</option>
+<option value="106">Division 106 - Some Long Descriptive Label For Padding</option>
+<option value="107">Division 107 - Some Long Descriptive Label For Padding</option>
+<option value="108">Division 108 - Some Long Descriptive Label For Padding</option>
+<option value="109">Division 109 - Some Long Descriptive Label For Padding</option>
+<option value="110">Division 110 - Some Long Descriptive Label For Padding</option>
+<option value="111">Division 111 - Some Long Descriptive Label For Padding</option>
+<option value="112">Division 112 - Some Long Descriptive Label For Padding</option>
+<option value="113">Division 113 - Some Long Descriptive Label For Padding</option>
+<option value="114">Division 114 - Some Long Descriptive Label For Padding</option>
+<option value="115">Division 115 - Some Long Descriptive Label For Padding</option>
+<option value="116">Division 116 - Some Long Descriptive Label For Padding</option>
+<option value="117">Division 117 - Some Long Descriptive Label For Padding</option>
+<option value="118">Division 118 - Some Long Descriptive Label For Padding</option>
+<option value="119">Division 119 - Some Long Descriptive Label For Padding</option>
+<option value="120">Division 120 - Some Long Descriptive Label For Padding</option>
+<option value="121">Division 121 - Some Long Descriptive Label For Padding</option>
+<option value="122">Division 122 - Some Long Descriptive Label For Padding</option>
+<option value="123">Division 123 - Some Long Descriptive Label For Padding</option>
+<option value="124">Division 124 - Some Long Descriptive Label For Padding</option>
+<option value="125">Division 125 - Some Long Descriptive Label For Padding</option>
+<option value="126">Division 126 - Some Long Descriptive Label For Padding</option>
+<option value="127">Division 127 - Some Long Descriptive Label For Padding</option>
+<option value="128">Division 128 - Some Long Descriptive Label For Padding</option>
+<option value="129">Division 129 - Some Long Descriptive Label For Padding</option>
+<option value="130">Division 130 - Some Long Descriptive Label For Padding</option>
+<option value="131">Division 131 - Some Long Descriptive Label For Padding</option>
+<option value="132">Division 132 - Some Long Descriptive Label For Padding</option>
+<option value="133">Division 133 - Some Long Descriptive Label For Padding</option>
+<option value="134">Division 134 - Some Long Descriptive Label For Padding</option>
+<option value="135">Division 135 - Some Long Descriptive Label For Padding</option>
+<option value="136">Division 136 - Some Long Descriptive Label For Padding</option>
+<option value="137">Division 137 - Some Long Descriptive Label For Padding</option>
+<option value="138">Division 138 - Some Long Descriptive Label For Padding</option>
+<option value="139">Division 139 - Some Long Descriptive Label For Padding</option>
+<option value="140">Division 140 - Some Long Descriptive Label For Padding</option>
+<option value="141">Division 141 - Some Long Descriptive Label For Padding</option>
+<option value="142">Division 142 - Some Long Descriptive Label For Padding</option>
+<option value="143">Division 143 - Some Long Descriptive Label For Padding</option>
+<option value="144">Division 144 - Some Long Descriptive Label For Padding</option>
+<option value="145">Division 145 - Some Long Descriptive Label For Padding</option>
+<option value="146">Division 146 - Some Long Descriptive Label For Padding</option>
+<option value="147">Division 147 - Some Long Descriptive Label For Padding</option>
+<option value="148">Division 148 - Some Long Descriptive Label For Padding</option>
+<option value="149">Division 149 - Some Long Descriptive Label For Padding</option>
+
+      </select>
+      <div class="row">
+        <label>N° Rencontre <input type="text" name="numeroRencontre" /></label>
+        <button type="submit">RECHERCHER</button>
+      </div>
     </form>
     <table>
       <thead>
