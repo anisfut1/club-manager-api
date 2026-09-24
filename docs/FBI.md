@@ -1483,6 +1483,91 @@ un report quasi verbatim", docs/EMARQUE.md) sans qu'aucun document réel
 n'ait jamais auparavant atteint cette étape en production sur
 `club-manager-api` pour révéler ces deux angles morts de la migration.
 
+**Trente-et-unième déclenchement — le premier vrai document "résumé" de
+production révèle deux bugs dans la calibration des zones OCR (jamais
+dans FBI lui-même) : un décalage de ligne complet, et une fragilité de
+lecture ligne-entière déjà identifiée en théorie mais jamais mesurée sur
+un vrai document.** Le club a fourni directement le PDF `resume_*.pdf` de
+la rencontre n°1481 (le pipeline correctif précédent l'avait bien
+téléchargé et parsé, mais l'onglet "Statistiques" affichait des valeurs
+clairement fausses — un joueur avec 101 points, des champs manquants). Ce
+PDF réel a permis, pour la première fois, de calibrer `resume-layout.ts`
+contre de vraies coordonnées pixel (détection automatique des lignes de
+grille sur le rendu produit par notre propre pipeline, vérifiée en
+superposant les lignes détectées sur l'image d'origine et en OCR-ant
+isolément des cellules choisies) plutôt que par estimation visuelle ou
+symétrie, comme documenté depuis l'origine (`resume-layout.ts` :
+"Équipe B... coordonnées estimées par symétrie... confiance plus
+faible").
+
+Deux bugs distincts confirmés :
+
+1. **Décalage de ligne complet sur l'équipe LOCAUX.** `rowTop: 748` avait
+   été calibré visuellement comme "le bas de l'en-tête" — en réalité l'
+   en-tête s'étend plus haut, et 748 tombe déjà sur le DEUXIÈME joueur.
+   Conséquence : le premier joueur de CHAQUE relevé "résumé" LOCAUX
+   disparaissait entièrement (jamais un champ faux : la ligne entière
+   n'était jamais lue). Confirmé en isolant la cellule maillot à
+   `y=685` : lecture OCR "1" (le bon joueur), jamais "4" (lu à `y=752`,
+   l'ancien calibrage). L'équipe VISITEURS n'avait PAS ce décalage
+   (vérifié de la même façon : `y=2064` lit bien "4", le bon premier
+   visiteur).
+2. **Lecture ligne entière + `extractTrailingIntegers` : le bug
+   théorique du "Trentième déclenchement" (implicite dans le commentaire
+   du fichier) est confirmé sur un vrai document.** La ligne entière
+   d'un joueur (numéro + nom + temps de jeu + 7 statistiques) est lue en
+   UN SEUL appel OCR, puis les 7 derniers nombres entiers de cette
+   chaîne sont supposés être les 7 statistiques — mais le numéro de
+   maillot ET le temps de jeu ("23:35" contribue déjà "23" et "35" comme
+   entiers isolés) contribuent des entiers AVANT les vraies statistiques.
+   Dès qu'UN SEUL chiffre est mal lu n'importe où dans la ligne (très
+   probable sur une ligne aussi large — jusqu'à 2400px), TOUTES les
+   statistiques de cette ligne se décalent silencieusement. C'est
+   précisément ce qui produisait des valeurs absurdes (101 points) et
+   des champs vides signalés par le club.
+
+**Corrigé** :
+- `resume-layout.ts` : `rowTop` de l'équipe LOCAUX passé de 748 à 681
+  (vérifié par lecture OCR isolée, jamais réestimé à l'œil), colonnes X
+  mesurées précisément pour les 11 colonnes du tableau (maillot, nom,
+  titulaire, temps, et les 7 statistiques).
+- `parse-resume.ts` : chaque colonne est désormais lue par un appel OCR
+  SÉPARÉ (`extractSingleInteger`, jamais `extractTrailingIntegers` sur la
+  ligne entière) — un chiffre mal lu n'affecte plus que SA colonne,
+  jamais les 10 autres champs de la ligne. Appels toujours séquentiels
+  (jamais `Promise.all`, voir le commentaire dans `parse-feuillematch.ts`
+  sur la corruption constatée en développement avec des appels
+  concurrents sur un même worker OCR partagé).
+- `PdfRasterOcrExtractor.extractZone` : nouvelle option
+  `expectDigitsOnly` — si la première passe OCR (réglages par défaut) ne
+  trouve AUCUN chiffre sur une cellule censée être numérique, une seconde
+  passe (agrandissement 2×, alphabet restreint aux chiffres) est
+  tentée. Mesuré sur un échantillon de 120 cellules réelles (13 joueurs ×
+  ~9 champs) : 71,7 % de cellules correctes avant tout correctif, 83,3 %
+  avec la seule correction "O"/"o" isolé → "0" (confusion OCR
+  systématique : 14 occurrences sur 14 dans l'échantillon), 89,2 % avec
+  la seconde passe. Restant : quelques cellules restent honnêtement
+  `null` (jamais une valeur devinée, voir `extractSingleInteger`) plutôt
+  que fausses — cohérent avec le principe déjà affiché côté frontend
+  ("« — » signifie une donnée non lue avec certitude, jamais une valeur
+  nulle supposée").
+- `text-fields.ts` : nouvelle fonction `extractSingleInteger` (une seule
+  cellule isolée, jamais une ligne entière), avec la correction "O"/"o" →
+  "0" intégrée.
+- Premier test de ce module contre un VRAI document (`parse-resume.test.ts`,
+  fixture `__fixtures__/resume-1481.pdf`, fournie directement par le
+  club) — jusqu'ici uniquement testé manuellement pendant le
+  développement (voir `docs/FBI_AUTHENTICATED_SPIKE.md`), jamais en CI.
+
+Limite connue, acceptée plutôt que sur-corrigée : un nombre à deux
+chiffres avec un chiffre répété (ex : "11") est parfois lu comme un seul
+chiffre par la première passe OCR (une valeur non-null mais fausse,
+jamais détectée par le mécanisme de repli qui ne se déclenche que sur une
+cellule totalement illisible) — constaté sur un seul joueur de
+l'échantillon réel. Corriger ce cas précis demanderait une heuristique
+supplémentaire non justifiée par une seule occurrence ; le principe
+directeur reste `null` plutôt qu'une valeur devinée pour tout le reste.
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque

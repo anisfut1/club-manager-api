@@ -2,41 +2,52 @@ import type { DocumentExtractor } from "../extractors/types.js";
 import { RESUME_STATS_TABLE } from "../layout/resume-layout.js";
 import {
   extractJerseyNumber,
-  extractTrailingIntegers,
+  extractSingleInteger,
   hasCheckMark,
   parseMinutesSecondsToSeconds,
+  splitCommaSeparatedName,
 } from "../normalizers/text-fields.js";
 import type { EMarquePlayerStat, TeamSide } from "../types.js";
-
-const STAT_COLUMN_COUNT = 7; // Pts, Tirs, 3pts, 2Int, 2Ext, LF, Fautes
 
 export interface ResumeRowResult extends EMarquePlayerStat {
   isStarter: boolean;
 }
 
-async function readTeamStats(
-  extractor: DocumentExtractor,
-  teamSide: TeamSide,
-  config: { rowTop: number; rowHeight: number; columnZone: (row: number) => import("../extractors/types.js").ZoneFraction },
-): Promise<ResumeRowResult[]> {
+interface TeamConfig {
+  rowTop: number;
+  rowHeight: number;
+  cellZone: (row: number, column: import("../layout/resume-layout.js").ResumeStatColumn) => import("../extractors/types.js").ZoneFraction;
+}
+
+/**
+ * Lit chaque colonne d'une ligne SÉPARÉMENT (voir `resume-layout.ts` et
+ * `extractSingleInteger`) plutôt que la ligne entière en un seul appel OCR
+ * suivi d'une tentative de découpage par regex — corrigé en production le
+ * 2026-09-24 (rencontre n°1481, § "Trente-et-unième déclenchement",
+ * docs/FBI.md) après avoir constaté qu'un seul chiffre mal lu N'IMPORTE OÙ
+ * dans la ligne entière (le numéro de maillot, le temps de jeu "23:35" qui
+ * contribue déjà deux entiers parasites...) décalait TOUTES les statistiques
+ * de la ligne, silencieusement. Chaque cellule isolée ne peut plus affecter
+ * que sa propre valeur.
+ */
+async function readRow(extractor: DocumentExtractor, team: TeamConfig, row: number): Promise<{ jerseyText: string; jerseyNumber: string | null }> {
+  const { text } = await extractor.extractZone(1, team.cellZone(row, "jerseyNumber"), { expectDigitsOnly: true });
+  return { jerseyText: text, jerseyNumber: extractJerseyNumber(text) };
+}
+
+async function readTeamStats(extractor: DocumentExtractor, teamSide: TeamSide, team: TeamConfig): Promise<ResumeRowResult[]> {
   const rows: ResumeRowResult[] = [];
   let consecutiveUnreadable = 0;
 
   for (let row = 0; row < RESUME_STATS_TABLE.maxRows; row++) {
-    const { text } = await extractor.extractZone(1, config.columnZone(row));
+    // Le numéro de maillot sert de "porte d'entrée" : une ligne vide du
+    // gabarit (lignes de réserve non utilisées par ce match, voir le
+    // document réel) ou une ligne de synthèse ("Total Équipe"...) n'a pas
+    // de numéro de maillot valide — inutile de payer le coût des 10 autres
+    // appels OCR de cette ligne dans ce cas.
+    const { jerseyNumber } = await readRow(extractor, team, row);
 
-    if (RESUME_STATS_TABLE.stopTextPattern.test(text)) break;
-
-    const jerseyNumber = extractJerseyNumber(text);
-    const timeMatch = text.match(/\d{1,3}:\d{2}/);
-    const secondsPlayed = timeMatch ? parseMinutesSecondsToSeconds(timeMatch[0]) : null;
-    const stats = extractTrailingIntegers(text, STAT_COLUMN_COUNT);
-
-    // Une ligne "réelle" a un maillot ET au moins un autre signal (temps de
-    // jeu ou statistiques) — un maillot isolé sans rien d'autre est très
-    // probablement un artefact OCR sur une ligne vide du tableau (bordures
-    // de cellule mal interprétées), pas un vrai joueur.
-    if (!jerseyNumber || (secondsPlayed === null && stats === null)) {
+    if (!jerseyNumber) {
       if (rows.length > 0) {
         consecutiveUnreadable += 1;
         if (consecutiveUnreadable >= 2) break;
@@ -45,20 +56,39 @@ async function readTeamStats(
     }
     consecutiveUnreadable = 0;
 
+    // Appels SÉQUENTIELS (jamais Promise.all) : voir le commentaire
+    // équivalent dans parse-feuillematch.ts — un même extracteur partage un
+    // rendu de page et un worker OCR uniques (PdfRasterOcrExtractor), des
+    // appels concurrents s'y sont révélés source de résultats corrompus
+    // pendant le développement (mélange de zones entre appels concurrents).
+    const nameText = (await extractor.extractZone(1, team.cellZone(row, "name"))).text;
+    const starterText = (await extractor.extractZone(1, team.cellZone(row, "starter"))).text;
+    const timeText = (await extractor.extractZone(1, team.cellZone(row, "secondsPlayed"), { expectDigitsOnly: true })).text;
+    const pointsText = (await extractor.extractZone(1, team.cellZone(row, "points"), { expectDigitsOnly: true })).text;
+    const shotsMadeText = (await extractor.extractZone(1, team.cellZone(row, "shotsMade"), { expectDigitsOnly: true })).text;
+    const threePointsText = (await extractor.extractZone(1, team.cellZone(row, "threePointsMade"), { expectDigitsOnly: true })).text;
+    const twoIntText = (await extractor.extractZone(1, team.cellZone(row, "twoPointsInteriorMade"), { expectDigitsOnly: true })).text;
+    const twoExtText = (await extractor.extractZone(1, team.cellZone(row, "twoPointsExteriorMade"), { expectDigitsOnly: true })).text;
+    const freeThrowsText = (await extractor.extractZone(1, team.cellZone(row, "freeThrowsMade"), { expectDigitsOnly: true })).text;
+    const foulsText = (await extractor.extractZone(1, team.cellZone(row, "foulsCommitted"), { expectDigitsOnly: true })).text;
+
+    const { lastName, firstName } = splitCommaSeparatedName(nameText);
+    const timeMatch = timeText.match(/\d{1,3}:\d{2}/);
+
     rows.push({
       teamSide,
       jerseyNumber,
-      lastName: null,
-      firstName: null,
-      isStarter: hasCheckMark(text.split(jerseyNumber)[1]?.slice(0, 20) ?? ""),
-      secondsPlayed,
-      points: stats?.[0] ?? null,
-      shotsMade: stats?.[1] ?? null,
-      threePointsMade: stats?.[2] ?? null,
-      twoPointsInteriorMade: stats?.[3] ?? null,
-      twoPointsExteriorMade: stats?.[4] ?? null,
-      freeThrowsMade: stats?.[5] ?? null,
-      foulsCommitted: stats?.[6] ?? null,
+      lastName,
+      firstName,
+      isStarter: hasCheckMark(starterText),
+      secondsPlayed: timeMatch ? parseMinutesSecondsToSeconds(timeMatch[0]) : null,
+      points: extractSingleInteger(pointsText),
+      shotsMade: extractSingleInteger(shotsMadeText),
+      threePointsMade: extractSingleInteger(threePointsText),
+      twoPointsInteriorMade: extractSingleInteger(twoIntText),
+      twoPointsExteriorMade: extractSingleInteger(twoExtText),
+      freeThrowsMade: extractSingleInteger(freeThrowsText),
+      foulsCommitted: extractSingleInteger(foulsText),
     });
   }
 

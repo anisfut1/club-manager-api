@@ -42,7 +42,7 @@ export class PdfTextExtractor implements DocumentExtractor {
     return text;
   }
 
-  async extractZone(pageNumber: number, _zone: ZoneFraction): Promise<ExtractedText> {
+  async extractZone(pageNumber: number, _zone: ZoneFraction, _options?: import("./types.js").ExtractZoneOptions): Promise<ExtractedText> {
     const text = await this.getPageText(pageNumber);
     return { text, confidence: text ? 100 : 0 };
   }

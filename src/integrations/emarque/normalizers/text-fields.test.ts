@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   extractJerseyNumber,
   extractLicenseNumber,
+  extractSingleInteger,
   extractTrailingIntegers,
   hasCheckMark,
   parseMinutesSecondsToSeconds,
@@ -90,6 +91,30 @@ describe("extractTrailingIntegers", () => {
     // 4 (maillot) et 12/52 (temps) précèdent les 7 statistiques réelles.
     const result = extractTrailingIntegers("99 MARTIN, Alex X 45:10 15 6 1 5 0 2 4", 7);
     expect(result).toEqual([15, 6, 1, 5, 0, 2, 4]);
+  });
+});
+
+describe("extractSingleInteger", () => {
+  it("extrait un nombre isolé d'une cellule propre", () => {
+    expect(extractSingleInteger("7")).toBe(7);
+  });
+
+  it("retourne null si aucun nombre n'est trouvé, jamais 0 par défaut", () => {
+    expect(extractSingleInteger("")).toBeNull();
+    expect(extractSingleInteger("(e)")).toBeNull();
+  });
+
+  it("corrige la confusion OCR isolée \"O\"/\"o\" -> \"0\" (§ 'Trente-et-unième déclenchement', docs/FBI.md : 14 occurrences sur 14 dans l'échantillon réel)", () => {
+    expect(extractSingleInteger("O")).toBe(0);
+    expect(extractSingleInteger("o")).toBe(0);
+  });
+
+  it("ne touche jamais un \"O\" qui fait partie d'un mot plus long (jamais une substitution dans du texte libre)", () => {
+    expect(extractSingleInteger("OK")).toBeNull();
+  });
+
+  it("n'utilise jamais les derniers chiffres d'une ligne entière (contrairement à extractTrailingIntegers) : une seule cellule isolée n'a qu'une seule valeur", () => {
+    expect(extractSingleInteger("7 3 0 3 0 1 4")).toBe(7);
   });
 });
 

@@ -1,8 +1,8 @@
 import path from "node:path";
-import { createCanvas, type Canvas } from "@napi-rs/canvas";
+import { createCanvas, loadImage, type Canvas } from "@napi-rs/canvas";
 import { createWorker, PSM, type Worker } from "tesseract.js";
 import { loadPdfjs } from "./pdfjs-loader.js";
-import type { DocumentExtractor, ExtractedText, ZoneFraction } from "./types.js";
+import type { DocumentExtractor, ExtractedText, ExtractZoneOptions, ZoneFraction } from "./types.js";
 
 /**
  * Résolution de rendu. Calibré empiriquement (voir docs/
@@ -78,7 +78,7 @@ export class PdfRasterOcrExtractor implements DocumentExtractor {
     return canvas;
   }
 
-  async extractZone(pageNumber: number, zone: ZoneFraction): Promise<ExtractedText> {
+  async extractZone(pageNumber: number, zone: ZoneFraction, options?: ExtractZoneOptions): Promise<ExtractedText> {
     const pageCanvas = await this.getPageCanvas(pageNumber);
 
     const x = Math.round(zone.xFrac * pageCanvas.width);
@@ -90,9 +90,49 @@ export class PdfRasterOcrExtractor implements DocumentExtractor {
     cropped.getContext("2d").drawImage(pageCanvas, x, y, width, height, 0, 0, width, height);
 
     const worker = await this.getWorker();
-    const { data } = await worker.recognize(cropped.toBuffer("image/png"));
+    const primary = await worker.recognize(cropped.toBuffer("image/png"));
+    const primaryText = primary.data.text.trim();
 
-    return { text: data.text.trim(), confidence: data.confidence };
+    /**
+     * Seconde passe ciblée UNIQUEMENT sur une cellule censée être numérique
+     * (`expectDigitsOnly`) dont la première passe n'a trouvé AUCUN chiffre
+     * (jamais si un chiffre a déjà été trouvé, même incertain — voir la
+     * note ci-dessous) : mesuré en production (rencontre n°1481, §
+     * "Trente-et-unième déclenchement", docs/FBI.md) sur un échantillon de
+     * 120 cellules réelles, ce repli fait passer le taux de lecture
+     * correcte de 83,3 % à 89,2 %, en corrigeant notamment presque toutes
+     * les cellules à "0" (glyphe fin, souvent illisible à l'échelle de
+     * rendu normale) — jamais tenté EN PREMIER : appliquer d'emblée
+     * l'alphabet restreint aux chiffres dégrade la lecture d'un "1" isolé
+     * (le moteur LSTM semble avoir besoin du contexte non contraint pour
+     * ce glyphe précis, constaté sur le même échantillon).
+     */
+    if (options?.expectDigitsOnly && !/\d/.test(primaryText)) {
+      const upscale = 2;
+      const upscaled = createCanvas(cropped.width * upscale, cropped.height * upscale);
+      const upscaledCtx = upscaled.getContext("2d");
+      upscaledCtx.imageSmoothingEnabled = false;
+      const image = await loadImage(cropped.toBuffer("image/png"));
+      upscaledCtx.drawImage(image, 0, 0, upscaled.width, upscaled.height);
+
+      // ":" toléré (jamais imposé) même si cette cellule n'est pas la
+      // colonne "Tps de jeu" : inoffensif pour une cellule purement
+      // numérique (ne matchera jamais), évite un second flag dédié au
+      // format "mm:ss".
+      await worker.setParameters({ tessedit_char_whitelist: "0123456789:" });
+      const retry = await worker.recognize(upscaled.toBuffer("image/png"));
+      // Restaure IMMÉDIATEMENT l'alphabet libre : ce worker est PARTAGÉ et
+      // réutilisé séquentiellement pour toutes les zones suivantes (y
+      // compris du texte libre, ex. une colonne NOM Prénom) — un alphabet
+      // resté restreint aux chiffres corromprait silencieusement leur
+      // lecture.
+      await worker.setParameters({ tessedit_char_whitelist: "" });
+
+      const retryText = retry.data.text.trim();
+      if (/\d/.test(retryText)) return { text: retryText, confidence: retry.data.confidence };
+    }
+
+    return { text: primaryText, confidence: primary.data.confidence };
   }
 
   async dispose(): Promise<void> {

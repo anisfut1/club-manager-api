@@ -82,11 +82,43 @@ export function parseMinutesSecondsToSeconds(text: string): number | null {
  * toujours en fin de ligne sur ces documents). Retourne `null` (pas un
  * tableau de null) si moins de `count` nombres ont été trouvés : mieux vaut
  * abandonner toute la ligne que de risquer un décalage de colonne.
+ *
+ * Conservé pour un usage éventuel sur un texte multi-colonnes, mais
+ * `parse-resume.ts` ne l'utilise plus pour les statistiques par joueur —
+ * voir `extractSingleInteger`.
  */
 export function extractTrailingIntegers(text: string, count: number): number[] | null {
   const matches = [...text.matchAll(/\d{1,3}/g)].map((m) => Number(m[0]));
   if (matches.length < count) return null;
   return matches.slice(-count);
+}
+
+/**
+ * Extrait UN SEUL nombre entier (0 à 3 chiffres) d'un texte OCR — pour une
+ * cellule de tableau isolée (une colonne, une ligne), jamais une ligne
+ * entière. `null` si aucun nombre trouvé : jamais 0 par défaut (0 est une
+ * vraie valeur statistique, voir ARCHITECTURE.md §22).
+ *
+ * Constaté en production (rencontre n°1481, § "Trente-et-unième
+ * déclenchement", docs/FBI.md) : `extractTrailingIntegers` sur la ligne
+ * ENTIÈRE (nom + temps + 7 statistiques) se décale dès qu'UN SEUL chiffre
+ * est mal lu n'importe où dans la ligne (le numéro de maillot ou "23:35"
+ * contribuent déjà des entiers parasites avant même les vraies
+ * statistiques) — toutes les valeurs de la ligne deviennent alors fausses
+ * silencieusement. Une cellule OCR isolée et étroite n'a pas ce problème :
+ * un chiffre mal lu n'affecte plus que CETTE cellule.
+ *
+ * Substitution "O"/"o" isolé -> "0" AVANT la recherche de chiffres :
+ * confusion OCR connue et quasi systématique sur un "0" statistique isolé
+ * (14 occurrences sur 14 dans l'échantillon réel qui a servi à calibrer ce
+ * correctif) — jamais risquée dans du texte libre (un nom de famille peut
+ * légitimement contenir un vrai "O"), donc réservée à cette fonction,
+ * jamais appliquée en amont dans le texte brut d'une cellule non numérique.
+ */
+export function extractSingleInteger(text: string): number | null {
+  const normalized = text.replace(/\bO\b/g, "0").replace(/\bo\b/g, "0");
+  const match = normalized.match(/\d{1,3}/);
+  return match ? Number(match[0]) : null;
 }
 
 /** Un jersey/numéro de maillot valide est 1 à 2 chiffres (0-99). */

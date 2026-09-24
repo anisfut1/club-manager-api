@@ -125,6 +125,24 @@ l'inclusion de tout `node_modules/tesseract.js-core/` ainsi que de ce
 dossier — les deux catégories de fichiers lus dynamiquement par `fs`
 plutôt que par `require`/`import` statique.
 
+**Une fois le pipeline de parsing débloqué, le premier vrai document
+"résumé" de production a révélé deux bugs de calibration des zones OCR
+dans `resume-layout.ts`/`parse-resume.ts` (§ "Trente-et-unième
+déclenchement", docs/FBI.md, détail complet là-bas) :** un décalage de
+ligne complet (le premier joueur de l'équipe LOCAUX disparaissait
+entièrement d'un relevé "résumé"), et une lecture ligne-entière (numéro +
+nom + temps + 7 statistiques en un seul appel OCR) où un seul chiffre mal
+lu n'importe où dans la ligne décalait silencieusement toutes les
+statistiques. Corrigé : coordonnées re-calibrées pixel par pixel contre le
+document réel fourni par le club, chaque colonne lue par un appel OCR
+séparé (`extractSingleInteger`), et une seconde passe OCR ciblée
+(agrandissement + alphabet restreint aux chiffres) quand la première ne
+trouve aucun chiffre sur une cellule censée être numérique — taux de
+lecture correcte mesuré à 89,2 % sur cet échantillon (contre un pipeline
+essentiellement inutilisable avant, données décalées ou valeurs absurdes
+comme "101 points"). Premier test de ce module contre un vrai document
+(`parser/parse-resume.test.ts`, fixture `__fixtures__/resume-1481.pdf`).
+
 ## Cron
 
 `GET /internal/cron/emarque-parse` (toutes les 10 minutes, voir

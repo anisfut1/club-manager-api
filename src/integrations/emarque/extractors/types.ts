@@ -18,8 +18,19 @@ export interface ExtractedText {
   confidence: number;
 }
 
+export interface ExtractZoneOptions {
+  /**
+   * La zone est une cellule numérique isolée (jamais du texte libre) —
+   * permet à un extracteur OCR de tenter une seconde passe ciblée
+   * (agrandissement + alphabet restreint aux chiffres) si la première n'a
+   * trouvé aucun chiffre, voir `PdfRasterOcrExtractor`. Ignoré par
+   * `PdfTextExtractor` (texte natif, jamais besoin d'une seconde passe).
+   */
+  expectDigitsOnly?: boolean;
+}
+
 export interface DocumentExtractor {
   readonly name: string;
-  extractZone(pageNumber: number, zone: ZoneFraction): Promise<ExtractedText>;
+  extractZone(pageNumber: number, zone: ZoneFraction, options?: ExtractZoneOptions): Promise<ExtractedText>;
   dispose(): Promise<void>;
 }
