@@ -388,6 +388,58 @@ ENABLED=true` + `resetEnvCacheForTests()`, mock de
 `attemptBrowserFbiLogin`) : succès navigateur sans `jobId` dans la
 réponse, échec navigateur enregistré comme `last_error`.
 
+**Neuvième déclenchement — "et maintenant que FBI est connecté, ça me
+sert à quoi ? ça ne change rien alors que ça doit tout récupérer".**
+Question légitime : `POST .../fbi/test` (huitième déclenchement)
+prouve seulement que les identifiants FBI sont valides. La récupération
+RÉELLE des documents e-Marque (feuilles de match, compositions,
+statistiques) est un traitement séparé — les jobs `discover_emarque`
+(un par match, voir `process-discover-emarque.ts`), qui utilisent
+TOUJOURS `BrowserFbiClient` (jamais `HttpFbiClient` : `findEmarqueDocuments`
+n'a aucune implémentation HTTP directe, voir plus haut). Constaté en
+production le 2026-09-24 : 8 jobs `discover_emarque` (+ 2 `test_connection`,
+créés avant le huitième correctif) en attente depuis plus d'une journée,
+`claimed_at: null` — parce que ces jobs dépendent du même
+`/internal/cron/fbi-jobs` qui ne tourne qu'une fois par jour, la seule
+façon de les faire avancer plus tôt étant, jusqu'ici, le déclenchement
+manuel du dashboard Vercel — exactement ce que le club a demandé
+d'éviter au déclenchement précédent, mais qui ne concernait alors que le
+test de connexion, pas la file `discover_emarque`.
+
+**Corrigé** : nouvelle route `POST .../fbi/process-jobs`
+(`club_admin`), traitant DANS LA REQUÊTE un petit lot (`CLUB_JOB_BATCH_SIZE
+= 3`, même taille que le cron) des jobs FBI en attente **de ce club
+uniquement**. Nouvelle fonction SQL `claim_next_fbi_job_for_club(p_club_id,
+p_worker_id)` (migration `20260924100000_fbi_jobs_claim_for_club.sql`),
+copie de `claim_next_fbi_job` avec un filtre `club_id = p_club_id` en
+plus — nécessaire car `claim_next_fbi_job` réclame GLOBALEMENT (n'importe
+quel club) : l'exposer tel quel depuis une route `/v1/clubs/:clubId/*`
+aurait traité les jobs d'un AUTRE club à l'insu de l'appelant. Même
+politique d'accès que l'original (`revoke all ... from public, anon,
+authenticated` — service role uniquement, depuis le code serveur, après
+que `requireClubRole("club_admin")` a vérifié le rôle).
+
+La logique de réclamation+dispatch (réclamer jusqu'à `batchSize` jobs,
+`import()` dynamique de `processTestConnectionJob`/`processDiscoverEmarqueJob`
+selon `job.type`, comptage `claimed/succeeded/failed`) était dupliquée
+dans `/internal/cron/fbi-jobs` : factorisée dans `jobs/process-batch.ts`
+(`processJobBatch`), réutilisée par le cron (avec `claimNextJob`, global)
+et par la nouvelle route (avec `claimNextJobForClub(clubId)`, scopée).
+
+Côté SCSB : `ProcessFbiJobsButton.tsx`, nouvelle carte "Documents
+e-Marque en attente" sur `/admin/intégrations/fbi` (visible dès que FBI
+est configuré), expliquant explicitement que "Connecté" ne récupère rien
+tout seul. Réponse `{ claimed, succeeded, failed }` affichée directement
+(jamais de polling — un lot de 3 jobs traite en pratique en quelques
+secondes à quelques dizaines de secondes selon le nombre de documents,
+largement sous `maxDuration: 300`).
+
+À noter : un lot de 3 ne vide pas forcément la file d'un coup si plus de
+3 jobs sont en attente — l'admin reclique, ou attend la prochaine passe
+du cron quotidien qui continuera à réclamer globalement (les deux
+mécanismes cohabitent sans conflit, `FOR UPDATE SKIP LOCKED` empêchant
+toute réclamation en double).
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque

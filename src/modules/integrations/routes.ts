@@ -9,6 +9,8 @@ import { attemptBrowserFbiLogin } from "../../integrations/fbi/browser-login-att
 import { FbiError, type FbiErrorCode } from "../../integrations/fbi/errors.js";
 import { FfbbPublicProvider } from "../../integrations/ffbb/public-provider.js";
 import { syncFfbb } from "../../integrations/ffbb/sync.js";
+import { claimNextJobForClub } from "../../jobs/claim.js";
+import { processJobBatch } from "../../jobs/process-batch.js";
 import { getEnv } from "../../config/env.js";
 import { logError } from "../../logger.js";
 import {
@@ -254,6 +256,37 @@ integrationsRouter.post("/fbi/test", requireClubRole("club_admin"), async (c) =>
 
     return c.json({ success: false, message });
   }
+});
+
+const CLUB_JOB_BATCH_SIZE = 3;
+
+/**
+ * POST /v1/clubs/:clubId/integrations/fbi/process-jobs — §9 de la demande :
+ * "je veux un bouton qui va faire ce que je fais sur vercel mais via le
+ * site". `/internal/cron/fbi-jobs` (vercel.json) ne tourne qu'une fois par
+ * jour — jusqu'ici, la seule façon de faire avancer les jobs
+ * `discover_emarque`/`test_connection` en attente plus tôt était de
+ * déclencher ce cron à la main sur le dashboard Vercel (constaté en
+ * production le 2026-09-24 : 8 jobs `discover_emarque` en attente depuis
+ * plus d'une journée, voir docs/FBI.md "Neuvième déclenchement").
+ *
+ * Traite un PETIT lot (`CLUB_JOB_BATCH_SIZE`, même logique que le cron)
+ * synchroniquement, DANS CETTE REQUÊTE — un admin cliquant "Traiter les
+ * jobs en attente" attend un résultat immédiat. `claim_next_fbi_job_for_club`
+ * (supabase/migrations/20260924100000_fbi_jobs_claim_for_club.sql) filtre
+ * strictement sur `club.id` : cette route ne peut jamais réclamer/traiter
+ * un job d'un autre club, contrairement à `claim_next_fbi_job` (le cron).
+ * Le `discover_emarque` traité ici pilote `BrowserFbiClient` (Playwright) —
+ * `maxDuration: 300` (vercel.json) laisse la place pour plusieurs jobs.
+ */
+integrationsRouter.post("/fbi/process-jobs", requireClubRole("club_admin"), async (c) => {
+  const { club } = c.get("club");
+  const serviceSupabase = createServiceSupabaseClient();
+  const workerId = `admin-app#${club.id}#${Date.now()}`;
+
+  const result = await processJobBatch(serviceSupabase, CLUB_JOB_BATCH_SIZE, () => claimNextJobForClub(serviceSupabase, club.id, workerId));
+
+  return c.json(result);
 });
 
 /** GET /v1/clubs/:clubId/sync-runs */

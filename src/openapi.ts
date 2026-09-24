@@ -174,8 +174,24 @@ registry.registerPath({
   security: bearerAuth,
   request: { params: clubIdParam },
   responses: {
-    200: jsonResponse("Résultat du test (HttpFbiClient)", z.object({ success: z.boolean(), message: z.string() })),
-    202: jsonResponse("Job navigateur empilé en secours", z.object({ success: z.literal(false), message: z.string(), jobId: z.string().uuid() })),
+    // Réponse toujours synchrone depuis le 2026-09-24 (voir docs/FBI.md) :
+    // le repli navigateur (BROWSER_FBI_ENABLED) tourne DANS cette requête,
+    // plus de pattern 202+jobId.
+    200: jsonResponse("Résultat du test (HttpFbiClient, ou BrowserFbiClient en repli)", z.object({ success: z.boolean(), message: z.string() })),
+    ...errorResponses,
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/clubs/{clubId}/integrations/fbi/process-jobs",
+  security: bearerAuth,
+  request: { params: clubIdParam },
+  responses: {
+    200: jsonResponse(
+      "Lot de jobs FBI du club traité (discover_emarque/test_connection en attente)",
+      z.object({ claimed: z.number(), succeeded: z.number(), failed: z.number() }),
+    ),
     ...errorResponses,
   },
 });

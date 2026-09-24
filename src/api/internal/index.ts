@@ -7,7 +7,8 @@ import { syncAllDueClubs } from "../../integrations/ffbb/scheduler.js";
 import { FfbbPublicProvider } from "../../integrations/ffbb/public-provider.js";
 import { enqueueEmarqueDiscoveryJobsForAllClubs } from "../../jobs/enqueue-emarque.js";
 import { claimNextJob } from "../../jobs/claim.js";
-import { logError, logInfo } from "../../logger.js";
+import { processJobBatch } from "../../jobs/process-batch.js";
+import { logError } from "../../logger.js";
 
 /**
  * `processDiscoverEmarqueJob`/`processTestConnectionJob` (via
@@ -75,34 +76,8 @@ const JOB_BATCH_SIZE = 3;
 internalRouter.get("/cron/fbi-jobs", async (c) => {
   const supabase = createServiceSupabaseClient();
   const workerId = `vercel-cron#${Date.now()}`;
-  let claimed = 0;
-  let succeeded = 0;
-  let failed = 0;
-
-  for (let i = 0; i < JOB_BATCH_SIZE; i += 1) {
-    const job = await claimNextJob(supabase, workerId);
-    if (!job) break;
-
-    claimed += 1;
-    logInfo("Job FBI réclamé par le cron", { jobId: job.id, clubId: job.club_id, type: job.type });
-
-    try {
-      if (job.type === "test_connection") {
-        const { processTestConnectionJob } = await import("../../jobs/process-test-connection.js");
-        await processTestConnectionJob(supabase, job);
-      } else {
-        const { processDiscoverEmarqueJob } = await import("../../jobs/process-discover-emarque.js");
-        await processDiscoverEmarqueJob(supabase, job);
-      }
-      succeeded += 1;
-    } catch (error) {
-      failed += 1;
-      logError("Erreur non gérée en traitant un job FBI", error, { jobId: job.id, clubId: job.club_id });
-      await supabase.from("fbi_jobs").update({ status: "failed", finished_at: new Date().toISOString(), last_error: "Erreur interne." }).eq("id", job.id);
-    }
-  }
-
-  return c.json({ claimed, succeeded, failed });
+  const result = await processJobBatch(supabase, JOB_BATCH_SIZE, () => claimNextJob(supabase, workerId));
+  return c.json(result);
 });
 
 /** GET /internal/cron/emarque-parse — étape parsing (OCR/PDF), jamais de Playwright ici. */

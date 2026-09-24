@@ -31,6 +31,15 @@ vi.mock("../../integrations/fbi/http-client.js", () => ({
 const { mockAttemptBrowserFbiLogin } = vi.hoisted(() => ({ mockAttemptBrowserFbiLogin: vi.fn() }));
 vi.mock("../../integrations/fbi/browser-login-attempt.js", () => ({ attemptBrowserFbiLogin: mockAttemptBrowserFbiLogin }));
 
+const { mockClaimNextJobForClub } = vi.hoisted(() => ({ mockClaimNextJobForClub: vi.fn() }));
+vi.mock("../../jobs/claim.js", () => ({ claimNextJobForClub: mockClaimNextJobForClub }));
+
+const { mockProcessTestConnectionJob } = vi.hoisted(() => ({ mockProcessTestConnectionJob: vi.fn() }));
+vi.mock("../../jobs/process-test-connection.js", () => ({ processTestConnectionJob: mockProcessTestConnectionJob }));
+
+const { mockProcessDiscoverEmarqueJob } = vi.hoisted(() => ({ mockProcessDiscoverEmarqueJob: vi.fn() }));
+vi.mock("../../jobs/process-discover-emarque.js", () => ({ processDiscoverEmarqueJob: mockProcessDiscoverEmarqueJob }));
+
 const { app } = await import("../../app.js");
 const { resetEnvCacheForTests } = await import("../../config/env.js");
 
@@ -62,6 +71,10 @@ beforeEach(() => {
   mockHttpLogin.mockReset();
   mockHttpLogin.mockResolvedValue({ cookieJar: {} });
   mockAttemptBrowserFbiLogin.mockReset();
+  mockClaimNextJobForClub.mockReset();
+  mockClaimNextJobForClub.mockResolvedValue(null);
+  mockProcessTestConnectionJob.mockReset();
+  mockProcessDiscoverEmarqueJob.mockReset();
   delete process.env.BROWSER_FBI_ENABLED;
   resetEnvCacheForTests();
   state = makeFakeClubSupabaseState({
@@ -326,5 +339,65 @@ describe("POST /integrations/fbi/test", () => {
     expect(body.success).toBe(false);
     expect(body.message).toBe("Vos identifiants ne sont pas corrects.");
     expect(state.fbiIntegrationStatus.find((r) => r.club_id === CLUB_A.id)?.last_error).toBe("Vos identifiants ne sont pas corrects.");
+  });
+});
+
+describe("POST /integrations/fbi/process-jobs (§9 : traiter les jobs FBI en attente sans passer par le dashboard Vercel)", () => {
+  function makeJob(overrides: Partial<{ id: string; type: "test_connection" | "discover_emarque" }> = {}) {
+    return {
+      id: overrides.id ?? "job-1",
+      club_id: CLUB_A.id,
+      match_id: "match-1",
+      type: overrides.type ?? "discover_emarque",
+      status: "claimed" as const,
+      attempt_count: 1,
+      max_attempts: 6,
+      scheduled_at: "2026-01-01T00:00:00.000Z",
+      claimed_at: "2026-01-01T00:00:00.000Z",
+      claimed_by: "worker",
+      started_at: null,
+      finished_at: null,
+      last_error: null,
+      result: null,
+      created_at: "2026-01-01T00:00:00.000Z",
+    };
+  }
+
+  it("aucun job en attente : renvoie claimed=0 sans appeler les processeurs", async () => {
+    const res = await request("/integrations/fbi/process-jobs", { method: "POST" });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ claimed: 0, succeeded: 0, failed: 0 });
+    expect(mockProcessDiscoverEmarqueJob).not.toHaveBeenCalled();
+    expect(mockProcessTestConnectionJob).not.toHaveBeenCalled();
+  });
+
+  it("traite un lot de jobs de ce club, dispatché par type", async () => {
+    const jobs = [makeJob({ id: "job-1", type: "discover_emarque" }), makeJob({ id: "job-2", type: "test_connection" })];
+    mockClaimNextJobForClub.mockImplementation(() => Promise.resolve(jobs.shift() ?? null));
+    mockProcessDiscoverEmarqueJob.mockResolvedValue(undefined);
+    mockProcessTestConnectionJob.mockResolvedValue(undefined);
+
+    const res = await request("/integrations/fbi/process-jobs", { method: "POST" });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ claimed: 2, succeeded: 2, failed: 0 });
+    expect(mockProcessDiscoverEmarqueJob).toHaveBeenCalledTimes(1);
+    expect(mockProcessTestConnectionJob).toHaveBeenCalledTimes(1);
+  });
+
+  it("réclame exclusivement les jobs de CE club (jamais ceux d'un autre club)", async () => {
+    await request("/integrations/fbi/process-jobs", { method: "POST" });
+
+    expect(mockClaimNextJobForClub).toHaveBeenCalledWith(expect.anything(), CLUB_A.id, expect.any(String));
+  });
+
+  it("un coach reçoit 403 (jamais de réclamation de job pour un rôle non autorisé)", async () => {
+    currentUserId = "user-coach";
+    const res = await request("/integrations/fbi/process-jobs", { method: "POST" });
+    expect(res.status).toBe(403);
+    expect(mockClaimNextJobForClub).not.toHaveBeenCalled();
   });
 });
