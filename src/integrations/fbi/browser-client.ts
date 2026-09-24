@@ -195,11 +195,21 @@ export class BrowserFbiClient {
           ? formFields.map((f) => (f.tag === "select" ? `select[name=${f.name}]="${f.selectedLabel ?? f.value}"` : `${f.tag}[type=${f.type ?? "?"},name=${f.name}]="${f.value}"`)).join(" | ")
           : "(aucun champ de formulaire trouvé sur la page)";
 
+      /**
+       * Diagnostic riche (§ "Vingt-quatrième déclenchement", docs/FBI.md) :
+       * saison/case correctement ajustées, bon bouton cliqué, mais toujours
+       * aucun résultat — le HTML brut du formulaire révélera la structure
+       * exacte des widgets JS (`<select>` + `<button>` jumeau observés)
+       * nécessaire pour interagir avec eux comme un vrai utilisateur.
+       */
+      const formHtml = await selectors.formHtmlSnippet(page);
+
       throw new FbiError(
         `Page de résultat introuvable pour la rencontre ${matchNumber} : ni la recherche ni l'ouverture du résultat n'ont abouti (page actuelle : "${title}", ${page.url()}). ` +
           `Trace de navigation : [1] ${trace[0]} — [2] ${trace[1]} — [3] ${trace[2]} — [4] ${trace[3]}. ` +
           `Champs de formulaire sur cette page : ${formFieldsSummary}. ` +
-          `Liens visibles sur cette page : ${linksSummary}`,
+          `Liens visibles sur cette page : ${linksSummary}. ` +
+          `HTML du formulaire : ${formHtml}`,
         "EMARQUE_MATCH_PAGE_NOT_REACHED",
       );
     }
@@ -222,12 +232,20 @@ export class BrowserFbiClient {
       const title = await page.title().catch(() => "?");
       const visibleLinks = await selectors.listVisibleLinks(page, 60);
       const linksSummary = visibleLinks.length > 0 ? visibleLinks.map((l) => `"${l.text}" → ${l.href}`).join(" | ") : "(aucun lien trouvé sur la page)";
+      const formFields = await selectors.listFormFields(page, 40);
+      const formFieldsSummary =
+        formFields.length > 0
+          ? formFields.map((f) => (f.tag === "select" ? `select[name=${f.name}]="${f.selectedLabel ?? f.value}"` : `${f.tag}[type=${f.type ?? "?"},name=${f.name}]="${f.value}"`)).join(" | ")
+          : "(aucun champ de formulaire trouvé sur la page)";
+      const formHtml = await selectors.formHtmlSnippet(page);
       logInfo(`Job discover_emarque : page confirmée pour la rencontre ${matchNumber} mais aucun document retenu après filtrage`, {
         matchNumber,
         title,
         url: page.url(),
         trace,
         visibleLinks: linksSummary,
+        formFields: formFieldsSummary,
+        formHtml,
       });
     }
 

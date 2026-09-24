@@ -445,3 +445,31 @@ export function nonJoueCheckbox(page: Page): Locator {
 export function seasonSelect(page: Page): Locator {
   return page.locator('select[name*="saison" i]').first();
 }
+
+/**
+ * Diagnostic — dump du HTML BRUT du (premier) `<form>` de la page,
+ * plafonné. Constaté en production le 2026-09-24 (§ "Vingt-quatrième
+ * déclenchement", docs/FBI.md) : saison correctement sélectionnée, case
+ * "non joué" correctement décochée, bon bouton "Rechercher" cliqué —
+ * mais toujours aucune ligne de résultat, pour un match confirmé joué
+ * (preuve visuelle du code EM). Le dump des champs (`listFormFields`)
+ * révèle qu'à côté de chaque `<select>` existe un `<button type="button">`
+ * jumeau affichant la MÊME valeur (ex: `Saison 2025-2026`) — signe d'un
+ * widget JS (React/Vue/PrimeFaces-like) enrichissant un `<select>` natif
+ * cosmétique, dont l'état RÉEL utilisé par le bouton "Rechercher" pourrait
+ * être un état JS interne jamais synchronisé par un `Locator.selectOption()`
+ * programmatique (qui écrit dans le DOM natif, pas nécessairement dans
+ * l'état du framework). Le HTML brut du formulaire révélera la structure
+ * exacte de ces widgets — nécessaire pour interagir avec eux comme un
+ * VRAI utilisateur (clic sur le bouton, clic sur l'option dans le menu
+ * qu'il ouvre) plutôt que de continuer à deviner.
+ */
+export async function formHtmlSnippet(page: Page, maxLength = 4000): Promise<string> {
+  const form = page.locator("form").first();
+  if ((await form.count().catch(() => 0)) === 0) return "(aucun <form> trouvé sur la page)";
+
+  const html = await form.evaluate((node) => node.outerHTML).catch(() => null);
+  if (!html) return "(HTML du formulaire illisible)";
+
+  return html.length > maxLength ? `${html.slice(0, maxLength)}… (tronqué, ${html.length} caractères au total)` : html;
+}

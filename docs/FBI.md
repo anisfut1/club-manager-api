@@ -1158,6 +1158,48 @@ complète ET les liens visibles de la page dès que `documents.length ===
 0` APRÈS confirmation qu'on est sur la bonne page pour ce match — visible
 dans les logs Vercel au prochain passage, sans attendre un échec dur.
 
+**Vingt-quatrième déclenchement — malgré saison/case/bouton corrects, la
+recherche ne renvoie toujours rien ; dump du HTML brut du formulaire
+pour voir la VRAIE structure au lieu de deviner.** Nouveau test après le
+diagnostic précédent : les rencontres n°2813 et n°1481 échouent avec le
+MÊME motif détaillé — et ce qu'il révèle est riche :
+
+- La saison est bien "Saison 2025-2026" (correctement sélectionnée).
+- La case "non joué" est `unchecked` (déjà décochée à l'arrivée sur la
+  page, comme en réalité constaté aux déclenchements précédents).
+- Le bouton effectivement cliqué est bien celui affichant "Rechercher".
+- MAIS ce bouton "Rechercher" est `type="button"`, jamais `type="submit"` —
+  confirme qu'il n'y a AUCUNE soumission de formulaire HTML native
+  possible ici, uniquement un gestionnaire JS.
+- Chaque `<select>` (idSaison, idDivision, rechercherEquipe2, idPoule,
+  numeroEquipe) est accompagné d'un `<button type="button">` JUMEAU
+  affichant la MÊME valeur (`button[...]="Saison 2025-2026"`,
+  `button[...]="Division"`...), plus des boutons `"×"` (probablement pour
+  vider les champs de date) — signature typique d'un widget JS
+  (React/Vue/PrimeFaces-like) qui enrichit un `<select>` natif d'une
+  interface personnalisée.
+
+Le bouton reflète bien la valeur qu'on a sélectionnée via
+`Locator.selectOption()` (donc la sélection semble RÉELLEMENT prise en
+compte par le framework, pas juste écrite dans un `<select>` caché
+ignoré) — ce qui infirme l'hypothèse la plus simple ("l'état JS n'est
+jamais synchronisé"). La cause exacte de l'absence de résultat reste
+donc INCERTAINE avec les preuves actuelles : possible désynchronisation
+plus subtile, validation cliente bloquante, ou un champ requis
+supplémentaire non identifié.
+
+**Corrigé (diagnostic, pas un correctif de comportement — pas assez de
+certitude pour deviner une interaction précise sans risquer un
+cinquième cycle dans le vide)** : `selectors.formHtmlSnippet` dump le
+HTML BRUT (`outerHTML`, plafonné à 4000 caractères) du premier `<form>`
+de la page — inclus dans le message `EMARQUE_MATCH_PAGE_NOT_REACHED` ET
+dans le nouveau log "aucun document retenu" (Vingt-troisième
+déclenchement). Le prochain échec révélera la structure EXACTE de ces
+widgets (classes CSS, attributs `data-*`, wrapper DOM) — nécessaire pour
+soit corriger l'interaction (cliquer le widget custom au lieu du
+`<select>` natif, si c'est bien le problème), soit découvrir la vraie
+cause si ce n'est pas ça.
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque

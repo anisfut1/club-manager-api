@@ -176,6 +176,12 @@ describe("BrowserFbiClient.findEmarqueDocuments (§ 'Dix-huitième déclenchemen
     expect(error).toMatchObject({ code: "EMARQUE_MATCH_PAGE_NOT_REACHED" });
     expect((error as Error).message).toContain("Trace de navigation");
     expect((error as Error).message).toContain("Liens visibles sur cette page");
+    // Régression production 2026-09-24 (§ "Vingt-quatrième déclenchement") :
+    // saison/case correctement ajustées, bon bouton cliqué, toujours aucun
+    // résultat — le HTML brut du formulaire est désormais inclus pour voir
+    // la structure réelle des widgets plutôt que deviner une 5e fois.
+    expect((error as Error).message).toContain("HTML du formulaire");
+    expect((error as Error).message).toContain('name="idSaison"');
 
     await client.closeSession(session);
   });
