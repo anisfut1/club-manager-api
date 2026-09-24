@@ -1326,6 +1326,55 @@ environnement — mais le RÉSULTAT (succès, échec dur, ou "aucun document
 retenu" avec sa trace complète incluant maintenant la capture réseau)
 devient consultable directement, sans étape de copier-coller.
 
+**Vingt-huitième déclenchement — le diagnostic consultable en base révèle
+enfin la vraie mécanique de FBI : DataTables + un lien EM sans `href`.**
+Premier résultat lu directement en base (sans que le club n'ait besoin de
+relayer un log) pour la rencontre n°1481. La capture réseau du clic sur
+"Rechercher" (déclenchement précédent) montre la séquence RÉELLE :
+
+1. `POST .../rechercherRencontreSaisieResultat.fbi?action=controleRecherche`
+   — une étape de validation, renvoie un tableau HTML avec `<tbody></tbody>`
+   VIDE (jamais les données).
+2. `GET .../rechercherRencontreSaisieResultat.fbi?action=executeRecherche&...
+   &sEcho=1&iColumns=14&...` — le VRAI appel, au format **DataTables**
+   server-side classique (paramètres `sEcho`/`iColumns`/`iDisplayStart`...),
+   réponse JSON `{"iTotalRecords":1,"aaData":[[...]]}` contenant la ligne
+   RÉELLE du match 1481 (équipes, date, score). La colonne EM contient :
+   `<a class="emarquepictureafter emarqueV2200000013858788"
+   onclick="telechargerMatch('hpSiYXprCd6ZgGhweKzIfw%3D%3D','200000013858788')">`
+   — **aucun `href`**, juste un gestionnaire `onclick` JS.
+
+La trace confirme que `emarqueColumnLinkForMatch` a bien trouvé CE lien et
+que le clic a eu lieu (`[4] lien EM "" cliqué`) — la découverte de la
+ligne et du lien EM fonctionne donc déjà correctement, y compris pour un
+lien sans `href`. Mais cliquer un `onclick` ne change jamais l'URL et ne
+laisse rien à scanner sur la page pour `findDocumentLinks` (qui exige
+`a[href]`) : `telechargerMatch()` déclenche presque certainement un
+téléchargement natif du navigateur (nom de fonction explicite), une
+popup, ou un appel réseau qu'on ne capturait pas encore À CETTE étape
+précise (seule `trySearchByMatchNumber` capturait le réseau jusqu'ici,
+jamais `tryOpenMatchResult`).
+
+**Corrigé** : `tryOpenMatchResult` capture désormais, autour du clic sur
+le lien EM, les mêmes catégories de preuve que `trySearchByMatchNumber` —
+requêtes réseau XHR/fetch/POST (méthode, URL, corps, extrait de réponse)
+— PLUS les événements Playwright `download` (téléchargement natif :
+URL, nom de fichier suggéré) et `popup` (nouvel onglet/fenêtre : URL).
+Le prochain passage révélera lequel des trois se produit réellement au
+clic sur ce lien — la preuve manquante pour enfin capturer le vrai
+document au lieu de conclure "aucun document retenu".
+
+**Découvert en écrivant le test de ce correctif (jamais en production)** :
+un élément dont les dimensions visibles dépendent d'une classe CSS
+(`emarquepictureafter`, une icône) mais SANS cette CSS chargée (comme
+notre fixture de test, ou toute page où le CSS n'a pas fini de charger)
+reste invisible (0×0) — `Locator.click()` attend alors l'intégralité de
+son délai d'actionabilité PAR DÉFAUT (30s, exactement le budget d'un
+test Vitest par défaut) avant d'abandonner, consommant un tiers du
+budget d'un job entier pour un clic qui n'aboutira jamais. Corrigé avec
+un timeout explicite et court (10s) sur ce clic précis — échoue vite et
+clairement plutôt que de gaspiller le budget du job.
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque

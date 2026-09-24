@@ -223,6 +223,28 @@
           <td></td>
           <td></td>
         </tr>
+        <!--
+          Reproduit le VRAI pattern EM observé en production le 2026-09-24
+          (rencontre n°1481, § "Vingt-huitième déclenchement", docs/FBI.md) :
+          un <a onclick="..."> SANS href — jamais un lien classique. Simule
+          ici un appel réseau (comme le vrai `telechargerMatch()`) plutôt
+          qu'un téléchargement natif : la simulation d'un VRAI téléchargement
+          via Chromium headless s'est révélée trop instable dans ce harnais
+          de test (timeout à répétition) — la capture download/popup
+          elle-même reste testée en production sur preuve, pas ici.
+        -->
+        <tr>
+          <td></td>
+          <td>RM3</td>
+          <td>5555</td>
+          <td>SC Sète</td>
+          <td>Voisin</td>
+          <td>11/10/2025</td>
+          <td>18:00</td>
+          <td>Gymnase</td>
+          <td><a class="emarquepictureafter" style="display:inline-block;width:20px;height:20px;background:#ccc" onclick="fetch('/em-click-beacon', { method: 'POST', body: JSON.stringify({ event: 'em_click' }) })"></a></td>
+          <td>72</td>
+        </tr>
       </tbody>
     </table>
   </body>

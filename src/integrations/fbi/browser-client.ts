@@ -544,13 +544,82 @@ export class BrowserFbiClient {
 
     const text = (await emLink.textContent().catch(() => null))?.trim() ?? "?";
     const urlBefore = page.url();
+
+    /**
+     * Constaté en production le 2026-09-24 (rencontre n°1481, § "Vingt-
+     * huitième déclenchement", docs/FBI.md) : la capture réseau du clic sur
+     * "Rechercher" (déclenchement précédent) a révélé que FBI utilise
+     * DataTables (appel AJAX `action=executeRecherche`, réponse JSON
+     * `aaData`) — et que le lien de la colonne EM n'est PAS un `<a href>`
+     * classique mais `<a onclick="telechargerMatch('<token>','<idMatch>')">`
+     * (aucun `href`). Le clic a bien lieu (trace confirmée), mais sans
+     * changement d'URL ni lien de document détectable sur la page —
+     * `telechargerMatch()` déclenche probablement un téléchargement natif
+     * du navigateur (nom de fonction explicite), une popup, ou un appel
+     * réseau qu'on ne capturait pas encore À CETTE étape précise (seule
+     * `trySearchByMatchNumber` capturait le réseau jusqu'ici). Capture
+     * maintenant aussi les événements `download`/`popup`, en plus du
+     * réseau, autour de CE clic précis.
+     */
+    const capturedRequests: string[] = [];
+    const onResponse = async (response: import("playwright-core").Response): Promise<void> => {
+      try {
+        const req = response.request();
+        if (req.resourceType() !== "xhr" && req.resourceType() !== "fetch" && req.method() !== "POST") return;
+        const postData = req.postData();
+        const bodySnippet = await response.text().catch(() => null);
+        capturedRequests.push(
+          `${req.method()} ${response.url()} → HTTP ${response.status()}` +
+            (postData ? ` | corps envoyé (${postData.length} car.) : ${postData.slice(0, 500)}` : " | aucun corps envoyé") +
+            (bodySnippet ? ` | réponse (${bodySnippet.length} car.) : ${bodySnippet.slice(0, 1000)}` : " | réponse illisible"),
+        );
+      } catch {
+        // Best effort.
+      }
+    };
+    page.on("response", onResponse);
+
+    /**
+     * 3s (pas 8+) : un téléchargement natif ou une popup surviennent
+     * quasi immédiatement après le clic qui les déclenche — un délai plus
+     * long ne fait qu'allonger inutilement CHAQUE job réel (et le temps
+     * des tests) sans jamais rien détecter de plus.
+     */
+    const downloadPromise = page.waitForEvent("download", { timeout: 3000 }).catch(() => null);
+    const popupPromise = page.waitForEvent("popup", { timeout: 3000 }).catch(() => null);
+
     try {
-      await emLink.click();
+      /**
+       * Timeout explicite et court (jamais les 30s par défaut de
+       * Playwright) : constaté en écrivant les tests de ce correctif — un
+       * élément sans dimensions visibles réelles (icône dépendant d'un CSS
+       * absent) fait attendre `.click()` l'intégralité de son délai
+       * d'actionabilité par défaut avant d'échouer, consommant un tiers du
+       * budget d'un job entier pour un clic qui n'aboutira jamais.
+       */
+      await emLink.click({ timeout: 10000 });
       await this.settle(page);
+      await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+
+      const [download, popup] = await Promise.all([downloadPromise, popupPromise]);
+      const downloadNote = download ? ` — téléchargement natif déclenché : url=${download.url()}, nom suggéré="${download.suggestedFilename()}"` : "";
+      const popupNote = popup ? ` — popup/nouvel onglet ouvert : url=${popup.url()}` : "";
+      const networkNote =
+        capturedRequests.length > 0
+          ? ` — requêtes réseau capturées après le clic EM : ${capturedRequests.join(" || ")}`
+          : " — aucune requête XHR/fetch/POST capturée après le clic EM";
+
       const urlAfter = page.url();
-      return urlAfter === urlBefore ? `lien EM "${text}" cliqué, mais l'URL n'a pas changé (${urlAfter})` : `lien EM "${text}" cliqué, url → ${urlAfter}`;
+      return (
+        (urlAfter === urlBefore ? `lien EM "${text}" cliqué, mais l'URL n'a pas changé (${urlAfter})` : `lien EM "${text}" cliqué, url → ${urlAfter}`) +
+        downloadNote +
+        popupNote +
+        networkNote
+      );
     } catch (error) {
       return `lien EM "${text}" trouvé mais le clic a échoué : ${error instanceof Error ? error.message : String(error)}`;
+    } finally {
+      page.off("response", onResponse);
     }
   }
 

@@ -38,6 +38,10 @@ beforeEach(() => {
   // docs/FBI.md) fonctionne réellement, pas seulement son repli "aucune
   // requête capturée".
   server.setRoute({ path: "/telemetry-beacon", method: "POST", contentType: "application/json", body: JSON.stringify({ received: true }) });
+  // Beacon fetch() déclenché par le lien EM sans href de la rencontre
+  // n°5555 (§ "Vingt-huitième déclenchement", docs/FBI.md) — vérifie que
+  // tryOpenMatchResult capture aussi le réseau autour de CE clic précis.
+  server.setRoute({ path: "/em-click-beacon", method: "POST", contentType: "application/json", body: JSON.stringify({ received: true }) });
 });
 
 describe("BrowserFbiClient.login (contre un serveur HTML local synthétique, jamais le vrai FBI)", () => {
@@ -155,6 +159,29 @@ describe("BrowserFbiClient.findEmarqueDocuments (§ 'Dix-huitième déclenchemen
     // directement en base sans dépendre des logs Vercel.
     expect(diagnostic).toContain("[info, pas une erreur]");
     expect(diagnostic).toContain("9999");
+    await client.closeSession(session);
+  });
+
+  it("capture le réseau AUTOUR du clic sur un lien EM sans href (onclick JS) — reproduit le VRAI pattern FBI observé en production (n°1481, <a onclick=\"telechargerMatch(...)\">, aucun href) au lieu du lien classique deviné à tort (§ 'Vingt-huitième déclenchement', docs/FBI.md)", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 100 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    const { documents, diagnostic } = await client.findEmarqueDocuments(session, "5555");
+
+    // findDocumentLinks (page.locator("a[href]")) ne peut rien trouver après
+    // ce clic : la fixture reproduit un onclick sans navigation ni lien
+    // navigable resté sur la page, comme le vrai telechargerMatch() en
+    // production — documents reste vide. Ce n'est PAS un échec de la
+    // découverte : la preuve que quelque chose s'est bien passé au clic
+    // est dans la capture réseau ci-dessous, pas dans le tableau de
+    // documents (dont le vrai fix — capturer un téléchargement natif ou une
+    // réponse AJAX comme document — reste à confirmer sur preuve en
+    // production, voir docs/FBI.md).
+    expect(documents).toEqual([]);
+    expect(diagnostic).toContain('lien EM "" cliqué');
+    expect(diagnostic).toContain("requêtes réseau capturées après le clic EM");
+    expect(diagnostic).toContain("/em-click-beacon");
+
     await client.closeSession(session);
   });
 
