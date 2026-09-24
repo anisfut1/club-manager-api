@@ -123,6 +123,20 @@ describe("BrowserFbiClient.findEmarqueDocuments (navigation générique, best-ef
     await client.closeSession(session);
   });
 
+  it("lève EMARQUE_MATCH_PAGE_NOT_REACHED même pour un numéro de rencontre court (\"1\") qui apparaît par hasard comme fragment d'un autre nombre sur la page — régression production 2026-09-24 : un simple .includes(\"1\") matchait n'importe quel nombre contenant 1 (ex: \"2813\"), faisant \"réussir\" la rencontre n°1 alors que la recherche cherchait en réalité la rencontre 2813 et n'aboutissait jamais à une page de la rencontre 1, avec les mêmes documents génériques que la rencontre n°1481 (elle, correctement détectée en échec car \"1481\" n'apparaît jamais par hasard)", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 100 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    // La recherche par "1" ne trouve jamais de résultat correspondant
+    // (resultats.fbi ne lie qu'à la rencontre 2813, voir fixtures/) : la
+    // navigation reste bloquée sur resultats.fbi, dont le texte contient
+    // "2813" — qui EMBARQUE "1" comme chiffre (jamais isolé). Un simple
+    // .includes("1") aurait matché à tort.
+    await expect(client.findEmarqueDocuments(session, "1")).rejects.toMatchObject({ code: "EMARQUE_MATCH_PAGE_NOT_REACHED" });
+
+    await client.closeSession(session);
+  });
+
   it("lève EMARQUE_MATCH_PAGE_NOT_REACHED plutôt que de remonter à tort les documents d'une autre page (§ régression 2026-09-24 : jamais faire confiance à findDocumentLinks sur une page qui ne mentionne pas la rencontre demandée)", async () => {
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 100 });
     const session = await client.login({ username: "club1234", password: "secret" });

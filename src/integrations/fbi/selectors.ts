@@ -87,6 +87,10 @@ export async function findDocumentLinks(page: Page): Promise<DiscoveredDocumentL
   return found;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /**
  * Preuve qu'on est bien sur (ou a atteint) la page de LA rencontre
  * demandée, jamais retombé sur une page générique (accueil, aide) après un
@@ -100,10 +104,23 @@ export async function findDocumentLinks(page: Page): Promise<DiscoveredDocumentL
  * scannait alors une page d'accueil/aide contenant ces liens permanents
  * (`DOCUMENT_EXTENSION_PATTERN` matche N'IMPORTE QUEL lien .pdf/.zip sur la
  * page, quelle qu'elle soit — pas seulement les liens pertinents).
+ *
+ * FAUX POSITIF constaté le même jour pour la rencontre n°1 : un simple
+ * `.includes()` matche "1" n'importe où sur n'importe quelle page (une
+ * date, un numéro de version, une pagination...) — la rencontre n°1
+ * "réussissait" alors qu'on était encore sur la page d'accueil, avec les
+ * mêmes documents génériques que la rencontre n°1481 (elle, correctement
+ * détectée en échec — "1481" est assez spécifique pour ne jamais
+ * apparaître par hasard). Recherche maintenant le numéro comme un nombre
+ * ISOLÉ (bordures non-chiffres des deux côtés), jamais comme fragment
+ * d'un nombre plus grand — imparfait pour un numéro à 1-2 chiffres
+ * (un vrai faux positif reste possible), mais nettement plus fiable
+ * qu'un simple `.includes()`.
  */
 export async function pageMentionsMatchNumber(page: Page, matchNumber: string): Promise<boolean> {
   const bodyText = (await page.locator("body").textContent()) ?? "";
-  return bodyText.includes(matchNumber);
+  const isolatedNumberPattern = new RegExp(`(?<!\\d)${escapeRegExp(matchNumber)}(?!\\d)`);
+  return isolatedNumberPattern.test(bodyText);
 }
 
 /** Champ de recherche par numéro de rencontre : basé sur un attribut name/placeholder évocateur, jamais une position. */

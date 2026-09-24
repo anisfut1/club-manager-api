@@ -626,6 +626,33 @@ fonction à ligne unique appelée via PostgREST), le garde-fou côté
 application est plus simple et suffisant. Couvert par un test dans
 `claim.test.ts` reproduisant exactement cette forme de réponse.
 
+**Treizième déclenchement — le correctif `EMARQUE_MATCH_PAGE_NOT_REACHED`
+avait lui-même un faux positif pour un numéro de rencontre court.** Une
+fois les deux correctifs précédents déployés, le club a débloqué 3 jobs
+réels pour tester (rencontres n°1, 4516, 1481). Résultat : n°1481 a
+correctement échoué avec le diagnostic attendu (page restée sur "FBI -
+Accueil") — mais n°1 a "réussi", en remontant EXACTEMENT les mêmes 5
+documents génériques que ceux du bug initial ("e-Marque.pdf" ×3,
+"Télécharger_e-Marque_V2/MiniBasket.pdf"). Cause : `pageMentionsMatchNumber`
+utilisait `.includes(matchNumber)` — un simple test de sous-chaîne. Pour
+un numéro à un seul chiffre comme "1", ce test réussit sur N'IMPORTE
+QUELLE page contenant un nombre qui contient "1" (ici "2813", visible sur
+la page de résultats de recherche par défaut) — donc quasiment n'importe
+quelle page, vidant le garde-fou de son utilité pour ce cas.
+
+**Corrigé** : `pageMentionsMatchNumber` recherche maintenant le numéro
+comme un nombre ISOLÉ (`(?<!\d)matchNumber(?!\d)`, bordures non-chiffres
+des deux côtés) plutôt qu'une sous-chaîne brute — "1" ne matche plus
+l'intérieur de "2813" ou "1481". Reste imparfait par construction pour un
+numéro à 1-2 chiffres très court (un vrai chiffre isolé identique
+ailleurs sur la page resterait un faux positif possible), mais nettement
+plus fiable qu'un `.includes()` nu. Testé explicitement contre ce cas
+précis (numéro "1", page contenant "2813"). Le job de la rencontre n°1
+déjà "réussi" à tort (5 documents génériques déjà en base) devra être
+nettoyé et retenté manuellement une fois ce correctif déployé — pas fait
+automatiquement, aucun mécanisme de nettoyage rétroactif construit à ce
+stade.
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque
