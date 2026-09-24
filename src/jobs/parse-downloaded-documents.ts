@@ -21,15 +21,28 @@ export interface ParseDownloadedDocumentsResult {
  * (match_sheet/summary/shot_chart) sont déjà utilisables tels quels par
  * l'API (téléchargement direct via URL signée) et n'ont pas de parseur
  * dédié pour l'instant.
+ *
+ * `options.clubId`/`options.limit` (voir docs/FBI.md "Dixième déclenchement")
+ * : le cron (`/internal/cron/emarque-parse`) les laisse vides — tout
+ * traiter, tous clubs confondus, un run par jour. `POST .../fbi/parse-
+ * documents` (route club-scoped) les fournit TOUJOURS : jamais parser les
+ * documents d'un autre club depuis une route `/v1/clubs/:clubId/*`, et un
+ * plafond pour rester sous `maxDuration: 300` même si beaucoup de documents
+ * attendent (l'OCR/PDF a un coût non négligeable par document).
  */
-export async function parseDownloadedEmarqueDocuments(supabase: DbClient): Promise<ParseDownloadedDocumentsResult> {
+export async function parseDownloadedEmarqueDocuments(supabase: DbClient, options: { clubId?: string; limit?: number } = {}): Promise<ParseDownloadedDocumentsResult> {
   const result: ParseDownloadedDocumentsResult = { candidatesExamined: 0, imported: 0, errors: 0 };
 
-  const { data: pendingDocs, error: pendingError } = await supabase
+  let builder = supabase
     .from("match_documents")
     .select("id, club_id, match_id, filename, storage_path, sha256")
     .eq("type", "emarque_zip")
     .eq("status", "downloaded");
+
+  if (options.clubId) builder = builder.eq("club_id", options.clubId);
+  if (options.limit) builder = builder.limit(options.limit);
+
+  const { data: pendingDocs, error: pendingError } = await builder;
 
   if (pendingError) {
     throw new Error(`Recherche des documents e-Marque téléchargés échouée : ${pendingError.message}`);

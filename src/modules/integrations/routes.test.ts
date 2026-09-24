@@ -40,6 +40,9 @@ vi.mock("../../jobs/process-test-connection.js", () => ({ processTestConnectionJ
 const { mockProcessDiscoverEmarqueJob } = vi.hoisted(() => ({ mockProcessDiscoverEmarqueJob: vi.fn() }));
 vi.mock("../../jobs/process-discover-emarque.js", () => ({ processDiscoverEmarqueJob: mockProcessDiscoverEmarqueJob }));
 
+const { mockParseDownloadedEmarqueDocuments } = vi.hoisted(() => ({ mockParseDownloadedEmarqueDocuments: vi.fn() }));
+vi.mock("../../jobs/parse-downloaded-documents.js", () => ({ parseDownloadedEmarqueDocuments: mockParseDownloadedEmarqueDocuments }));
+
 const { app } = await import("../../app.js");
 const { resetEnvCacheForTests } = await import("../../config/env.js");
 
@@ -75,6 +78,8 @@ beforeEach(() => {
   mockClaimNextJobForClub.mockResolvedValue(null);
   mockProcessTestConnectionJob.mockReset();
   mockProcessDiscoverEmarqueJob.mockReset();
+  mockParseDownloadedEmarqueDocuments.mockReset();
+  mockParseDownloadedEmarqueDocuments.mockResolvedValue({ candidatesExamined: 0, imported: 0, errors: 0 });
   delete process.env.BROWSER_FBI_ENABLED;
   resetEnvCacheForTests();
   state = makeFakeClubSupabaseState({
@@ -399,5 +404,25 @@ describe("POST /integrations/fbi/process-jobs (§9 : traiter les jobs FBI en att
     const res = await request("/integrations/fbi/process-jobs", { method: "POST" });
     expect(res.status).toBe(403);
     expect(mockClaimNextJobForClub).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /integrations/fbi/parse-documents (deuxième étape : documents téléchargés → participants/stats/officiels affichables)", () => {
+  it("appelle parseDownloadedEmarqueDocuments scopé à CE club avec un plafond de lot, et renvoie le résumé", async () => {
+    mockParseDownloadedEmarqueDocuments.mockResolvedValue({ candidatesExamined: 3, imported: 2, errors: 1 });
+
+    const res = await request("/integrations/fbi/parse-documents", { method: "POST" });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ candidatesExamined: 3, imported: 2, errors: 1 });
+    expect(mockParseDownloadedEmarqueDocuments).toHaveBeenCalledWith(expect.anything(), { clubId: CLUB_A.id, limit: expect.any(Number) });
+  });
+
+  it("un coach reçoit 403 (jamais de parsing déclenché pour un rôle non autorisé)", async () => {
+    currentUserId = "user-coach";
+    const res = await request("/integrations/fbi/parse-documents", { method: "POST" });
+    expect(res.status).toBe(403);
+    expect(mockParseDownloadedEmarqueDocuments).not.toHaveBeenCalled();
   });
 });

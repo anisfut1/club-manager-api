@@ -58,16 +58,30 @@ function makeFakeSupabase(options: {
   matchesById: Record<string, { numero: string | null; score_home: number | null; score_away: number | null }>;
   documentUpdates: Array<{ id: string; patch: unknown }>;
   matchUpdates: Array<{ id: string; patch: unknown }>;
+  matchDocumentsFilters?: Array<{ col: string; value: unknown }>;
+  matchDocumentsLimit?: number[];
 }) {
   return {
     from(table: string) {
       if (table === "match_documents") {
         return {
-          select: () => ({
-            eq: () => ({
-              eq: () => Promise.resolve({ data: options.pendingDocs, error: null }),
-            }),
-          }),
+          select: () => {
+            const filters = options.matchDocumentsFilters ?? [];
+            const api = {
+              eq(col: string, value: unknown) {
+                filters.push({ col, value });
+                return api;
+              },
+              limit(n: number) {
+                options.matchDocumentsLimit?.push(n);
+                return api;
+              },
+              then(onFulfilled: (value: { data: FakeDocument[]; error: null }) => unknown) {
+                return Promise.resolve({ data: options.pendingDocs, error: null }).then(onFulfilled);
+              },
+            };
+            return api;
+          },
           update: (patch: unknown) => ({
             eq: (_col: string, id: string) => {
               options.documentUpdates.push({ id, patch });
@@ -176,5 +190,56 @@ describe("parseDownloadedEmarqueDocuments", () => {
     expect(result.imported).toBe(2);
     expect(persistEmarqueMatchData).toHaveBeenCalledWith(supabase, expect.objectContaining({ clubId: "club-a", matchId: "match-a1" }));
     expect(persistEmarqueMatchData).toHaveBeenCalledWith(supabase, expect.objectContaining({ clubId: "club-b", matchId: "match-b1" }));
+  });
+
+  it("options.clubId filtre la requête (jamais parser les documents d'un autre club depuis une route club-scopée)", async () => {
+    vi.mocked(parseEmarqueZip).mockResolvedValue(EMPTY_EMARQUE_DATA);
+    const matchDocumentsFilters: Array<{ col: string; value: unknown }> = [];
+    const supabase = makeFakeSupabase({
+      pendingDocs: [{ id: "doc-1", club_id: "club-1", match_id: "match-1", filename: "2813.zip", storage_path: "path.zip", sha256: "abc123" }],
+      matchesById: { "match-1": { numero: "2813", score_home: null, score_away: null } },
+      documentUpdates: [],
+      matchUpdates: [],
+      matchDocumentsFilters,
+    });
+
+    await parseDownloadedEmarqueDocuments(supabase, { clubId: "club-1" });
+
+    expect(matchDocumentsFilters).toContainEqual({ col: "club_id", value: "club-1" });
+  });
+
+  it("options.limit borne le lot (reste sous maxDuration même avec beaucoup de documents en attente)", async () => {
+    vi.mocked(parseEmarqueZip).mockResolvedValue(EMPTY_EMARQUE_DATA);
+    const matchDocumentsLimit: number[] = [];
+    const supabase = makeFakeSupabase({
+      pendingDocs: [{ id: "doc-1", club_id: "club-1", match_id: "match-1", filename: "2813.zip", storage_path: "path.zip", sha256: "abc123" }],
+      matchesById: { "match-1": { numero: "2813", score_home: null, score_away: null } },
+      documentUpdates: [],
+      matchUpdates: [],
+      matchDocumentsLimit,
+    });
+
+    await parseDownloadedEmarqueDocuments(supabase, { limit: 10 });
+
+    expect(matchDocumentsLimit).toEqual([10]);
+  });
+
+  it("sans options (cas cron) : aucun filtre club_id ni limit appliqué", async () => {
+    vi.mocked(parseEmarqueZip).mockResolvedValue(EMPTY_EMARQUE_DATA);
+    const matchDocumentsFilters: Array<{ col: string; value: unknown }> = [];
+    const matchDocumentsLimit: number[] = [];
+    const supabase = makeFakeSupabase({
+      pendingDocs: [{ id: "doc-1", club_id: "club-1", match_id: "match-1", filename: "2813.zip", storage_path: "path.zip", sha256: "abc123" }],
+      matchesById: { "match-1": { numero: "2813", score_home: null, score_away: null } },
+      documentUpdates: [],
+      matchUpdates: [],
+      matchDocumentsFilters,
+      matchDocumentsLimit,
+    });
+
+    await parseDownloadedEmarqueDocuments(supabase);
+
+    expect(matchDocumentsFilters.some((f) => f.col === "club_id")).toBe(false);
+    expect(matchDocumentsLimit).toEqual([]);
   });
 });

@@ -440,6 +440,72 @@ du cron quotidien qui continuera à réclamer globalement (les deux
 mécanismes cohabitent sans conflit, `FOR UPDATE SKIP LOCKED` empêchant
 toute réclamation en double).
 
+**Dixième déclenchement — "on a récupéré quoi là, je veux check en
+front, sauf qu'on a juste les matchs à venir et pas les passés".** Deux
+diagnostics distincts, tous deux constatés en production le 2026-09-24 :
+
+1. **Timeout client trop court.** `POST .../fbi/process-jobs` réussissait
+   bien côté serveur (logs : job réclamé, Chromium lancé, documents
+   téléchargés — ~28s pour UN SEUL job) mais SCSB affichait "Traitement
+   impossible" : le client HTTP (`src/lib/api/client.ts`) avait un
+   timeout fixe de 20s, systématiquement dépassé par un lot de jobs
+   navigateur. Corrigé côté SCSB : `timeoutMs` configurable par appel
+   (`ApiRequestInit`), `processFbiJobs` passe désormais 280s (sous
+   `maxDuration: 300`).
+
+2. **Téléchargé ≠ affichable, et le calendrier de la saison en cours est
+   vide.** Deux causes cumulées expliquaient l'absence totale de contenu
+   visible :
+   - Le pipeline e-Marque a DEUX étapes séparées (commentaire déjà présent
+     dans `parse-downloaded-documents.ts`) : `discover_emarque`
+     (Playwright, télécharge) puis le PARSING (OCR/PDF,
+     `parseDownloadedEmarqueDocuments`, jusqu'ici UNIQUEMENT via
+     `/internal/cron/emarque-parse`, une fois par jour). Un document
+     `emarque_status: downloaded` ne devient `imported` (composition/
+     stats/officiels persistés, donc affichables) qu'après cette seconde
+     étape — jamais automatique en dehors du cron. Constaté : 14
+     documents `downloaded`, `0` ligne dans `emarque_imports`.
+   - `currentSeasonStart()` (SCSB, `/matchs` et `/admin/sync`) filtre par
+     défaut sur la saison en cours (1er août → ...). La saison 2026-2027
+     vient de commencer (aucun match encore joué dessus : `0` match
+     `played` depuis le 1er août 2026) — les 97 matchs déjà joués de la
+     saison précédente (2025-2026, tous encore `emarque_status: pending`
+     faute d'avoir été enqueués avant que FBI soit connecté) sont donc
+     invisibles sur `/matchs`, quel que soit leur statut e-Marque. La
+     fiche détail (`/matchs/[id]`) n'a elle AUCUN filtre de saison — un
+     match hors saison en cours reste consultable par lien direct, juste
+     absent de la liste.
+
+   **Corrigé** : nouvelle route `POST .../fbi/parse-documents`
+   (`club_admin`), même principe que `process-jobs` mais pour l'étape
+   PARSING — `parseDownloadedEmarqueDocuments` accepte désormais
+   `{ clubId, limit }` (filtre + plafond de lot, `CLUB_PARSE_BATCH_SIZE =
+   10` : pas de navigateur ici, un OCR/PDF coûte nettement moins cher
+   qu'un login+scrape FBI, d'où un lot plus grand). Le cron
+   (`/internal/cron/emarque-parse`) continue d'appeler la fonction SANS
+   options (tout traiter, tous clubs). Côté SCSB : `ParseFbiDocumentsButton.tsx`,
+   deuxième bouton dans la même carte "Documents e-Marque en attente",
+   étiquetée en deux étapes numérotées (1. Télécharger / 2. Traiter).
+
+   Le filtre de saison, lui, N'A PAS été changé — comportement voulu
+   (§ "Vue 'Ce week-end' + filtres" du commentaire de `/matchs/page.tsx` :
+   éviter de charger l'historique complet à chaque visite). Pour vérifier
+   le rendu d'une feuille de match réelle dès maintenant : ouvrir
+   directement `/c/<slug>/matchs/<matchId>` d'un match de la saison
+   2025-2026 déjà `imported` (pas besoin d'attendre un match de la
+   nouvelle saison).
+
+   **Reste identifié, pas encore traité** : au dernier comptage, 416 jobs
+   `discover_emarque` encore `pending` pour le club pilote (créés d'un
+   coup par `/internal/cron/fbi-enqueue` une fois FBI connecté, couvrant
+   tout l'historique de matchs joués jamais synchronisé) — à raison de
+   `CLUB_JOB_BATCH_SIZE = 3` par clic, vider cette file au bouton prendrait
+   des dizaines de clics. Le cron quotidien (`JOB_BATCH_SIZE = 3` lui
+   aussi) continuera en tâche de fond, mais à ce rythme le rattrapage de
+   l'historique prendrait des mois. Piste non retenue à ce stade (pas
+   demandée) : augmenter les tailles de lot et/ou plafonner l'enqueue aux
+   matchs récents plutôt qu'à tout l'historique.
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque

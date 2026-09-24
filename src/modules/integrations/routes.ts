@@ -259,6 +259,7 @@ integrationsRouter.post("/fbi/test", requireClubRole("club_admin"), async (c) =>
 });
 
 const CLUB_JOB_BATCH_SIZE = 3;
+const CLUB_PARSE_BATCH_SIZE = 10;
 
 /**
  * POST /v1/clubs/:clubId/integrations/fbi/process-jobs — §9 de la demande :
@@ -285,6 +286,32 @@ integrationsRouter.post("/fbi/process-jobs", requireClubRole("club_admin"), asyn
   const workerId = `admin-app#${club.id}#${Date.now()}`;
 
   const result = await processJobBatch(serviceSupabase, CLUB_JOB_BATCH_SIZE, () => claimNextJobForClub(serviceSupabase, club.id, workerId));
+
+  return c.json(result);
+});
+
+/**
+ * POST /v1/clubs/:clubId/integrations/fbi/parse-documents — §9 de la
+ * demande, deuxième étape du même problème : `POST .../fbi/process-jobs`
+ * télécharge les documents e-Marque (Playwright), mais ne les PARSE pas —
+ * c'est une étape séparée (`parseDownloadedEmarqueDocuments`, jamais de
+ * navigateur, juste OCR/PDF), qui ne tournait jusqu'ici QUE via
+ * `/internal/cron/emarque-parse` (une fois par jour). Sans elle, un
+ * document "Téléchargé" ne devient jamais "Importé" — rien à afficher côté
+ * composition/stats/officiels tant que ce n'est pas fait (constaté en
+ * production le 2026-09-24 : 14 documents `downloaded`, 0 `emarque_imports`).
+ *
+ * `CLUB_PARSE_BATCH_SIZE` (10, plus élevé que `CLUB_JOB_BATCH_SIZE` : pas
+ * de navigateur ici, un parsing OCR/PDF est nettement plus rapide qu'un
+ * login+scrape FBI) borne le lot pour rester sous `maxDuration: 300` même
+ * si beaucoup de documents attendent.
+ */
+integrationsRouter.post("/fbi/parse-documents", requireClubRole("club_admin"), async (c) => {
+  const { club } = c.get("club");
+  const serviceSupabase = createServiceSupabaseClient();
+
+  const { parseDownloadedEmarqueDocuments } = await import("../../jobs/parse-downloaded-documents.js");
+  const result = await parseDownloadedEmarqueDocuments(serviceSupabase, { clubId: club.id, limit: CLUB_PARSE_BATCH_SIZE });
 
   return c.json(result);
 });

@@ -197,6 +197,20 @@ registry.registerPath({
 });
 
 registry.registerPath({
+  method: "post",
+  path: "/v1/clubs/{clubId}/integrations/fbi/parse-documents",
+  security: bearerAuth,
+  request: { params: clubIdParam },
+  responses: {
+    200: jsonResponse(
+      "Lot de documents e-Marque téléchargés du club parsés (OCR/PDF, jamais de navigateur)",
+      z.object({ candidatesExamined: z.number(), imported: z.number(), errors: z.number() }),
+    ),
+    ...errorResponses,
+  },
+});
+
+registry.registerPath({
   method: "get",
   path: "/v1/clubs/{clubId}/sync-runs",
   security: bearerAuth,
