@@ -361,3 +361,29 @@ export async function matchNumberInResultsTable(page: Page, matchNumber: string)
 
   return false;
 }
+
+/**
+ * Checkbox "non joué" (résultat pas encore saisi) du formulaire de
+ * recherche — confirmé en production le 2026-09-24 (§ "Dix-neuvième
+ * déclenchement", docs/FBI.md, dump complet des champs) : COCHÉE par
+ * défaut sur `rechercherRencontreSaisieResultat.fbi`, name
+ * `...rechercherRencontreSaisieResultatBean.nonJoue`. Cette page sert à
+ * SAISIR des résultats, donc elle filtre naturellement aux rencontres
+ * dont le résultat n'est pas encore saisi — jamais les matchs déjà
+ * homologués, précisément ceux qui ont un document e-Marque disponible.
+ * Doit être décochée avant toute recherche visant un match déjà joué.
+ */
+export function nonJoueCheckbox(page: Page): Locator {
+  return page.locator('input[type="checkbox"][name*="nonJoue" i]').first();
+}
+
+/**
+ * Sélecteur de saison du formulaire de recherche — confirmé en
+ * production le 2026-09-24 : `select` dont le `name` contient "saison"
+ * (`...rechercherRencontreSaisieResultatBean.idSaison`), défaute sur la
+ * saison EN COURS. Un match d'une saison passée n'apparaît jamais dans
+ * les résultats tant que ce sélecteur n'est pas ajusté sur SA saison.
+ */
+export function seasonSelect(page: Page): Locator {
+  return page.locator('select[name*="saison" i]').first();
+}

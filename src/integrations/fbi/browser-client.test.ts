@@ -163,7 +163,30 @@ describe("BrowserFbiClient.findEmarqueDocuments (§ 'Dix-huitième déclenchemen
     const message = (error as Error).message;
     expect(message).toContain('champ "numeroRencontre" rempli');
     expect(message).toContain("Champs de formulaire sur cette page");
-    expect(message).toContain('select[name=saison]="2026-2027"');
+    expect(message).toContain('select[name=idSaison]="Saison 2026-2027"');
+
+    await client.closeSession(session);
+  });
+
+  it("décoche la case « non joué » (cochée par défaut) et sélectionne la saison du match AVANT de chercher — régression production 2026-09-24 : ces deux filtres par défaut empêchaient de trouver N'IMPORTE QUEL match déjà joué, quel que soit le numéro (§ 'Dix-neuvième déclenchement', docs/FBI.md)", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 100 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    const error = await client.findEmarqueDocuments(session, "77777", "2025-2026").catch((e: unknown) => e);
+
+    expect(error).toMatchObject({ code: "EMARQUE_MATCH_PAGE_NOT_REACHED" });
+    const message = (error as Error).message;
+    expect(message).toContain('case "non joué" décochée');
+    expect(message).toContain('saison "Saison 2025-2026" sélectionnée');
+    // Preuve que la sélection a réellement été SOUMISE (pas juste rapportée
+    // dans la trace) : l'étape [3] montre l'URL après soumission du
+    // formulaire, qui inclut la valeur ("12") de l'option "Saison
+    // 2025-2026" choisie. Le dump des champs de formulaire, lui, reflète
+    // la page rechargée par le serveur de test STATIQUE (qui ignore les
+    // query params et sert toujours le même fixture par défaut) — pas
+    // représentatif de la vraie page FBI, qui refléterait la sélection
+    // soumise ; on ne peut donc pas s'y fier ici.
+    expect(message).toContain("idSaison=12");
 
     await client.closeSession(session);
   });

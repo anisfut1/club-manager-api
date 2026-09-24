@@ -122,12 +122,16 @@ export class BrowserFbiClient {
    * documents connus. Chaque étape échoue silencieusement (best effort)
    * plutôt que de planter — le retour `[]` déclenche un retry planifié
    * ("document pas encore trouvé" n'est pas une erreur).
+   *
+   * `season` (format "2025-2026", voir `resolveSeasonLabel` côté appelant)
+   * est OPTIONNEL mais fortement recommandé : voir `tryPrepareSearchFilters`.
    */
-  async findEmarqueDocuments(session: BrowserFbiSession, matchNumber: string): Promise<{ url: string; fileName: string }[]> {
+  async findEmarqueDocuments(session: BrowserFbiSession, matchNumber: string, season: string | null = null): Promise<{ url: string; fileName: string }[]> {
     const { page } = session;
 
     const trace: string[] = [];
     trace.push(await this.tryNavigateToSearchScreen(page));
+    trace.push(await this.tryPrepareSearchFilters(page, season));
     trace.push(await this.trySearchByMatchNumber(page, matchNumber));
     trace.push(await this.tryOpenMatchResult(page, matchNumber));
 
@@ -191,7 +195,7 @@ export class BrowserFbiClient {
 
       throw new FbiError(
         `Page de résultat introuvable pour la rencontre ${matchNumber} : ni la recherche ni l'ouverture du résultat n'ont abouti (page actuelle : "${title}", ${page.url()}). ` +
-          `Trace de navigation : [1] ${trace[0]} — [2] ${trace[1]} — [3] ${trace[2]}. ` +
+          `Trace de navigation : [1] ${trace[0]} — [2] ${trace[1]} — [3] ${trace[2]} — [4] ${trace[3]}. ` +
           `Champs de formulaire sur cette page : ${formFieldsSummary}. ` +
           `Liens visibles sur cette page : ${linksSummary}`,
         "EMARQUE_MATCH_PAGE_NOT_REACHED",
@@ -259,6 +263,73 @@ export class BrowserFbiClient {
 
       return `navigation directe vers ${targetUrl} échouée (${gotoError}), et aucun lien de repli (même origine) trouvé`;
     }
+  }
+
+  /**
+   * Ajuste les filtres du formulaire de recherche AVANT de chercher le
+   * numéro de rencontre — confirmé en production le 2026-09-24 (§
+   * "Dix-neuvième déclenchement", docs/FBI.md, dump complet des champs de
+   * formulaire) : une recherche par numéro seul, sur un match réellement
+   * joué (n°2813/1481/4516, preuve visuelle du code EM pour 2813), n'a
+   * renvoyé AUCUNE ligne de résultat — parce que DEUX filtres par défaut
+   * de la page l'en empêchaient :
+   *
+   * 1. La checkbox "non joué" (résultat pas encore saisi) est COCHÉE par
+   *    défaut — cette page sert à SAISIR des résultats, donc elle filtre
+   *    naturellement aux matchs dont le résultat n'est pas encore
+   *    homologué, jamais ceux déjà joués (précisément ceux qui ont un
+   *    document e-Marque). Toujours décochée : on ne cherche jamais un
+   *    match "non joué" ici.
+   * 2. Le sélecteur de saison défaute sur la saison EN COURS. Un match
+   *    d'une saison passée n'apparaît jamais tant que ce sélecteur n'est
+   *    pas ajusté — `season` (calculé par l'appelant depuis
+   *    `match.match_datetime` via `resolveSeasonLabel`) est utilisé pour
+   *    choisir l'option dont le LIBELLÉ contient cette saison (jamais une
+   *    valeur de `<option>` devinée).
+   */
+  private async tryPrepareSearchFilters(page: Page, season: string | null): Promise<string> {
+    const notes: string[] = [];
+
+    try {
+      const nonJoue = selectors.nonJoueCheckbox(page);
+      if ((await nonJoue.count().catch(() => 0)) > 0 && (await nonJoue.isChecked().catch(() => false))) {
+        await nonJoue.uncheck();
+        notes.push('case "non joué" décochée');
+      }
+    } catch (error) {
+      notes.push(`case "non joué" trouvée mais impossible à décocher : ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    if (season) {
+      try {
+        const select = selectors.seasonSelect(page);
+        const selectCount = await select.count().catch(() => 0);
+        if (selectCount === 0) {
+          notes.push("aucun sélecteur de saison trouvé");
+        } else {
+          const options = select.locator("option");
+          const optionCount = await options.count().catch(() => 0);
+          let matchedLabel: string | null = null;
+
+          for (let i = 0; i < optionCount; i += 1) {
+            const label = (await options.nth(i).textContent().catch(() => null))?.trim() ?? "";
+            if (!label.includes(season)) continue;
+
+            const value = await options.nth(i).getAttribute("value").catch(() => null);
+            await select.selectOption(value !== null ? { value } : { label });
+            matchedLabel = label;
+            break;
+          }
+
+          notes.push(matchedLabel ? `saison "${matchedLabel}" sélectionnée` : `aucune option de saison ne contient "${season}"`);
+        }
+      } catch (error) {
+        notes.push(`sélecteur de saison trouvé mais la sélection a échoué : ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    await this.settle(page);
+    return notes.length > 0 ? notes.join(" ; ") : "aucun filtre à ajuster (case non joué déjà décochée, pas de saison fournie)";
   }
 
   private async trySearchByMatchNumber(page: Page, matchNumber: string): Promise<string> {

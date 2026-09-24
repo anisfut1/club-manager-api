@@ -971,6 +971,52 @@ checkbox et le champ texte, et un nouveau test qui vérifie que le message
 d'erreur contient `champ "numeroRencontre" rempli` (jamais supposé) et
 `select[name=saison]="2026-2027"` dans le dump des champs de formulaire.
 
+**Vingtième déclenchement — le dump révèle la cause racine définitive :
+deux filtres par défaut, pas un problème de sélecteur.** Nouveau test en
+production sur les 3 mêmes matchs isolés (2813, 1481, 4516), avec le
+diagnostic du déclenchement précédent activé. Le dump complet du
+formulaire confirme, sur preuve directe cette fois (jamais une
+hypothèse) :
+
+- `input[type=checkbox,name=...nonJoue]="true"` — la checkbox "non joué"
+  (résultat pas encore saisi) est **cochée par défaut**. Cette page
+  (`rechercherRencontreSaisieResultat.fbi` = écran de SAISIE de
+  résultat) filtre donc naturellement aux rencontres dont le résultat
+  n'est pas encore homologué — jamais les matchs déjà joués, précisément
+  ceux qui ont un document e-Marque disponible.
+- `select[name=...idSaison]="Saison 2026-2027"` — le sélecteur de saison
+  défaute sur la saison EN COURS. Les 3 matchs de test datent tous de la
+  saison 2025-2026 (joués entre septembre 2025 et mai 2026) ; la
+  production tourne le 2026-09-24, donc en saison 2026-2027.
+
+Ces deux filtres, actifs par défaut, expliquent à eux seuls tous les
+échecs "recherche réussie mais aucun résultat" observés depuis le
+Dix-neuvième déclenchement — indépendamment de tout bug de sélecteur.
+
+**Corrigé** : nouvelle étape `tryPrepareSearchFilters` (entre la
+navigation et la recherche par numéro) qui, à chaque appel de
+`findEmarqueDocuments` :
+
+1. Décoche systématiquement la case "non joué" si elle est cochée
+   (`selectors.nonJoueCheckbox`, `Locator.isChecked()`/`uncheck()` — on
+   ne cherche jamais un match "non joué" ici, quel que soit le match).
+2. Sélectionne, dans `selectors.seasonSelect`, l'option dont le LIBELLÉ
+   contient la saison du match (`Locator.selectOption()`) — jamais une
+   valeur d'`<option>` devinée. La saison est calculée par l'appelant
+   (`resolveSeasonLabel(match.match_datetime)`, déjà utilisée par
+   ailleurs pour le chemin de stockage Supabase, désormais aussi passée
+   à `findEmarqueDocuments` en 3ᵉ paramètre) AVANT l'appel, plutôt que
+   recalculée en double.
+
+La trace de navigation passe de 3 à 4 étapes (`[1]` navigation, `[2]`
+préparation des filtres, `[3]` recherche par numéro, `[4]` ouverture du
+résultat). Couvert par un nouveau test qui vérifie que le message
+d'erreur contient `case "non joué" décochée`, `saison "Saison 2025-2026"
+sélectionnée`, et que l'URL de soumission du formulaire contient
+effectivement `idSaison=12` (la valeur de l'option choisie) — preuve que
+la sélection a réellement été soumise, pas juste rapportée dans la
+trace.
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque

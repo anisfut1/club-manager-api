@@ -111,7 +111,8 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
   }
 
   try {
-    const documents = await client.findEmarqueDocuments(session, match.numero);
+    const season = resolveSeasonLabel(match.match_datetime);
+    const documents = await client.findEmarqueDocuments(session, match.numero, season);
 
     if (documents.length === 0) {
       await supabase.from("matches").update({ emarque_status: "waiting_for_emarque" }).eq("id", job.match_id);
@@ -127,7 +128,6 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
     const zip = documents.find((doc) => doc.fileName.toLowerCase().endsWith(".zip"));
     const toDownload = zip ? [zip] : documents;
 
-    const season = resolveSeasonLabel(match.match_datetime);
     let downloadedCount = 0;
 
     for (const doc of toDownload) {
