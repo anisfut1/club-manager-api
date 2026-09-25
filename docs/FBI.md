@@ -1568,6 +1568,55 @@ l'échantillon réel. Corriger ce cas précis demanderait une heuristique
 supplémentaire non justifiée par une seule occurrence ; le principe
 directeur reste `null` plutôt qu'une valeur devinée pour tout le reste.
 
+**Trente-deuxième déclenchement — le correctif précédent tourne bien en
+production (les valeurs affichées correspondent exactement à ce qui avait
+été validé localement), mais 12 des 15 joueurs de la rencontre n°1481
+manquaient encore entièrement de l'onglet "Statistiques" côté SCSB.**
+Root-cause, PAS un nouveau bug OCR : `mergePlayersWithStats` (`merge.ts`)
+conservait bien une ligne de statistiques "resume" sans joueur
+correspondant dans l'effectif "feuillematch" (comportement déjà testé et
+documenté), mais `persist-emarque-match.ts#insertPlayerStats` cherche un
+`participant_id` par `${teamSide}:${jerseyNumber}` et **ignore
+silencieusement** toute ligne sans correspondance — jamais une erreur,
+jamais un avertissement qualité, juste une statistique qui n'atteint
+jamais la base. Le document "feuillematch" (composition/effectif) a sa
+propre calibration OCR, JAMAIS revue ni validée avec la même rigueur que
+"resume" ce déclenchement-ci (aucun exemplaire réel fourni pour ce
+document précis) — voir `feuillematch-layout.ts`, dont le commentaire
+d'origine signale déjà "Équipe B... confiance plus faible" ; c'est là
+qu'était le trou, jamais dans le pipeline "resume" corrigé au
+déclenchement précédent.
+
+**Corrigé sans attendre un exemplaire réel de "feuillematch"** (qui
+resterait la correction la plus rigoureuse à terme, voir la limite
+ci-dessous) : `mergePlayersWithStats` synthétise désormais un joueur
+minimal à partir de la ligne "resume" elle-même (numéro de maillot, nom,
+statut titulaire — déjà lus par `parse-resume.ts`) quand aucun joueur
+"feuillematch" ne correspond, pour que `insertParticipants` crée bien une
+ligne à laquelle `insertPlayerStats` peut rattacher la statistique.
+Jamais de licence inventée (`licenseNumber: null`, jamais de
+`licencie_id`) — seule l'identité de base vient de "resume" ; une vraie
+correspondance de numéro de licence reste l'unique façon de relier un
+participant à un licencié existant (ARCHITECTURE.md §22/§26). Un test
+existant qui documentait EXACTEMENT l'ancien comportement ("une ligne de
+statistiques sans joueur correspondant... `merged` reste vide") a été mis
+à jour pour refléter le nouveau comportement voulu — ce n'était pas un
+bug caché, c'était un choix de conception jamais reconsidéré à la lumière
+de son effet en aval (une ligne "conservée" par le parseur mais
+silencieusement perdue par la persistance équivaut, pour l'utilisateur, à
+une ligne perdue).
+
+Limite restante, honnêtement documentée plutôt que masquée : les
+statistiques d'un joueur synthétisé de cette façon ne seront JAMAIS
+rattachées à un licencié (pas de numéro de licence dans "resume"), donc
+jamais visibles depuis la fiche d'un licencié — seulement depuis la fiche
+du match. Calibrer `feuillematch-layout.ts` avec la même rigueur que
+`resume-layout.ts` (coordonnées pixel par pixel contre un vrai document,
+voir le déclenchement précédent) reste la correction de fond à faire dès
+qu'un exemplaire réel de ce document sera disponible — ce correctif-ci
+supprime la perte de données observable, pas la cause profonde côté
+"feuillematch".
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque

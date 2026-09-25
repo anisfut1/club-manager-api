@@ -74,14 +74,37 @@ describe("mergePlayersWithStats", () => {
     expect(merged[0]?.isStarter).toBeNull();
   });
 
-  it("inclut une ligne de statistiques même sans joueur correspondant dans l'effectif (maillot illisible côté feuillematch)", () => {
-    const stats = [buildStatRow({ jerseyNumber: "77" })];
+  it("synthétise un joueur minimal à partir de la ligne 'resume' quand l'effectif 'feuillematch' n'a pas ce maillot (régression production n°1481, § 'Trente-deuxième déclenchement', docs/FBI.md : sans ce joueur synthétisé, persist-emarque-match.ts#insertPlayerStats n'a aucun participant à quoi rattacher la statistique et l'ignore silencieusement — le joueur disparaît entièrement de l'affichage malgré des statistiques lues correctement)", () => {
+    const stats = [buildStatRow({ jerseyNumber: "77", lastName: "NOUVEAU", firstName: "Joueur", isStarter: true })];
 
     const { players: merged, playerStats } = mergePlayersWithStats([], stats);
 
-    expect(merged).toHaveLength(0);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({
+      teamSide: "home",
+      jerseyNumber: "77",
+      lastName: "NOUVEAU",
+      firstName: "Joueur",
+      isStarter: true,
+      // Jamais de licence inventée : seule une vraie correspondance de
+      // numéro de licence (jamais lue par "resume") relie un participant
+      // à un licencié existant (ARCHITECTURE.md §22/§26).
+      licenseNumber: null,
+      isCaptain: false,
+    });
+
     expect(playerStats).toHaveLength(1);
     expect(playerStats[0]?.jerseyNumber).toBe("77");
+  });
+
+  it("ne synthétise jamais de doublon quand le joueur existe déjà côté feuillematch", () => {
+    const players = [buildPlayer({ jerseyNumber: "6" })];
+    const stats = [buildStatRow({ jerseyNumber: "6" })];
+
+    const { players: merged } = mergePlayersWithStats(players, stats);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.lastName).toBe("MARTIN");
   });
 
   it("ne transforme jamais une statistique absente en zéro (null != 0)", () => {
