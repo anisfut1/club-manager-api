@@ -1617,6 +1617,34 @@ qu'un exemplaire réel de ce document sera disponible — ce correctif-ci
 supprime la perte de données observable, pas la cause profonde côté
 "feuillematch".
 
+**Trente-troisième déclenchement — le correctif précédent créait un
+DOUBLON exactement dans le cas qu'il devait éviter.** Signalé par le club
+via l'UI : deux joueuses ("#? COUIX L. Ô (C)" et "#? MESTRES J. LI")
+affichées avec un numéro de maillot manquant, alors qu'il "figure bien
+sur les docs". Vérifié en base (`match_participants`, rencontre n°1481) :
+chacune de ces deux joueuses avait EFFECTIVEMENT deux lignes — une
+provenant de "feuillematch" (nom abrégé bruité mais numéro de LICENCE
+correct, ex. `VT640539`, et capitanat correctement lu pour COUIX) avec
+`jersey_number = null`, et une SECONDE synthétisée par le correctif du
+déclenchement précédent à partir de "resume" (nom propre, maillot correct,
+mais sans licence). Cause : `feuillematch` avait bien trouvé la personne
+(nom, licence, capitanat) mais avait échoué à lire SEULEMENT son numéro de
+maillot — la comparaison stricte par maillot exact ne pouvait jamais
+rapprocher ces deux lignes du MÊME document logique, donc chaque source
+produisait la sienne.
+
+**Corrigé** : `mergePlayersWithStats` tente désormais, pour un joueur
+"feuillematch" dont le maillot est manquant, un rapprochement par NOM DE
+FAMILLE (normalisé, comparaison de sous-chaîne dans les deux sens — gère
+`"COUIX L. Ô"` ⊇ `"COUIX"`) avec une ligne "resume" de la même équipe pas
+encore réclamée — mais SEULEMENT si ce rapprochement est SANS AMBIGUÏTÉ
+(exactement un candidat) ; avec zéro ou plusieurs candidats, on ne devine
+jamais, on retombe sur la synthèse d'un doublon (préférable à un mauvais
+rapprochement). Quand le rapprochement réussit, SEULS le maillot et le
+statut titulaire (que "feuillematch" n'avait pas) viennent de "resume" —
+nom, prénom, licence et capitanat restent ceux de "feuillematch", jamais
+écrasés (même principe que le rapprochement par maillot exact).
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque

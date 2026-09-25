@@ -107,6 +107,40 @@ describe("mergePlayersWithStats", () => {
     expect(merged[0]?.lastName).toBe("MARTIN");
   });
 
+  it("rapproche par nom de famille (jamais de doublon) un joueur 'feuillematch' dont SEUL le maillot est illisible — régression production n°1481, § 'Trente-troisième déclenchement', docs/FBI.md : \"COUIX L. Ô\" (maillot illisible, mais licence VT640539 et capitanat lus correctement) et la ligne 'resume' \"COUIX\" (maillot 8 lisible, aucune licence) désignent la MÊME personne, produisaient pourtant deux lignes distinctes (donc \"#?\" affiché côté UI en plus d'une ligne correcte)", () => {
+    const players = [buildPlayer({ jerseyNumber: null, lastName: "COUIX L. Ô", firstName: "LE", licenseNumber: "VT640539", isCaptain: true })];
+    const stats = [buildStatRow({ jerseyNumber: "8", lastName: "COUIX", firstName: "Laetitia", isStarter: true })];
+
+    const { players: merged, playerStats } = mergePlayersWithStats(players, stats);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({
+      jerseyNumber: "8", // comblé depuis "resume", seule donnée que "feuillematch" n'avait pas lue
+      isStarter: true, // idem
+      // Le reste de l'identité reste celui de "feuillematch", jamais écrasé par "resume".
+      lastName: "COUIX L. Ô",
+      firstName: "LE",
+      licenseNumber: "VT640539",
+      isCaptain: true,
+    });
+    expect(playerStats).toHaveLength(1);
+  });
+
+  it("ne rapproche jamais par nom de famille en cas d'ambiguïté (plusieurs candidats possibles) — synthétise plutôt un doublon que de deviner", () => {
+    const players = [buildPlayer({ jerseyNumber: null, lastName: "MARTIN X.", firstName: "?" })];
+    const stats = [
+      buildStatRow({ jerseyNumber: "6", lastName: "MARTIN", firstName: "Alex" }),
+      buildStatRow({ jerseyNumber: "7", lastName: "MARTIN", firstName: "Sacha" }),
+    ];
+
+    const { players: merged } = mergePlayersWithStats(players, stats);
+
+    const feuillematchPlayer = merged.find((p) => p.lastName === "MARTIN X.");
+    expect(feuillematchPlayer?.jerseyNumber).toBeNull();
+    // Les deux lignes "resume" restent synthétisées séparément, jamais fusionnées au hasard.
+    expect(merged).toHaveLength(3);
+  });
+
   it("ne transforme jamais une statistique absente en zéro (null != 0)", () => {
     const players = [buildPlayer()];
     const stats = [buildStatRow({ points: null, threePointsMade: null, secondsPlayed: null })];
