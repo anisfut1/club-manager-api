@@ -2127,34 +2127,126 @@ départ, pas seulement une optimisation :
   (club_admin) — empile le job, même modèle que `reconcile-schedule` (409
   `CHECK_ALL_DEROGATIONS_ALREADY_QUEUED` si une vérification est déjà en
   attente/en cours pour ce club).
-- `GET /v1/clubs/:clubId/derogations` (tout membre du club) — liste TOUTES
-  les lignes `fbi_derogation_checks` du club, enrichies du match FFBB
-  correspondant (`matchId`/`opponentName`/`matchDatetime`) ; jamais un
-  SELECT direct côté frontend.
+- `GET /v1/clubs/:clubId/derogations` (club_admin — c'est aussi ce que la
+  policy RLS `fbi_derogation_checks_select_club_admin` autorise déjà, voir
+  migration `20260925130000` : un simple membre obtiendrait de toute façon
+  une liste vide, autoriser la route plus largement aurait été trompeur)
+  — liste TOUTES les lignes `fbi_derogation_checks` du club, enrichies du
+  match FFBB correspondant (`matchId`/`opponentName`/`matchDatetime`) ;
+  jamais un SELECT direct côté frontend.
 
 Côté SCSB : bouton "Vérifier toutes les dérogations" (Intégrations → FBI,
 `CheckAllDerogationsButton.tsx`) et page `/admin/derogations` listant le
-résultat, chaque ligne liée à son match.
+résultat, chaque ligne liée à son match. Carte "Dérogations" sur le
+dashboard (club_admin uniquement) plutôt qu'un doublon de la carte
+placeholder "Bientôt disponible" qui y restait affichée — relevé par le
+club ("j'ai la dérog mais... faut vraiment toujours optimiser").
 
-**Ce qui n'est PAS fait (phase 1, volontairement)** :
-- Scraping de la page de détail (`afficherDerogation.fbi`) — le tableau de
-  résultats de la recherche suffit pour l'état/dates, phase 1 ne
-  construit pas le jeton `idRencontre` requis pour y naviguer.
+### Détail d'une dérogation (2026-09-25)
+
+Juste après la vérification globale, demande du club : **"ici ok j'ai la
+dérog mais il me faut du détail sur le motif, le pk du comment, les dates
+initiales et demandées etc (comme sur fbi)"** — capture d'écran fournie de
+`afficherDerogation.fbi` (sections "Demande de dérogation"/"Réponse de
+l'adversaire"). Les dates/heure INITIALES sont déjà connues via le
+tableau de résultats (`FbiDerogationRow.dateRencontre`/`.heure`) ; ce qui
+manquait est UNIQUEMENT sur la page de détail :
+- `FbiDerogationDetailFields` (`types.ts`) : `demandeur`, `motif`,
+  `dateRencontreDemandee`, `heureDemandee` (section "Demande de
+  dérogation"), `adversaire`, `dateReponse`, `acceptation`, `motifRefus`
+  (section "Réponse de l'adversaire"). Volontairement PAS les cases à
+  cocher (Modifier la date/l'horaire/la salle, Inverser la
+  rencontre/les équipes) — pas demandées, et leur état coché/décoché ne se
+  lit pas de façon fiable dans le texte visible de la page.
+- `BrowserFbiClient.fetchDerogationDetailForRow(page, rowIndex)` (privée) :
+  clique le `<tr>` de la ligne trouvée (jamais la case à cocher en
+  première colonne), vérifie que l'URL obtenue contient
+  `afficherDerogation.fbi`, lit `selectors.derogationDetailPageLines`
+  (texte visible de la page, ligne par ligne — volontairement PAS un
+  sélecteur `label → input`, la mise en page de cette page — floating
+  labels + soulignement, probable Angular Material — n'a été vue qu'en
+  capture d'écran, JAMAIS en HTML source), extrait via
+  `derogation-detail.ts#extractDerogationDetailFields` (fonction PURE :
+  libellé connu → ligne suivante = valeur, sauf si cette ligne suivante
+  est ELLE-MÊME un des libellés connus, auquel cas le champ est vide —
+  cas réel : "Date de réponse" suivi immédiatement de "Acceptation" tant
+  que l'adversaire n'a pas répondu), puis `page.goBack()` pour revenir au
+  tableau de résultats. Best effort intégral : un clic qui ne mène pas à
+  `afficherDerogation.fbi`, ou une page de détail à la forme inattendue,
+  renvoie `null` SANS lever d'erreur — le tableau de résultats reste la
+  source de vérité minimale, jamais bloquée par le détail.
+- `fetchDerogationForMatch` ET `fetchAllDerogations` appellent maintenant
+  cette méthode (pour `fetchAllDerogations` : après chaque page de
+  résultats, pour CHAQUE ligne, via la nouvelle
+  `collectAllDerogationsWithDetail`, séparée de `collectAllResultPages`
+  — utilisée aussi par le rapprochement calendrier, qui n'a pas de page de
+  détail à ouvrir). Compromis assumé : nettement plus de navigations pour
+  `check_all_derogations` (un clic + retour par dérogation trouvée, en
+  plus du tableau) — jamais plus de connexions/logins FBI, donc pas le
+  même risque anti-bot que la boucle par match déjà documentée, mais une
+  session FBI plus longue.
+- `fbi_derogation_checks` (migration
+  `20260925150000_fbi_derogation_detail_fields.sql`) : 8 colonnes texte de
+  plus (`demandeur`, `motif`, `date_rencontre_demandee`, `heure_demandee`,
+  `adversaire`, `date_reponse`, `acceptation`, `motif_refus`), toujours au
+  format BRUT FBI. `DerogationStatusDto`/`DerogationListItemDto` étendus
+  en conséquence — visible sur `/matchs/:id` (carte Dérogation) ET
+  `/admin/derogations`.
+
+**Ce qui n'est PAS fait (volontairement)** :
 - **Toute écriture sur FBI** : créer une dérogation, cocher
   salle/horaire/date/inversion, soumettre une demande, répondre à une
   demande reçue. C'est la phase 2, plus risquée (envoie une vraie demande
   à un club adverse, difficile à annuler proprement) — à cadrer
   explicitement avec le club avant toute construction, une fois la phase 1
   validée en conditions réelles.
-- Vérification planifiée/automatique (cron périodique) de
-  `check_all_derogations` — pour l'instant déclenchée manuellement depuis
-  Intégrations → FBI.
+- Les 5 cases à cocher de "Demande de dérogation" (Modifier la
+  date/l'horaire/la salle, Inverser la rencontre/les équipes) — voir
+  ci-dessus.
 - Scraper JAMAIS exécuté contre le vrai FBI depuis cet environnement
-  (réseau `*.ffbb.com` bloqué) — testé contre une fixture HTML synthétique
-  (`browser-client.test.ts`, `__fixtures__/rechercher-derogation.html`),
-  reproduisant la structure confirmée par capture d'écran, pas contre le
-  vrai site. Cette fixture n'a ni `action` ni `method` sur son
-  `<form>` — une soumission y déclenche un GET natif (rechargement complet
-  de page), donc les tests vérifient l'état réellement sélectionné en
-  lisant `page.url()` après la recherche plutôt qu'un marqueur DOM (qui
-  serait de toute façon effacé par ce rechargement).
+  (réseau `*.ffbb.com` bloqué) — testé contre des fixtures HTML
+  synthétiques (`browser-client.test.ts`,
+  `__fixtures__/rechercher-derogation.html` et
+  `__fixtures__/afficher-derogation.html`, cette dernière avec des lignes
+  cliquables `onclick` — HYPOTHÈSE DE TEST du comportement liste→détail,
+  jamais confirmée contre le vrai FBI), reproduisant la structure
+  confirmée par capture d'écran, pas contre le vrai site. La fixture de
+  recherche n'a ni `action` ni `method` sur son `<form>` — une soumission
+  y déclenche un GET natif (rechargement complet de page), donc les tests
+  vérifient l'état réellement sélectionné en lisant `page.url()` après la
+  recherche plutôt qu'un marqueur DOM (qui serait de toute façon effacé
+  par ce rechargement).
+
+### Cron quotidien — vérifications automatiques (2026-09-25)
+
+Demande du club : **"il faut aussi intégrer toutes ces maj dans le cron
+daily qui va récup les infos en automatique, sans cliquer h24 sur des
+boutons manuels"** — `reconcile_schedule` et `check_all_derogations`
+n'étaient déclenchés QUE par les boutons manuels de Intégrations → FBI
+(`ReconcileFbiScheduleButton`/`CheckAllDerogationsButton`), jamais repris
+par le cron existant.
+- `enqueueFbiVerificationJobsForClub`/`...ForAllClubs`
+  (`jobs/enqueue-fbi-verifications.ts`) : empile UN job `reconcile_schedule`
+  ET UN job `check_all_derogations` par club FBI configuré (gate sur
+  `fbi_integration_status.configured` seul, jamais `auto_import_emarque`
+  — propre à l'e-Marque, sans rapport ici). Idempotent : la contrainte
+  unique de `fbi_jobs` absorbe un appel répété le lendemain si la veille
+  n'est pas encore traitée.
+- Appelé depuis `GET /internal/cron/fbi-enqueue` (même route que
+  `enqueueEmarqueDiscoveryJobsForAllClubs`, jamais une route cron séparée
+  — un seul passage quotidien d'empilement pour tous les jobs FBI
+  récurrents).
+- **Limite connue, pas silencieusement contournée** : `GET
+  /internal/cron/fbi-jobs` ne traite qu'UN SEUL job par invocation
+  (`JOB_BATCH_SIZE = 1`, voir `src/api/internal/index.ts` — un job
+  `discover_emarque` a déjà dépassé le budget Vercel Hobby à 3 par lot).
+  `reconcile_schedule`/`check_all_derogations` entrent donc dans la MÊME
+  file que `discover_emarque`/`check_derogation`, réclamée dans l'ordre
+  d'ancienneté : un club avec beaucoup de jobs `discover_emarque` en
+  attente peut retarder de plusieurs jours le traitement automatique de sa
+  vérification calendrier/dérogations. Le bouton manuel
+  (`processFbiJobs`, jusqu'à `CLUB_JOB_BATCH_SIZE` jobs DE CE CLUB en une
+  requête) reste le moyen le plus rapide de forcer un traitement immédiat.
+  Augmenter `JOB_BATCH_SIZE` réduirait ce délai mais réintroduirait le
+  risque de timeout Vercel déjà rencontré — à décider explicitement avec
+  le club, pas changé ici.

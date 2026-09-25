@@ -6,6 +6,7 @@ import { createServiceSupabaseClient } from "../../db/client.js";
 import { syncAllDueClubs } from "../../integrations/ffbb/scheduler.js";
 import { FfbbPublicProvider } from "../../integrations/ffbb/public-provider.js";
 import { enqueueEmarqueDiscoveryJobsForAllClubs } from "../../jobs/enqueue-emarque.js";
+import { enqueueFbiVerificationJobsForAllClubs } from "../../jobs/enqueue-fbi-verifications.js";
 import { claimNextJob } from "../../jobs/claim.js";
 import { processJobBatch } from "../../jobs/process-batch.js";
 import { logError } from "../../logger.js";
@@ -52,12 +53,24 @@ internalRouter.get("/cron/ffbb", async (c) => {
   }
 });
 
-/** GET /internal/cron/fbi-enqueue — empile des jobs discover_emarque, ne pilote jamais Playwright lui-même. */
+/**
+ * GET /internal/cron/fbi-enqueue — empile TOUS les jobs FBI récurrents
+ * (discover_emarque, reconcile_schedule, check_all_derogations), ne pilote
+ * jamais Playwright lui-même (c'est `/cron/fbi-jobs` qui les consomme).
+ * `reconcile_schedule`/`check_all_derogations` regroupés ici plutôt que
+ * dans une route cron séparée : demande du club (2026-09-25) de ne plus
+ * dépendre des boutons manuels "Vérifier le calendrier"/"Vérifier toutes
+ * les dérogations" (Intégrations → FBI) pour que ces vérifications
+ * tournent "H24 sans cliquer" — un seul passage quotidien d'empilement
+ * pour tous les jobs récurrents, cohérent avec l'unique cron déjà en place
+ * plutôt que d'en ajouter un de plus.
+ */
 internalRouter.get("/cron/fbi-enqueue", async (c) => {
   const supabase = createServiceSupabaseClient();
   try {
-    const result = await enqueueEmarqueDiscoveryJobsForAllClubs(supabase);
-    return c.json(result);
+    const emarque = await enqueueEmarqueDiscoveryJobsForAllClubs(supabase);
+    const verifications = await enqueueFbiVerificationJobsForAllClubs(supabase);
+    return c.json({ emarque, verifications });
   } catch (error) {
     logError("Cron d'empilement FBI en erreur", error);
     return c.json({ error: "fbi_enqueue_failed" }, 500);

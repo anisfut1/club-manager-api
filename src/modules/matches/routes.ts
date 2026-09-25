@@ -236,7 +236,9 @@ matchesRouter.get("/:matchId/derogation", async (c) => {
   const { data } = await c
     .get("supabase")
     .from("fbi_derogation_checks")
-    .select("numero, etat, date_depot, date_derogation, date_rencontre, heure, domicile, visiteur, checked_at")
+    .select(
+      "numero, etat, date_depot, date_derogation, date_rencontre, heure, domicile, visiteur, demandeur, motif, date_rencontre_demandee, heure_demandee, adversaire, date_reponse, acceptation, motif_refus, checked_at",
+    )
     .eq("club_id", club.id)
     .eq("match_id", matchId)
     .maybeSingle();
@@ -251,6 +253,14 @@ matchesRouter.get("/:matchId/derogation", async (c) => {
         heure: data.heure,
         domicile: data.domicile,
         visiteur: data.visiteur,
+        demandeur: data.demandeur,
+        motif: data.motif,
+        dateRencontreDemandee: data.date_rencontre_demandee,
+        heureDemandee: data.heure_demandee,
+        adversaire: data.adversaire,
+        dateReponse: data.date_reponse,
+        acceptation: data.acceptation,
+        motifRefus: data.motif_refus,
         checkedAt: data.checked_at,
       }
     : null;

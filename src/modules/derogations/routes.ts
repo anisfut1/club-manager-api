@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../auth/context.js";
-import { requireAuth, requireClubMembership } from "../../auth/middleware.js";
+import { requireAuth, requireClubMembership, requireClubRole } from "../../auth/middleware.js";
 import type { DerogationListItemDto } from "../../contracts/derogations.js";
 
 export const derogationsRouter = new Hono<AppEnv>();
@@ -16,14 +16,24 @@ derogationsRouter.use("*", requireClubMembership);
  * global qui check toutes les demandes, pas match par match"). Silencieux
  * (liste vide) pour un club sans FBI configuré, ou n'ayant jamais lancé de
  * vérification — jamais une erreur.
+ *
+ * `club_admin` uniquement : c'est aussi ce que la policy RLS
+ * `fbi_derogation_checks_select_club_admin` autorise déjà en lecture (voir
+ * migration 20260925130000) — un simple membre obtiendrait de toute façon
+ * une liste vide via `c.get("supabase")` (client scopé utilisateur, jamais
+ * la clé service ici), donc autoriser la route à tout membre serait
+ * silencieusement trompeur. Cohérent avec /admin/derogations côté SCSB,
+ * déjà réservée aux club_admin.
  */
-derogationsRouter.get("/", async (c) => {
+derogationsRouter.get("/", requireClubRole("club_admin"), async (c) => {
   const { club } = c.get("club");
   const supabase = c.get("supabase");
 
   const { data: checks, error } = await supabase
     .from("fbi_derogation_checks")
-    .select("match_id, numero, etat, date_depot, date_derogation, date_rencontre, heure, domicile, visiteur, checked_at")
+    .select(
+      "match_id, numero, etat, date_depot, date_derogation, date_rencontre, heure, domicile, visiteur, demandeur, motif, date_rencontre_demandee, heure_demandee, adversaire, date_reponse, acceptation, motif_refus, checked_at",
+    )
     .eq("club_id", club.id)
     .order("checked_at", { ascending: false });
 
@@ -49,6 +59,14 @@ derogationsRouter.get("/", async (c) => {
       heure: row.heure,
       domicile: row.domicile,
       visiteur: row.visiteur,
+      demandeur: row.demandeur,
+      motif: row.motif,
+      dateRencontreDemandee: row.date_rencontre_demandee,
+      heureDemandee: row.heure_demandee,
+      adversaire: row.adversaire,
+      dateReponse: row.date_reponse,
+      acceptation: row.acceptation,
+      motifRefus: row.motif_refus,
       checkedAt: row.checked_at,
     };
   });

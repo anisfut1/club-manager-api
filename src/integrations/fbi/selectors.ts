@@ -553,3 +553,21 @@ export async function searchControlsHtmlSnippet(page: Page, maxLength = 3000): P
 
   return html.length > maxLength ? `${html.slice(0, maxLength)}… (tronqué, ${html.length} caractères au total)` : html;
 }
+
+/**
+ * Lit le texte visible de la page de détail d'une dérogation
+ * (`afficherDerogation.fbi`), ligne par ligne — `null` quand la page
+ * courante n'a pas la forme attendue (pas de section "Demande de
+ * dérogation" détectée dans le texte), jamais un tableau vide
+ * silencieusement pris pour "rien à lire" (même discipline que
+ * `resultsTableGenericRows`). Volontairement basé sur `innerText` plutôt
+ * que sur une structure DOM précise (labels/inputs) — la mise en page de
+ * cette page (floating labels + soulignement, probable Angular Material)
+ * n'a été vue qu'en capture d'écran, jamais en HTML source, voir
+ * `derogation-detail.ts#extractDerogationDetailFields`.
+ */
+export async function derogationDetailPageLines(page: Page): Promise<string[] | null> {
+  const bodyText = await page.locator("body").innerText().catch(() => "");
+  if (!/demande de d[ée]rogation/i.test(bodyText)) return null;
+  return bodyText.split("\n");
+}

@@ -81,6 +81,14 @@ describe("GET /:clubId/derogations (voir docs/FBI.md)", () => {
         heure: "15:30",
         domicile: "SPORT CLUB DE SETE BASKET - 1",
         visiteur: "CASTELNAU BASKET - 2",
+        demandeur: null,
+        motif: null,
+        date_rencontre_demandee: null,
+        heure_demandee: null,
+        adversaire: null,
+        date_reponse: null,
+        acceptation: null,
+        motif_refus: null,
         checked_at: "2026-09-25T16:00:00.000Z",
       },
     ];
@@ -96,5 +104,71 @@ describe("GET /:clubId/derogations (voir docs/FBI.md)", () => {
       numero: "1",
       etat: "A Créer",
     });
+  });
+
+  it("inclut le détail (motif, dates demandées, réponse adversaire) quand la page de détail a été consultée ('il me faut du détail sur le motif... comme sur fbi')", async () => {
+    state.matches = [
+      {
+        id: "match-1",
+        club_id: CLUB_A.id,
+        numero: "1",
+        journee: null,
+        match_datetime: "2026-09-26T13:30:00.000Z",
+        is_home: true,
+        opponent_name: "Castelnau Basket - 2",
+        venue_raw_label: null,
+        score_home: null,
+        score_away: null,
+        status: "scheduled",
+        emarque_status: "not_applicable",
+        team_id: null,
+      },
+    ];
+    state.fbiDerogationChecks = [
+      {
+        id: "check-1",
+        club_id: CLUB_A.id,
+        match_id: "match-1",
+        numero: "1",
+        etat: "En Cours",
+        date_depot: "19/08/2026 17:42",
+        date_derogation: null,
+        date_rencontre: "26/09/2026",
+        heure: "15:30",
+        domicile: "SPORT CLUB DE SETE BASKET - 1",
+        visiteur: "CASTELNAU BASKET - 2",
+        demandeur: "Domicile",
+        motif: "Gymnase indisponible ce jour-là",
+        date_rencontre_demandee: "03/10/2026",
+        heure_demandee: "20:00",
+        adversaire: "CASTELNAU BASKET",
+        date_reponse: null,
+        acceptation: null,
+        motif_refus: null,
+        checked_at: "2026-09-25T16:00:00.000Z",
+      },
+    ];
+
+    const res = await request(`/${CLUB_A.id}/derogations`);
+    const body = await res.json();
+
+    expect(body.derogations[0]).toMatchObject({
+      demandeur: "Domicile",
+      motif: "Gymnase indisponible ce jour-là",
+      dateRencontreDemandee: "03/10/2026",
+      heureDemandee: "20:00",
+      adversaire: "CASTELNAU BASKET",
+      dateReponse: null,
+      acceptation: null,
+      motifRefus: null,
+    });
+  });
+
+  it("un coach reçoit 403 (réservé au club_admin, cohérent avec la policy RLS de lecture)", async () => {
+    state.roles = [{ membership_id: "membership-a1", role: "coach" }];
+
+    const res = await request(`/${CLUB_A.id}/derogations`);
+
+    expect(res.status).toBe(403);
   });
 });

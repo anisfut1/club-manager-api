@@ -50,8 +50,18 @@
           <th>Etat de la dérogation</th>
         </tr>
       </thead>
+      <!--
+        Lignes cliquables (onclick, navigation vers afficherDerogation.fbi) :
+        HYPOTHÈSE DE TEST, jamais confirmée contre le vrai FBI (réseau
+        *.ffbb.com bloqué depuis cet environnement) — reproduit le
+        comportement liste→détail attendu (voir fetchDerogationDetailForRow,
+        browser-client.ts). Le serveur de test ne route que par chemin, donc
+        les DEUX lignes renvoient ici la MÊME fixture de détail (limitation
+        acceptée du serveur de test statique, même réserve déjà documentée
+        pour le toggle "non joué").
+      -->
       <tbody>
-        <tr>
+        <tr onclick="location.href='afficherDerogation.fbi?idDerogation=1k%2BJhfgiN4lc&idRencontre=0'">
           <td></td>
           <td>19/08/2026 17:42</td>
           <td>1</td>
@@ -63,7 +73,7 @@
           <td></td>
           <td>Acceptée par l'organisme dirigeant</td>
         </tr>
-        <tr>
+        <tr onclick="location.href='afficherDerogation.fbi?idDerogation=FGzH5N295hQh&idRencontre=0'">
           <td></td>
           <td>20/08/2026 07:47</td>
           <td>9578</td>

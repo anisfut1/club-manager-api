@@ -25,6 +25,16 @@ describe("normalizeDerogationRow", () => {
       dateDepot: null,
       dateDerogation: null,
       etat: "A Créer",
+      // Champs de détail (page afficherDerogation.fbi) : toujours null tant
+      // qu'aucun passage par la page de détail, voir derogation-detail.ts.
+      demandeur: null,
+      motif: null,
+      dateRencontreDemandee: null,
+      heureDemandee: null,
+      adversaire: null,
+      dateReponse: null,
+      acceptation: null,
+      motifRefus: null,
       raw,
     });
   });

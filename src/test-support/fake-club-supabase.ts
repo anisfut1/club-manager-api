@@ -155,6 +155,14 @@ export interface FakeFbiDerogationCheckRow {
   heure: string | null;
   domicile: string | null;
   visiteur: string | null;
+  demandeur?: string | null;
+  motif?: string | null;
+  date_rencontre_demandee?: string | null;
+  heure_demandee?: string | null;
+  adversaire?: string | null;
+  date_reponse?: string | null;
+  acceptation?: string | null;
+  motif_refus?: string | null;
   checked_at: string;
 }
 

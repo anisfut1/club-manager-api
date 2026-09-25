@@ -41,15 +41,42 @@ export interface FbiScheduleRow {
 }
 
 /**
+ * Champs de la page de DÉTAIL `afficherDerogation.fbi` (sections "Demande
+ * de dérogation"/"Réponse de l'adversaire") — demande du club, 2026-09-25 :
+ * "il me faut du détail sur le motif... les dates initiales et
+ * demandées... comme sur fbi". Les dates/heure INITIALES sont déjà celles
+ * de `FbiDerogationRow.dateRencontre`/`.heure` (tableau de résultats) — ces
+ * champs-ci ne portent que ce qui n'existe QUE sur la page de détail : la
+ * date/heure DEMANDÉE et le motif, plus la réponse de l'adversaire.
+ * Confirmés par capture d'écran du VRAI FBI le 2026-09-25 (libellés
+ * "Demandeur", "Motif de la demande", "Date rencontre"/"Horaire" dans la
+ * section "Demande de dérogation", "Adversaire"/"Date de réponse"/
+ * "Acceptation"/"Motif de refus" dans "Réponse de l'adversaire"). `null`
+ * quand la page de détail n'a pas pu être ouverte (best effort, voir
+ * BrowserFbiClient) — jamais une erreur bloquante.
+ */
+export interface FbiDerogationDetailFields {
+  demandeur: string | null;
+  motif: string | null;
+  dateRencontreDemandee: string | null;
+  heureDemandee: string | null;
+  adversaire: string | null;
+  dateReponse: string | null;
+  acceptation: string | null;
+  motifRefus: string | null;
+}
+
+/**
  * Une ligne du tableau de résultats de `rechercherDerogation.fbi` (gestion
  * des dérogations, voir docs/FBI.md — demande du club, 2026-09-25 : "faut
  * qu'on gere les derog depuis l'outil") — colonnes confirmées par capture
  * d'écran du VRAI FBI le 2026-09-25 : Date de dépôt | N° Renc | Division |
  * Domicile | Visiteur | Date rencontre | Heure | Date déro | Etat de la
  * dérogation. `raw` conserve toutes les colonnes trouvées, y compris non
- * modélisées.
+ * modélisées. Étendue de `FbiDerogationDetailFields` (tous `null` tant que
+ * la page de détail n'a pas été consultée — voir `normalizeDerogationRow`).
  */
-export interface FbiDerogationRow {
+export interface FbiDerogationRow extends FbiDerogationDetailFields {
   numero: string | null;
   division: string | null;
   domicile: string | null;

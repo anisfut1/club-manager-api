@@ -33,6 +33,10 @@ beforeEach(() => {
   // Écran de recherche des dérogations, confirmé par capture d'écran du vrai
   // FBI le 2026-09-25 (URL copiée par le club depuis sa barre d'adresse).
   server.setRoute({ path: "/rechercherDerogation.fbi", contentType: "text/html", body: fixture("rechercher-derogation.html") });
+  // Page de détail d'une dérogation — le serveur de test route par CHEMIN
+  // seulement (query string ignorée), donc toute ligne cliquée renvoie
+  // cette même fixture (voir commentaire dans rechercher-derogation.html).
+  server.setRoute({ path: "/afficherDerogation.fbi", contentType: "text/html", body: fixture("afficher-derogation.html") });
   server.setRoute({ path: "/detail.fbi", contentType: "text/html", body: fixture("detail.html") });
   server.setRoute({ path: "/export/2813.zip", contentType: "application/zip", body: Buffer.from("contenu-zip-synthetique") });
   // Beacon fetch() déclenché par la fixture rechercher-rencontre.html au
@@ -374,6 +378,29 @@ describe("BrowserFbiClient.fetchDerogationForMatch (gestion des dérogations, vo
     await client.closeSession(session);
   });
 
+  it("ouvre le détail de la ligne trouvée et ramène motif/dates demandées/réponse adversaire ('il me faut du détail... comme sur fbi')", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    const derogation = await client.fetchDerogationForMatch(session, "1");
+
+    expect(derogation).toMatchObject({
+      demandeur: "Domicile",
+      motif: "Gymnase indisponible ce jour-là",
+      dateRencontreDemandee: "03/10/2026",
+      heureDemandee: "20:00",
+      adversaire: "CASTELNAU BASKET",
+      dateReponse: null,
+      acceptation: null,
+      motifRefus: null,
+    });
+    // Retombe bien sur le tableau de résultats après avoir lu le détail
+    // (page.goBack()) — jamais coincé sur afficherDerogation.fbi.
+    expect(session.page.url()).toContain("rechercherDerogation.fbi");
+
+    await client.closeSession(session);
+  });
+
   it("renvoie null quand aucune dérogation n'existe pour ce numéro (cas normal, pas une erreur)", async () => {
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
     const session = await client.login({ username: "club1234", password: "secret" });
@@ -396,6 +423,20 @@ describe("BrowserFbiClient.fetchAllDerogations ('je veux un bouton global qui ch
     expect(derogations.map((d) => d.numero).sort()).toEqual(["1", "9578"]);
     expect(session.page.url()).toContain("etat=TOUS_ETATS");
     expect(session.page.url()).not.toContain("etat=A_CREER");
+
+    await client.closeSession(session);
+  });
+
+  it("ramène aussi le détail (motif/dates demandées/réponse) de CHAQUE ligne, pas seulement la première", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    const derogations = await client.fetchAllDerogations(session);
+
+    for (const derogation of derogations) {
+      expect(derogation.motif).toBe("Gymnase indisponible ce jour-là");
+      expect(derogation.dateRencontreDemandee).toBe("03/10/2026");
+    }
 
     await client.closeSession(session);
   });

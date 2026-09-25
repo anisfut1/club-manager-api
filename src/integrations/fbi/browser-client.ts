@@ -4,7 +4,8 @@ import { FbiError } from "./errors.js";
 import * as selectors from "./selectors.js";
 import { normalizeScheduleRow } from "./schedule-row.js";
 import { normalizeDerogationRow } from "./derogation-row.js";
-import type { FbiDerogationRow, FbiScheduleRow } from "./types.js";
+import { extractDerogationDetailFields } from "./derogation-detail.js";
+import type { FbiDerogationDetailFields, FbiDerogationRow, FbiScheduleRow } from "./types.js";
 import { logInfo } from "../../logger.js";
 
 /**
@@ -781,9 +782,11 @@ export class BrowserFbiClient {
    * "faudra utiliser la recherche par numéro de rencontre, car on l'a déjà
    * et c'est bcp + simple" (demande du club) — recherche donc DIRECTEMENT
    * par numéro, jamais par division/date. LECTURE SEULE : cette méthode ne
-   * clique JAMAIS sur un résultat pour aller voir/modifier le détail —
-   * seule la ligne du tableau de résultats est lue (état, dates), qui
-   * suffit pour la portée v1 (voir docs/FBI.md).
+   * fait QUE consulter (jamais soumettre/modifier une dérogation) — mais
+   * clique désormais dans le détail de la ligne trouvée pour en ramener le
+   * motif, la date/heure demandées et la réponse de l'adversaire (demande
+   * du club, 2026-09-25 : "il me faut du détail sur le motif... les dates
+   * initiales et demandées... comme sur fbi", voir `fetchDerogationDetailForRow`).
    */
   async fetchDerogationForMatch(session: BrowserFbiSession, matchNumber: string): Promise<FbiDerogationRow | null> {
     const { page } = session;
@@ -820,7 +823,11 @@ export class BrowserFbiClient {
     // correcte (même prudence que `matchNumberInResultsTable` côté
     // découverte e-Marque : une recherche mal filtrée pourrait renvoyer
     // d'autres rencontres).
-    return normalized.find((row) => row.numero === matchNumber) ?? null;
+    const matchIndex = normalized.findIndex((row) => row.numero === matchNumber);
+    if (matchIndex === -1) return null;
+
+    const detail = await this.fetchDerogationDetailForRow(page, matchIndex);
+    return detail ? { ...normalized[matchIndex], ...detail } : normalized[matchIndex];
   }
 
   /**
@@ -830,8 +837,13 @@ export class BrowserFbiClient {
    * TOUTES les dérogations du club connecté. UNE SEULE connexion FBI pour
    * tout le club, jamais une boucle de connexions par match (déjà à
    * l'origine d'un blocage anti-bot par le passé pour `discover_emarque`,
-   * voir ProcessFbiJobsButton.tsx côté SCSB). Parcourt toutes les pages via
-   * `collectAllResultPages` — même mécanisme que `fetchScheduleRows`.
+   * voir ProcessFbiJobsButton.tsx côté SCSB). Parcourt toutes les pages et
+   * clique dans le détail de CHAQUE ligne via `collectAllDerogationsWithDetail`
+   * (motif/dates demandées/réponse adversaire, même demande que
+   * `fetchDerogationForMatch`) — une seule connexion, mais nettement plus
+   * de navigations que l'ancienne version (qui ne lisait que le tableau) :
+   * accepté pour avoir le détail de TOUTES les demandes en un clic, voir
+   * docs/FBI.md pour le compromis.
    */
   async fetchAllDerogations(session: BrowserFbiSession): Promise<FbiDerogationRow[]> {
     const { page } = session;
@@ -850,20 +862,100 @@ export class BrowserFbiClient {
       );
     }
 
-    const rawRows = await this.collectAllResultPages(page);
-    return rawRows.map(normalizeDerogationRow);
+    return this.collectAllDerogationsWithDetail(page);
+  }
+
+  /**
+   * Ouvre le détail d'UNE ligne du tableau de résultats de dérogations
+   * (clic sur le `<tr>`, jamais la case à cocher en première colonne —
+   * suppose que le clic déclenche la même navigation qu'un clic manuel
+   * vers `afficherDerogation.fbi`, JAMAIS CONFIRMÉ contre le vrai FBI,
+   * réseau `*.ffbb.com` bloqué depuis cet environnement) puis revient sur
+   * le tableau (`page.goBack()`) avant de rendre la main à l'appelant.
+   * Best effort intégral : si le clic ne mène pas à une URL
+   * `afficherDerogation.fbi`, ou que la page de détail n'a pas la forme
+   * attendue, renvoie `null` SANS lever d'erreur — une ligne dont le détail
+   * échoue à s'ouvrir ne doit jamais interrompre tout le lot (le
+   * tableau de résultats reste la source de vérité minimale).
+   */
+  private async fetchDerogationDetailForRow(page: Page, rowIndex: number): Promise<FbiDerogationDetailFields | null> {
+    const row = page.locator("table tbody tr").nth(rowIndex);
+    if ((await row.count().catch(() => 0)) === 0) return null;
+
+    const urlBeforeClick = page.url();
+    try {
+      await row.click();
+      await this.settle(page);
+      await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+    } catch {
+      return null;
+    }
+
+    if (!/afficherDerogation\.fbi/i.test(page.url())) {
+      if (page.url() !== urlBeforeClick) await page.goBack().catch(() => {});
+      return null;
+    }
+
+    const lines = await selectors.derogationDetailPageLines(page).catch(() => null);
+    const detail = lines ? extractDerogationDetailFields(lines) : null;
+
+    await page.goBack().catch(() => {});
+    await this.settle(page);
+
+    return detail;
+  }
+
+  /**
+   * Variante de `collectAllResultPages` propre aux dérogations : après
+   * chaque page de résultats lue, clique dans le détail de CHAQUE ligne
+   * (`fetchDerogationDetailForRow`) avant de passer à la page suivante —
+   * gardée séparée de `collectAllResultPages` (utilisée aussi par le
+   * rapprochement calendrier, qui n'a pas de page de détail à ouvrir) pour
+   * ne jamais mélanger les deux besoins.
+   */
+  private async collectAllDerogationsWithDetail(page: Page): Promise<FbiDerogationRow[]> {
+    const MAX_PAGES = 50;
+    const collected: FbiDerogationRow[] = [];
+    let previousSignature: string | null = null;
+
+    for (let i = 0; i < MAX_PAGES; i += 1) {
+      const rawRows = await selectors.resultsTableGenericRows(page).catch(() => null);
+      const signature = JSON.stringify(rawRows);
+      if (signature === previousSignature) break;
+      previousSignature = signature;
+
+      if (rawRows) {
+        for (let rowIndex = 0; rowIndex < rawRows.length; rowIndex += 1) {
+          const normalized = normalizeDerogationRow(rawRows[rowIndex]);
+          const detail = await this.fetchDerogationDetailForRow(page, rowIndex);
+          collected.push(detail ? { ...normalized, ...detail } : normalized);
+        }
+      }
+
+      const next = selectors.nextPageControl(page);
+      if ((await next.count().catch(() => 0)) === 0) break;
+      if (!(await next.first().isEnabled().catch(() => false))) break;
+
+      try {
+        await next.first().click();
+        await this.settle(page);
+        await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+      } catch {
+        break;
+      }
+    }
+
+    return collected;
   }
 
   /**
    * Rejoint l'écran de recherche des dérogations et réinitialise "Etat de
-   * la dérogation" à son premier `<option>` — confirmé par capture d'écran
-   * (2026-09-25) que ce filtre peut être positionné sur un état précis
-   * ("A Créer") au chargement : le laisser tel quel risquerait de cacher
-   * une dérogation déjà en cours/acceptée. Recherché par le LIBELLÉ visible
-   * "Etat de la dérogation" (même principe que
-   * `seasonSelect`/`nonJoueCheckbox` sur l'écran de recherche de
-   * rencontre) — best effort, jamais bloquant. Partagé par
-   * `fetchDerogationForMatch` et `fetchAllDerogations`.
+   * la dérogation" sur "Tous les états (sauf à créer)" PAR LIBELLÉ (voir
+   * ci-dessous, jamais par position — un précédent correctif sélectionnait
+   * à tort le premier `<option>`, "A Créer" dans la vraie liste, ce qui
+   * aurait masqué toutes les vraies demandes en cours). Best effort,
+   * jamais bloquant. Partagé par `fetchDerogationForMatch` et
+   * `fetchAllDerogations`.
    */
   private async navigateToDerogationSearchScreen(page: Page): Promise<void> {
     const targetUrl = `${this.baseUrl}/rechercherDerogation.fbi`;

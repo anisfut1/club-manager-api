@@ -7,6 +7,15 @@ import { z } from "./zod.js";
  * volontairement limitée à la consultation). Toutes les valeurs restent au
  * format BRUT FBI (texte), jamais parsées — le format exact n'a été
  * observé que sur une capture d'écran, pas confirmé pour tous les états.
+ *
+ * `demandeur`/`motif`/`dateRencontreDemandee`/`heureDemandee`/`adversaire`/
+ * `dateReponse`/`acceptation`/`motifRefus` viennent de la page de DÉTAIL
+ * (`afficherDerogation.fbi`), pas du tableau de résultats — demande du
+ * club, 2026-09-25 : "il me faut du détail sur le motif... les dates
+ * initiales et demandées... comme sur fbi". `dateRencontre`/`heure`
+ * restent les valeurs INITIALES (tableau de résultats), `null` quand la
+ * page de détail n'a jamais pu être ouverte (best effort, voir
+ * BrowserFbiClient).
  */
 export const DerogationStatusDtoSchema = z
   .object({
@@ -18,6 +27,14 @@ export const DerogationStatusDtoSchema = z
     heure: z.string().nullable(),
     domicile: z.string().nullable(),
     visiteur: z.string().nullable(),
+    demandeur: z.string().nullable(),
+    motif: z.string().nullable(),
+    dateRencontreDemandee: z.string().nullable(),
+    heureDemandee: z.string().nullable(),
+    adversaire: z.string().nullable(),
+    dateReponse: z.string().nullable(),
+    acceptation: z.string().nullable(),
+    motifRefus: z.string().nullable(),
     checkedAt: z.string(),
   })
   .openapi("DerogationStatusDto");
