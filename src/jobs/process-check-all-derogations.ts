@@ -6,6 +6,7 @@ import { launchServerlessBrowser } from "../integrations/fbi/browser-launcher.js
 import { classifyFbiLoginStatus, FbiError } from "../integrations/fbi/errors.js";
 import { nextErrorBackoffSeconds } from "./backoff.js";
 import { getEnv } from "../config/env.js";
+import { currentSeasonStart } from "../season.js";
 import { logError, logInfo } from "../logger.js";
 
 async function rescheduleJob(supabase: DbClient, job: FbiJobRow, delaySeconds: number, lastError: string | null): Promise<void> {
@@ -73,7 +74,19 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
   try {
     const derogations = await client.fetchAllDerogations(session);
 
-    const { data: matches, error: matchesError } = await supabase.from("matches").select("id, numero").eq("club_id", job.club_id);
+    // Scopé à la saison EN COURS (même convention que `currentSeasonStart`
+    // côté /v1/clubs/:clubId/issues) — `numero` n'est PAS unique sur toute
+    // l'historique d'un club : constaté en production le 2026-09-25, une
+    // dérogation de septembre 2026 s'est vue associée à un match de mai
+    // 2026 (saison précédente) partageant le même numéro de rencontre,
+    // faussant complètement la date/l'adversaire affichés. Sans scoping,
+    // `matchIdByNumero` garde arbitrairement le DERNIER match rencontré
+    // pour un numéro donné, jamais forcément celui de la bonne saison.
+    const { data: matches, error: matchesError } = await supabase
+      .from("matches")
+      .select("id, numero")
+      .eq("club_id", job.club_id)
+      .gte("match_datetime", currentSeasonStart().toISOString());
     if (matchesError) throw new Error(`Lecture des rencontres du club échouée : ${matchesError.message}`);
 
     const matchIdByNumero = new Map((matches ?? []).filter((m) => m.numero).map((m) => [m.numero as string, m.id]));
