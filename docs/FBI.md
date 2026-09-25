@@ -2278,15 +2278,9 @@ fonctionnel (une rencontre est ressortie avec un état RÉEL différent de
    état** (confirmé par les horodatages : une seule ligne à 16:06:07,
    toutes les autres à 15:42:19 — la vérification précédente, jamais
    rafraîchie). `processCheckAllDerogationsJob` n'a jamais nettoyé les
-   lignes `fbi_derogation_checks` PÉRIMÉES : une dérogation qu'une
-   recherche plus récente ne retrouve plus (état résolu, ou — ici —
-   l'ancien bug de filtre qui avait laissé des lignes "A Créer" à tort)
-   restait affichée indéfiniment. **Corrigé** : le job supprime
-   maintenant, après chaque exécution, les lignes du club dont
-   `checked_at` est antérieur à CETTE exécution et dont le match n'a pas
-   été retrouvé cette fois-ci — jamais une ligne écrite par un job
-   concurrent entre-temps (filtre sur `checked_at`, pas un simple "tout
-   sauf ceux-là").
+   lignes `fbi_derogation_checks` PÉRIMÉES. Un nettoyage automatique a été
+   ajouté ce round, puis **retiré le jour même** après avoir causé une
+   perte de données réelle — voir le round suivant.
 
 **Limite connue, pas construite** : la page de détail a une TROISIÈME
 section, "Réponse de l'organisme dirigeant" (masquée par défaut dans le
@@ -2299,6 +2293,55 @@ le motif de la demande récupéré correctement — à construire si le club
 en a besoin, sur la base des mêmes `id` stables
 (`dateReponseOrganismeDirigeant`, `reponseOrganismeDirigeantValidee`,
 `organismeDirigeantMotifRefus`), déjà confirmés par le même HTML source.
+
+### Incident et revert le 2026-09-25 (quatrième round — perte de données réelle)
+
+Le nettoyage automatique décrit au round précédent a tourné en production
+et **effacé la totalité des dérogations connues du club** (0 ligne
+restante, `/admin/derogations` affichant "Aucune dérogation connue" alors
+que ~20 étaient connues quelques heures plus tôt). Séquence exacte :
+- L'exécution avait trouvé anormalement PEU de dérogations (`derogationsFound:
+  3`, contre 23 lors de l'exécution précédente) et n'en avait matché
+  AUCUNE à un match courant (`matched: 0`) — cause probable : la variante
+  "détail par ligne" de `fetchAllDerogations` (ajoutée au round 3)
+  relance une recherche FBI complète PAR DÉROGATION TROUVÉE
+  (`rebuildDerogationResultsTable`) pour contourner la perte du tableau
+  AJAX après un `goBack()` — un enchaînement de dizaines de
+  navigations/soumissions successives, chacune un point de défaillance
+  possible, sur lequel ce job ne peut PAS détecter une recherche qui
+  "perd" des résultats en cours de route (aucun moyen de distinguer "il
+  n'y a vraiment que 3 dérogations" de "la recherche a dégénéré").
+- Le nettoyage (`matched === 0` ⇒ aucune exclusion dans le `DELETE`)
+  a alors supprimé TOUTES les lignes existantes du club, y compris
+  celles d'une exécution antérieure fiable (23 trouvées, 20 matchées).
+
+**Décision** : une perte de données pour un affichage périmé est un
+échange largement défavorable, quelle que soit la fréquence de
+l'incident déclencheur. Revert intégral plutôt qu'un correctif plus fin
+du nettoyage :
+- `processCheckAllDerogationsJob` ne supprime plus AUCUNE ligne — une
+  ligne "A Créer" périmée peut rester affichée quelques exécutions de
+  plus, elle se corrige d'elle-même dès qu'une exécution future la
+  retrouve (upsert). Jamais de suppression automatique tant qu'on ne peut
+  pas garantir qu'une recherche est exhaustive.
+- `fetchAllDerogations` (bulk, "Vérifier toutes les dérogations") ne
+  clique plus dans le détail des lignes — retour à la lecture simple du
+  tableau (`collectAllResultPages`, MÊME pagination que les deux autres
+  pages FBI), aussi fiable que le tout premier round de cette
+  fonctionnalité. `collectAllDerogationsWithDetail`/
+  `rebuildDerogationResultsTable` supprimées.
+- Le détail par ligne (motif/dates demandées/réponse) reste disponible
+  UNIQUEMENT via `fetchDerogationForMatch` (bouton "Vérifier sur FBI",
+  un seul match à la fois, un seul aller-retour détail — jamais
+  d'enchaînement de recherches répétées, le scénario qui a dégradé le
+  bulk). Le club peut ouvrir le détail d'une dérogation précise depuis sa
+  fiche match ; la liste globale reste volontairement un simple résumé
+  (état/dates initiales), fiable et complet.
+
+Après ce revert, relancer "Vérifier toutes les dérogations" doit
+retrouver les ~20 dérogations matchées comme lors de l'exécution
+15:40-15:42 (avant l'incident) — la liste vide constatée n'est pas
+récupérable autrement qu'en relançant une vérification.
 
 **Ce qui n'est PAS fait (volontairement)** :
 - **Toute écriture sur FBI** : créer une dérogation, cocher

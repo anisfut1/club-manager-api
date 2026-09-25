@@ -94,7 +94,6 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
     const now = new Date().toISOString();
     let matched = 0;
     let unmatched = 0;
-    const matchIdsSeenThisRun: string[] = [];
 
     for (const derogation of derogations) {
       const matchId = derogation.numero ? matchIdByNumero.get(derogation.numero) : undefined;
@@ -134,24 +133,18 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
       );
       if (upsertError) throw new Error(`Écriture du résultat de dérogation échouée : ${upsertError.message}`);
       matched += 1;
-      matchIdsSeenThisRun.push(matchId);
     }
 
-    // Supprime les lignes du club qu'une exécution PRÉCÉDENTE avait
-    // écrites mais que CETTE recherche ne retrouve plus (dérogation
-    // résolue/retirée côté FBI, ou — constaté en production le 2026-09-25
-    // — un ancien bug de filtre qui avait laissé des lignes "A Créer"
-    // périmées après sa correction) : sans ce nettoyage, /admin/derogations
-    // continuerait d'afficher des lignes obsolètes indéfiniment, jamais
-    // rafraîchies puisque `fetchAllDerogations` ne les retrouve plus.
-    // `checked_at` sert de filtre plutôt qu'un DELETE de tout ce qui n'est
-    // pas dans matchIdsSeenThisRun, pour ne jamais supprimer une ligne
-    // écrite par un job CONCURRENT qui aurait tourné entre-temps.
-    const staleQuery = supabase.from("fbi_derogation_checks").delete().eq("club_id", job.club_id).lt("checked_at", now);
-    const { error: cleanupError } =
-      matchIdsSeenThisRun.length > 0 ? await staleQuery.not("match_id", "in", `(${matchIdsSeenThisRun.join(",")})`) : await staleQuery;
-    if (cleanupError) logError("Nettoyage des dérogations périmées échoué (non bloquant)", cleanupError, { clubId: job.club_id, jobId: job.id });
-
+    // PAS de suppression automatique des lignes "non retrouvées cette
+    // fois" : tenté le 2026-09-25 (nettoyage des lignes dont checked_at
+    // est antérieur à cette exécution), et retiré le jour même après avoir
+    // constaté en production qu'une exécution ayant trouvé anormalement
+    // PEU de dérogations (recherche FBI dégradée/partielle, jamais garanti
+    // exhaustive) avait alors supprimé TOUTES les lignes connues du club —
+    // une perte de données pour un simple affichage périmé, un échange
+    // largement défavorable. Une ligne "A Créer" périmée qui reste
+    // affichée quelques exécutions de plus est un moindre mal ; elle se
+    // corrige d'elle-même dès qu'une exécution future la retrouve.
     const result = { derogationsFound: derogations.length, matched, unmatched };
     await supabase.from("fbi_jobs").update({ status: "succeeded", finished_at: now, result }).eq("id", job.id);
 

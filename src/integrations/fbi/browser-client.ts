@@ -836,13 +836,20 @@ export class BrowserFbiClient {
    * TOUTES les dérogations du club connecté. UNE SEULE connexion FBI pour
    * tout le club, jamais une boucle de connexions par match (déjà à
    * l'origine d'un blocage anti-bot par le passé pour `discover_emarque`,
-   * voir ProcessFbiJobsButton.tsx côté SCSB). Parcourt toutes les pages et
-   * clique dans le détail de CHAQUE ligne via `collectAllDerogationsWithDetail`
-   * (motif/dates demandées/réponse adversaire, même demande que
-   * `fetchDerogationForMatch`) — une seule connexion, mais nettement plus
-   * de navigations que l'ancienne version (qui ne lisait que le tableau) :
-   * accepté pour avoir le détail de TOUTES les demandes en un clic, voir
-   * docs/FBI.md pour le compromis.
+   * voir ProcessFbiJobsButton.tsx côté SCSB). Lit le tableau de résultats
+   * via `collectAllResultPages` — MÊME pagination générique que les deux
+   * autres pages FBI, JAMAIS de détail par ligne ici.
+   *
+   * Une version antérieure cliquait dans le détail de CHAQUE ligne (pour
+   * motif/dates demandées) — retirée le 2026-09-25 après avoir constaté en
+   * production qu'un lot d'une vingtaine de dérogations en tombait à 3
+   * trouvées : reconstruire le tableau après chaque ligne (login unique,
+   * mais une recherche FBI de plus par dérogation) multiplie les points de
+   * défaillance possibles sur un enchaînement de dizaines
+   * d'allers-retours, et une recherche dégradée qui en "perd" en cours de
+   * route n'est jamais détectable depuis ce seul job. Le détail par ligne
+   * reste disponible via `fetchDerogationForMatch` (un seul match, un seul
+   * aller-retour, éprouvé fiable) — voir docs/FBI.md.
    */
   async fetchAllDerogations(session: BrowserFbiSession): Promise<FbiDerogationRow[]> {
     const { page } = session;
@@ -861,7 +868,8 @@ export class BrowserFbiClient {
       );
     }
 
-    return this.collectAllDerogationsWithDetail(page);
+    const rawRows = await this.collectAllResultPages(page);
+    return rawRows.map(normalizeDerogationRow);
   }
 
   /**
@@ -901,97 +909,6 @@ export class BrowserFbiClient {
     await this.settle(page);
 
     return detail;
-  }
-
-  /**
-   * Variante de `collectAllResultPages` propre aux dérogations : après
-   * chaque page de résultats lue, clique dans le détail de CHAQUE ligne
-   * (`fetchDerogationDetailForRow`) avant de passer à la page suivante —
-   * gardée séparée de `collectAllResultPages` (utilisée aussi par le
-   * rapprochement calendrier, qui n'a pas de page de détail à ouvrir) pour
-   * ne jamais mélanger les deux besoins.
-   */
-  private async collectAllDerogationsWithDetail(page: Page): Promise<FbiDerogationRow[]> {
-    const MAX_PAGES = 50;
-    const collected: FbiDerogationRow[] = [];
-    let previousSignature: string | null = null;
-
-    for (let pageIndex = 0; pageIndex < MAX_PAGES; pageIndex += 1) {
-      const rawRows = await selectors.resultsTableGenericRows(page).catch(() => null);
-      const signature = JSON.stringify(rawRows);
-      if (signature === previousSignature) break;
-      previousSignature = signature;
-
-      if (rawRows) {
-        for (let rowIndex = 0; rowIndex < rawRows.length; rowIndex += 1) {
-          const normalized = normalizeDerogationRow(rawRows[rowIndex]);
-          const detail = await this.fetchDerogationDetailForRow(page, rowIndex);
-          collected.push(detail ? { ...normalized, ...detail } : normalized);
-
-          // Le tableau de résultats est peuplé par AJAX (jamais une
-          // navigation, voir navigateToDerogationSearchScreen) :
-          // `page.goBack()` dans fetchDerogationDetailForRow ne restaure
-          // PAS ce tableau, contrairement à une vraie page navigable —
-          // constaté en test réel (la ligne suivante n'existait plus dans
-          // le DOM après un premier aller-retour détail, son détail
-          // ressortait toujours `null`). Reconstitue donc le tableau
-          // (nouvelle recherche + repagination jusqu'à la page courante)
-          // avant la ligne suivante — plus lent (une recherche de plus par
-          // dérogation), mais fiable quel que soit le comportement de
-          // cache du navigateur réel.
-          await this.rebuildDerogationResultsTable(page, pageIndex);
-        }
-      }
-
-      const next = selectors.nextPageControl(page);
-      if ((await next.count().catch(() => 0)) === 0) break;
-      if (!(await next.first().isEnabled().catch(() => false))) break;
-
-      try {
-        await next.first().click();
-        await this.settle(page);
-        await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
-      } catch {
-        break;
-      }
-    }
-
-    return collected;
-  }
-
-  /**
-   * Relance la recherche "toutes dérogations" depuis zéro puis reclique
-   * "Suivant" jusqu'à `targetPageIndex` — utilisé par
-   * `collectAllDerogationsWithDetail` pour reconstituer le tableau de
-   * résultats après chaque visite de détail (voir ci-dessus). Best effort
-   * intégral : un échec ici laisse simplement le tableau dans l'état où il
-   * se trouve, les lignes déjà collectées ne sont jamais perdues.
-   */
-  private async rebuildDerogationResultsTable(page: Page, targetPageIndex: number): Promise<void> {
-    await this.navigateToDerogationSearchScreen(page);
-
-    try {
-      const submit = selectors.searchSubmitControl(page).first();
-      if ((await submit.count().catch(() => 0)) > 0) await submit.click();
-      await this.settle(page);
-      await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
-    } catch {
-      return;
-    }
-
-    for (let p = 0; p < targetPageIndex; p += 1) {
-      const next = selectors.nextPageControl(page);
-      if ((await next.count().catch(() => 0)) === 0) return;
-      if (!(await next.first().isEnabled().catch(() => false))) return;
-
-      try {
-        await next.first().click();
-        await this.settle(page);
-        await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
-      } catch {
-        return;
-      }
-    }
   }
 
   /**

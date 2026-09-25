@@ -429,16 +429,19 @@ describe("BrowserFbiClient.fetchAllDerogations ('je veux un bouton global qui ch
     await client.closeSession(session);
   });
 
-  it("ramène aussi le détail (motif/dates demandées/réponse) de CHAQUE ligne, pas seulement la première", async () => {
+  it("ne clique JAMAIS dans le détail des lignes (lit uniquement le tableau) — retiré le 2026-09-25 après avoir constaté qu'un enchaînement de recherches-par-ligne pouvait faire perdre des résultats en production (23 dérogations trouvées avant, 3 après)", async () => {
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
     const session = await client.login({ username: "club1234", password: "secret" });
 
     const derogations = await client.fetchAllDerogations(session);
 
+    expect(derogations).toHaveLength(2);
     for (const derogation of derogations) {
-      expect(derogation.motif).toBe("Gymnase indisponible ce jour-là");
-      expect(derogation.dateRencontreDemandee).toBe("03/10/2026");
+      expect(derogation.motif).toBeNull();
+      expect(derogation.dateRencontreDemandee).toBeNull();
     }
+    // Jamais parti sur afficherDerogation.fbi — reste sur le tableau de résultats.
+    expect(session.page.url()).toContain("rechercherDerogation.fbi");
 
     await client.closeSession(session);
   });
