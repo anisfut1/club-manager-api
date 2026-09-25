@@ -2039,16 +2039,34 @@ et c'est bcp + simple"** (demande explicite du club) — `fetchDerogationForMatc
 recherche donc DIRECTEMENT par `matches.numero` (déjà connu via la
 synchro FFBB), jamais par division/date/domicile-visiteur.
 
+**Bug corrigé le 2026-09-25 (capture d'écran du VRAI sélecteur)** : la
+première version de `navigateToDerogationSearchScreen` réinitialisait le
+filtre "Etat de la dérogation" à `options.first()`/position 0, en supposant
+que la première option serait un état neutre "tout afficher". Une capture
+d'écran du vrai FBI a révélé la liste réelle : "A Créer | En Cours |
+Acceptée par les deux associations sportives | Acceptée par l'organisme
+dirigeant | Refusée | Tous les états (sauf à créer)" — la position 0 est en
+réalité **"A Créer"** (état de bruit/référence, jamais une vraie demande en
+cours), et l'option qui affiche réellement tout, **"Tous les états (sauf à
+créer)"**, est la DERNIÈRE (déjà présélectionnée par défaut sur le vrai
+site). Le code déployé avant ce correctif aurait donc silencieusement
+masqué toutes les vraies demandes de dérogation en cours lors de chaque
+recherche — l'inverse de l'objectif. Corrigé : la sélection se fait
+désormais en parcourant tous les `<option>` et en matchant leur LIBELLÉ
+visible (`/tous les états/i`), jamais par position. Le sélecteur reste
+"best effort" (si l'option n'est pas trouvée, la recherche continue avec
+l'état déjà en place plutôt que d'échouer).
+
 **Architecture** :
+- `navigateToDerogationSearchScreen(page)` (méthode partagée, extraite pour
+  être réutilisée par `fetchDerogationForMatch` ET `fetchAllDerogations` —
+  voir ci-dessous) : navigue vers `rechercherDerogation.fbi`, réinitialise
+  le sélecteur "Etat de la dérogation" sur "Tous les états (sauf à créer)"
+  par LIBELLÉ (voir bug corrigé ci-dessus).
 - `FbiAutomationClient.fetchDerogationForMatch(session, matchNumber)`
-  (nouvelle méthode, `types.ts`) : navigue vers `rechercherDerogation.fbi`,
-  réinitialise le sélecteur "Etat de la dérogation" à son premier
-  `<option>` (best effort, cherché par le LIBELLÉ visible — confirmé par
-  capture d'écran que ce filtre peut être préréglé sur "A Créer" au
-  chargement, ce qui cacherait une dérogation déjà "En cours"/"Acceptée"
-  pour CE match précis si on ne le réinitialisait pas), remplit "Numéro de
-  rencontre" (réutilise `selectors.matchNumberSearchInput`, déjà générique),
-  soumet, lit le tableau de résultats (réutilise
+  (`types.ts`) : appelle `navigateToDerogationSearchScreen`, remplit
+  "Numéro de rencontre" (réutilise `selectors.matchNumberSearchInput`, déjà
+  générique), soumet, lit le tableau de résultats (réutilise
   `selectors.resultsTableGenericRows` — MÊME structure générique que les
   deux autres pages FBI), et ne retient QUE la ligne dont le "N° Renc"
   correspond EXACTEMENT au numéro cherché. `null` quand rien n'est trouvé
@@ -2079,6 +2097,45 @@ synchro FFBB), jamais par division/date/domicile-visiteur.
   attente" existant ou le cron quotidien (même modèle que
   `reconcile-schedule`, jamais synchrone ici).
 
+### Vérification globale (2026-09-25)
+
+Demande du club juste après la phase 1 : **"je veux un bouton global qui
+check toutes les demandes, pas match par match, c pas le cas ?"** —
+vérifier chaque match un par un impliquerait une connexion FBI par match,
+alors qu'un incident déjà documenté (`ProcessFbiJobsButton.tsx`) montre
+qu'environ 190 connexions FBI rapprochées ont déjà déclenché un blocage
+anti-bot. Une seule connexion pour tout le club est donc préférée dès le
+départ, pas seulement une optimisation :
+- `FbiAutomationClient.fetchAllDerogations(session)` (`types.ts`) : appelle
+  `navigateToDerogationSearchScreen`, soumet la recherche avec le "Numéro
+  de rencontre" VIDE (renvoie donc TOUTES les dérogations visibles dans
+  l'état "Tous les états (sauf à créer)"), lit toutes les pages de
+  résultats (réutilise `collectAllResultPages`, même pagination générique
+  que les deux autres pages FBI). `HttpFbiClient` échoue explicitement
+  (même discipline).
+- `check_all_derogations` (nouveau type de job `fbi_jobs`, scopé au CLUB
+  — `match_id` NULL, un seul par club à la fois, contrainte
+  `fbi_jobs_unique_pending_all_derogations`, migration
+  `20260925140000_fbi_check_all_derogations.sql`) : login FBI UNE FOIS,
+  `fetchAllDerogations`, puis pour chaque dérogation trouvée fait
+  correspondre son "N° Renc" à `matches.numero` du club et upsert la ligne
+  `fbi_derogation_checks` (`onConflict: "club_id,match_id"`) — une
+  dérogation dont le numéro ne correspond à aucun match connu du club est
+  simplement comptée (`unmatched`) et ignorée, jamais une erreur (résultat
+  du job : `{ derogationsFound, matched, unmatched }`).
+- `POST /v1/clubs/:clubId/integrations/fbi/check-all-derogations`
+  (club_admin) — empile le job, même modèle que `reconcile-schedule` (409
+  `CHECK_ALL_DEROGATIONS_ALREADY_QUEUED` si une vérification est déjà en
+  attente/en cours pour ce club).
+- `GET /v1/clubs/:clubId/derogations` (tout membre du club) — liste TOUTES
+  les lignes `fbi_derogation_checks` du club, enrichies du match FFBB
+  correspondant (`matchId`/`opponentName`/`matchDatetime`) ; jamais un
+  SELECT direct côté frontend.
+
+Côté SCSB : bouton "Vérifier toutes les dérogations" (Intégrations → FBI,
+`CheckAllDerogationsButton.tsx`) et page `/admin/derogations` listant le
+résultat, chaque ligne liée à son match.
+
 **Ce qui n'est PAS fait (phase 1, volontairement)** :
 - Scraping de la page de détail (`afficherDerogation.fbi`) — le tableau de
   résultats de la recherche suffit pour l'état/dates, phase 1 ne
@@ -2089,10 +2146,15 @@ synchro FFBB), jamais par division/date/domicile-visiteur.
   à un club adverse, difficile à annuler proprement) — à cadrer
   explicitement avec le club avant toute construction, une fois la phase 1
   validée en conditions réelles.
-- Vérification en masse/planifiée (tous les matchs d'un coup, cron
-  périodique) — pour l'instant déclenchée manuellement, match par match.
+- Vérification planifiée/automatique (cron périodique) de
+  `check_all_derogations` — pour l'instant déclenchée manuellement depuis
+  Intégrations → FBI.
 - Scraper JAMAIS exécuté contre le vrai FBI depuis cet environnement
   (réseau `*.ffbb.com` bloqué) — testé contre une fixture HTML synthétique
   (`browser-client.test.ts`, `__fixtures__/rechercher-derogation.html`),
   reproduisant la structure confirmée par capture d'écran, pas contre le
-  vrai site.
+  vrai site. Cette fixture n'a ni `action` ni `method` sur son
+  `<form>` — une soumission y déclenche un GET natif (rechargement complet
+  de page), donc les tests vérifient l'état réellement sélectionné en
+  lisant `page.url()` après la recherche plutôt qu'un marqueur DOM (qui
+  serait de toute façon effacé par ce rechargement).
