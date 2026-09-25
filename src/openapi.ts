@@ -18,6 +18,7 @@ import { PlatformClubDtoSchema, CreateClubDtoSchema } from "./contracts/platform
 import { ClubCapabilitiesSchema, ErrorEnvelopeSchema } from "./contracts/common.js";
 import { EmarqueImportDtoSchema, EmarqueImportsQueryDtoSchema } from "./contracts/emarque.js";
 import { MeDtoSchema } from "./contracts/me.js";
+import { LicenciesListDtoSchema, LicencieDtoSchema, LicencieProfileDtoSchema, UpdateLicencieProfileDtoSchema } from "./contracts/licencies.js";
 
 /**
  * Spec OpenAPI assemblée à partir des MÊMES schémas zod que les DTO utilisés
@@ -236,6 +237,36 @@ registry.registerPath({
       "Intégration FFBB mise à jour (jamais de suppression de l'historique déjà synchronisé)",
       z.object({ clubCode: z.string(), enabled: z.boolean(), nextSyncAt: z.string().nullable() }),
     ),
+    ...errorResponses,
+    ...validationResponses,
+  },
+});
+
+const clubAndLicencieParams = clubIdParam.extend({ licencieId: z.string().uuid() });
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/clubs/{clubId}/licencies",
+  security: bearerAuth,
+  request: { params: clubIdParam },
+  responses: { 200: jsonResponse("Roster du club", LicenciesListDtoSchema), ...errorResponses },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/clubs/{clubId}/licencies/{licencieId}",
+  security: bearerAuth,
+  request: { params: clubAndLicencieParams },
+  responses: { 200: jsonResponse("Fiche joueur : identité, historique des matchs, statistiques par match", LicencieProfileDtoSchema), ...errorResponses },
+});
+
+registry.registerPath({
+  method: "patch",
+  path: "/v1/clubs/{clubId}/licencies/{licencieId}/profile",
+  security: bearerAuth,
+  request: { params: clubAndLicencieParams, body: { content: { "application/json": { schema: UpdateLicencieProfileDtoSchema } } } },
+  responses: {
+    200: jsonResponse("Profil mis à jour (champs admin, ou contact/photo si le licencié lui-même)", LicencieDtoSchema),
     ...errorResponses,
     ...validationResponses,
   },

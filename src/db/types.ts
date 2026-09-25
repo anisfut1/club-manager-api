@@ -148,6 +148,7 @@ export interface Database {
           license_number: string | null;
           email: string | null;
           phone: string | null;
+          photo_url: string | null;
           active: boolean;
           created_at: string;
           updated_at: string;
@@ -161,6 +162,7 @@ export interface Database {
           license_number?: string | null;
           email?: string | null;
           phone?: string | null;
+          photo_url?: string | null;
           active?: boolean;
           created_at?: string;
           updated_at?: string;

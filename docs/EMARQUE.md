@@ -202,6 +202,18 @@ quelle. Exemple :
 { "technicalCode": "EMARQUE_SCORE_MISMATCH", "message": "Le score e-Marque ne correspond pas au score FFBB." }
 ```
 
+## Licenciés (voir docs/LICENCIES.md)
+
+Chaque joueur·se importé·e depuis "feuillematch" (côté CLUB, jamais
+l'adversaire) est désormais automatiquement rattaché·e à un `licencies` —
+créé à la volée par `persist-emarque-match.ts#insertParticipants` si
+aucun n'existe encore pour son numéro de licence. C'était le chaînon
+manquant de la demande du club ("associer chaque joueur à sa licence") :
+`licencies` n'a jamais été peuplé ailleurs dans ce backend, donc
+`licencie_id` restait toujours `null` malgré des numéros de licence
+correctement lus. Détail complet (scope, permissions, fiche joueur) :
+`docs/LICENCIES.md`.
+
 ## Ce qui n'est PAS fait
 
 Pas de module dérogations/tables de marque au sens FBI authentifié

@@ -34,6 +34,10 @@ interface FakeSupabaseOptions {
   existingImport?: { id: string; status: string } | null;
   licenciesByLicense?: Record<string, string[]>;
   failOnTable?: string;
+  /** `matches.is_home` pour BASE_PARAMS.matchId — `undefined`/absent = non renseigné (jamais une supposition, voir persist-emarque-match.ts). */
+  isHome?: boolean;
+  /** Simule une course avec un autre import (23505) sur LE PROCHAIN insert dans `licencies` uniquement. */
+  licenciesInsertConflict?: boolean;
 }
 
 function makeFakeSupabase(options: FakeSupabaseOptions = {}) {
@@ -41,6 +45,8 @@ function makeFakeSupabase(options: FakeSupabaseOptions = {}) {
   const updated: Record<string, { id: string; payload: unknown }[]> = {};
   let participantCounter = 0;
   let importCounter = 0;
+  let licencieCounter = 0;
+  let licenciesInsertConflictPending = options.licenciesInsertConflict ?? false;
 
   const fail = (table: string) => options.failOnTable === table;
 
@@ -84,6 +90,20 @@ function makeFakeSupabase(options: FakeSupabaseOptions = {}) {
                 },
               }),
             }),
+            insert: (payload: unknown) => ({
+              select: () => ({
+                single: () => {
+                  if (licenciesInsertConflictPending) {
+                    licenciesInsertConflictPending = false;
+                    return Promise.resolve({ data: null, error: { code: "23505", message: "conflit (test)" } });
+                  }
+                  if (fail(table)) return Promise.resolve({ data: null, error: { code: "XXXXX", message: "insertion échouée (test)" } });
+                  licencieCounter += 1;
+                  (inserted[table] ??= []).push(payload);
+                  return Promise.resolve({ data: { id: `licencie-auto-${licencieCounter}` }, error: null });
+                },
+              }),
+            }),
           };
         case "match_participants":
           return {
@@ -111,6 +131,11 @@ function makeFakeSupabase(options: FakeSupabaseOptions = {}) {
           };
         case "matches":
           return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: () => Promise.resolve({ data: { is_home: options.isHome ?? null }, error: null }),
+              }),
+            }),
             update: (payload: unknown) => ({
               eq: (_col: string, id: string) => {
                 (updated[table] ??= []).push({ id, payload });
@@ -334,5 +359,83 @@ describe("persistEmarqueMatchData", () => {
       payload: expect.objectContaining({ status: "error", last_error: expect.any(String) }),
     });
     expect(supabase._updated.matches).toContainEqual({ id: "match-1", payload: { emarque_status: "error" } });
+  });
+});
+
+describe("persistEmarqueMatchData — auto-provisionnement des licenciés (demande du club, docs/LICENCIES.md)", () => {
+  function buildHomePlayer(overrides: Partial<EMarqueMatchData["players"][number]> = {}): EMarqueMatchData["players"][number] {
+    return {
+      teamSide: "home",
+      jerseyNumber: "11",
+      lastName: "MESTRES",
+      firstName: "Julie",
+      licenseNumber: "JN870663",
+      isCaptain: false,
+      isStarter: null,
+      confidence: 90,
+      ...overrides,
+    };
+  }
+
+  it("crée un licencié pour un·e joueur·se du CAMP DU CLUB (matches.is_home=true, teamSide='home') quand aucun licencié existant ne correspond déjà", async () => {
+    const supabase = makeFakeSupabase({ isHome: true });
+    const data = buildData({ players: [buildHomePlayer()] });
+
+    const result = await persistEmarqueMatchData(supabase, { ...BASE_PARAMS, data });
+
+    expect(result.participantsLinked).toBe(1);
+    expect(supabase._inserted.licencies).toEqual([{ club_id: "club-1", first_name: "Julie", last_name: "MESTRES", license_number: "JN870663" }]);
+    expect(supabase._inserted.match_participants[0]).toMatchObject({ licencie_id: "licencie-auto-1" });
+  });
+
+  it("n'auto-provisionne JAMAIS un licencié pour l'équipe ADVERSE, même avec un numéro de licence lu (scope explicite du club)", async () => {
+    const supabase = makeFakeSupabase({ isHome: true });
+    const data = buildData({ players: [buildHomePlayer({ teamSide: "away", lastName: "ADVERSAIRE" })] });
+
+    const result = await persistEmarqueMatchData(supabase, { ...BASE_PARAMS, data });
+
+    expect(result.participantsUnlinked).toBe(1);
+    expect(supabase._inserted.licencies).toBeUndefined();
+  });
+
+  it("n'auto-provisionne jamais quand matches.is_home n'est pas renseigné (jamais une supposition sur quelle équipe est la nôtre)", async () => {
+    const supabase = makeFakeSupabase(); // isHome absent -> null
+    const data = buildData({ players: [buildHomePlayer()] });
+
+    const result = await persistEmarqueMatchData(supabase, { ...BASE_PARAMS, data });
+
+    expect(result.participantsUnlinked).toBe(1);
+    expect(supabase._inserted.licencies).toBeUndefined();
+  });
+
+  it("n'auto-provisionne jamais un licencié dont le prénom ou le nom est illisible (jamais une identité devinée, ARCHITECTURE.md §22)", async () => {
+    const supabase = makeFakeSupabase({ isHome: true });
+    const data = buildData({ players: [buildHomePlayer({ firstName: null })] });
+
+    const result = await persistEmarqueMatchData(supabase, { ...BASE_PARAMS, data });
+
+    expect(result.participantsUnlinked).toBe(1);
+    expect(supabase._inserted.licencies).toBeUndefined();
+  });
+
+  it("ne crée jamais de doublon en cas de course avec un autre import (23505) : retrouve le licencié déjà créé entre-temps", async () => {
+    const supabase = makeFakeSupabase({ isHome: true, licenciesInsertConflict: true, licenciesByLicense: { JN870663: ["licencie-race-winner"] } });
+    const data = buildData({ players: [buildHomePlayer()] });
+
+    const result = await persistEmarqueMatchData(supabase, { ...BASE_PARAMS, data });
+
+    expect(result.participantsLinked).toBe(1);
+    expect(supabase._inserted.match_participants[0]).toMatchObject({ licencie_id: "licencie-race-winner" });
+  });
+
+  it("réutilise un licencié EXISTANT par numéro de licence plutôt que d'en créer un doublon, même côté club", async () => {
+    const supabase = makeFakeSupabase({ isHome: true, licenciesByLicense: { JN870663: ["licencie-deja-la"] } });
+    const data = buildData({ players: [buildHomePlayer()] });
+
+    const result = await persistEmarqueMatchData(supabase, { ...BASE_PARAMS, data });
+
+    expect(result.participantsLinked).toBe(1);
+    expect(supabase._inserted.licencies).toBeUndefined();
+    expect(supabase._inserted.match_participants[0]).toMatchObject({ licencie_id: "licencie-deja-la" });
   });
 });

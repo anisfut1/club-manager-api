@@ -30,6 +30,21 @@ export interface FakeMembershipRow {
   club_id: string;
   user_id: string;
   status: "active" | "suspended";
+  /** Rattachement à un licencié (§ fiche joueur) — voir club_memberships.licencie_id. */
+  licencie_id?: string | null;
+}
+
+export interface FakeLicencieRow {
+  id: string;
+  club_id: string;
+  first_name: string;
+  last_name: string;
+  license_number: string | null;
+  birth_date: string | null;
+  email: string | null;
+  phone: string | null;
+  photo_url: string | null;
+  active: boolean;
 }
 
 export interface FakeRoleRow {
@@ -119,6 +134,7 @@ export interface FakeClubSupabaseState {
   teams: FakeTeamRow[];
   emarqueImports: FakeEmarqueImportRow[];
   profiles: FakeProfileRow[];
+  licencies: FakeLicencieRow[];
   isPlatformAdmin: boolean;
   /** Clés `${clubId}:${integration}` actuellement verrouillées (voir try_acquire_sync_lock/release_sync_lock). */
   syncLocks: Set<string>;
@@ -132,6 +148,7 @@ export function makeFakeClubSupabaseState(overrides: Partial<FakeClubSupabaseSta
     fbiCredentials: [],
     fbiIntegrationStatus: [],
     syncRuns: [],
+    licencies: [],
     matches: [],
     teams: [],
     emarqueImports: [],
@@ -149,6 +166,7 @@ function matchClub(row: FakeClubRow, col: string, value: string): boolean {
 /** Petit constructeur de requête chaînable `.eq()/.gte()/.lte()/.in()` générique sur un tableau en mémoire — suffisant pour les filtres réellement utilisés par les routes testées, pas un moteur de requête complet. */
 function queryable<T extends object>(rows: T[]) {
   let filtered = rows;
+  const orderKeys: { col: string; ascending: boolean }[] = [];
   const field = (r: T, col: string): unknown => (r as Record<string, unknown>)[col];
   const api = {
     eq(col: string, value: unknown) {
@@ -171,15 +189,21 @@ function queryable<T extends object>(rows: T[]) {
       filtered = filtered.filter((r) => (field(r, col) as string) < value);
       return api;
     },
+    // Appels multiples de `.order()` cumulent les clés de tri (comme le vrai
+    // client Supabase — `ORDER BY col1, col2`, jamais un simple écrasement
+    // du tri précédent par le dernier appel).
     order(col: string, opts?: { ascending?: boolean }) {
-      const ascending = opts?.ascending ?? true;
+      orderKeys.push({ col, ascending: opts?.ascending ?? true });
       filtered = [...filtered].sort((a, b) => {
-        const av = field(a, col) as string | number | null;
-        const bv = field(b, col) as string | number | null;
-        if (av === bv) return 0;
-        if (av === null) return 1;
-        if (bv === null) return -1;
-        return (av < bv ? -1 : 1) * (ascending ? 1 : -1);
+        for (const key of orderKeys) {
+          const av = field(a, key.col) as string | number | null;
+          const bv = field(b, key.col) as string | number | null;
+          if (av === bv) continue;
+          if (av === null) return 1;
+          if (bv === null) return -1;
+          return (av < bv ? -1 : 1) * (key.ascending ? 1 : -1);
+        }
+        return 0;
       });
       return api;
     },
@@ -336,6 +360,43 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
     }),
   };
 
+  // Stubs minimaux (toujours vides) : les routes de la fiche joueur
+  // (modules/licencies/routes.ts) agrègent aussi ces deux tables, mais leur
+  // jointure profonde n'est PAS testée ici — même choix que le détail d'un
+  // match (`modules/matches/routes.ts#GET /:matchId`, jamais unit-testé
+  // pour la même raison, voir son propre fichier de test) : seule la
+  // logique de permission (admin/self/aucun) est couverte au niveau route,
+  // la jointure elle-même est vérifiée manuellement contre la vraie base.
+  const matchParticipantsTable = {
+    select: (_cols?: string) => ({
+      eq: (_c1: string, _clubId: string) => ({ eq: (_c2: string, _licencieId: string) => Promise.resolve({ data: [], error: null }) }),
+    }),
+  };
+  const playerMatchStatsTable = {
+    select: (_cols?: string) => ({ in: (_col: string, _ids: string[]) => Promise.resolve({ data: [], error: null }) }),
+  };
+
+  const licenciesTable = {
+    select: (_cols?: string) => queryable(state.licencies),
+    update: (patch: Partial<FakeLicencieRow>) => {
+      const filters: { col: string; value: unknown }[] = [];
+      const api = {
+        eq(col: string, value: unknown) {
+          filters.push({ col, value });
+          return api;
+        },
+        select() {
+          const rows = state.licencies.filter((l) => filters.every((f) => (l as unknown as Record<string, unknown>)[f.col] === f.value));
+          rows.forEach((r) => Object.assign(r, patch));
+          return {
+            single: () => (rows[0] ? Promise.resolve({ data: rows[0], error: null }) : Promise.resolve({ data: null, error: { message: "not found" } })),
+          };
+        },
+      };
+      return api;
+    },
+  };
+
   return {
     from(table: string) {
       switch (table) {
@@ -359,6 +420,12 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
           return emarqueImportsTable;
         case "profiles":
           return profilesTable;
+        case "licencies":
+          return licenciesTable;
+        case "match_participants":
+          return matchParticipantsTable;
+        case "player_match_stats":
+          return playerMatchStatsTable;
         default:
           throw new Error(`Table inattendue dans le fake Supabase de test : ${table}`);
       }

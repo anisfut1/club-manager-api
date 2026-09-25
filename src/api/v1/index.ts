@@ -8,6 +8,7 @@ import { jobStatusRouter } from "../../modules/integrations/job-status.js";
 import { documentsRouter } from "../../modules/documents/routes.js";
 import { issuesRouter } from "../../modules/issues/routes.js";
 import { emarqueImportsRouter } from "../../modules/emarque/routes.js";
+import { licenciesRouter } from "../../modules/licencies/routes.js";
 import { platformRouter } from "../../modules/platform/routes.js";
 import type { MeDto } from "../../contracts/me.js";
 
@@ -49,5 +50,6 @@ v1Router.route("/clubs/:clubId/matches/:matchId/documents", documentsRouter);
 v1Router.route("/clubs/:clubId/integrations", integrationsRouter);
 v1Router.route("/clubs/:clubId/issues", issuesRouter);
 v1Router.route("/clubs/:clubId/emarque-imports", emarqueImportsRouter);
+v1Router.route("/clubs/:clubId/licencies", licenciesRouter);
 v1Router.route("/jobs", jobStatusRouter);
 v1Router.route("/platform", platformRouter);

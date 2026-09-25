@@ -135,7 +135,7 @@ matchesRouter.get("/:matchId", async (c) => {
       supabase
         .from("player_match_stats")
         .select(
-          "participant_id, seconds_played, points, three_points_made, two_points_interior_made, two_points_exterior_made, free_throws_made, fouls_committed, match_participants(team_side, jersey_number, first_name, last_name)",
+          "participant_id, seconds_played, points, three_points_made, two_points_interior_made, two_points_exterior_made, free_throws_made, fouls_committed, match_participants(team_side, jersey_number, first_name, last_name, licencie_id)",
         )
         .eq("match_id", matchId)
         .eq("club_id", club.id),
@@ -202,6 +202,7 @@ matchesRouter.get("/:matchId", async (c) => {
         jerseyNumber: participant?.jersey_number ?? null,
         firstName: participant?.first_name ?? null,
         lastName: participant?.last_name ?? null,
+        licencieId: participant?.licencie_id ?? null,
         secondsPlayed: row.seconds_played,
         points: row.points,
         threePointsMade: row.three_points_made,

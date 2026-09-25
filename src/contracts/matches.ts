@@ -71,6 +71,8 @@ export const PlayerMatchStatsDtoSchema = z
     jerseyNumber: z.string().nullable(),
     firstName: z.string().nullable(),
     lastName: z.string().nullable(),
+    /** Vers la fiche joueur (`GET /v1/clubs/:clubId/licencies/:licencieId`, voir docs/LICENCIES.md) — `null` si ce participant n'a pas encore de licencié rattaché. */
+    licencieId: z.string().uuid().nullable(),
     secondsPlayed: z.number().nullable(),
     points: z.number().nullable(),
     threePointsMade: z.number().nullable(),

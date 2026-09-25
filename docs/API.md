@@ -25,6 +25,9 @@ n'existe que si elle correspond à un vrai service déjà construit — voir
 | GET | `/v1/clubs/:clubId/matches/:matchId` | membre du club |
 | GET | `/v1/clubs/:clubId/matches/:matchId/documents` | membre du club (URL de téléchargement réservée à club_admin) |
 | GET | `/v1/clubs/:clubId/emarque-imports` | membre du club |
+| GET | `/v1/clubs/:clubId/licencies` | membre du club |
+| GET | `/v1/clubs/:clubId/licencies/:licencieId` | membre du club (fiche joueur, voir docs/LICENCIES.md) |
+| PATCH | `/v1/clubs/:clubId/licencies/:licencieId/profile` | club_admin (tous les champs), ou le licencié lui-même (contact/photo uniquement) |
 | GET | `/v1/clubs/:clubId/integrations` | membre du club |
 | PATCH | `/v1/clubs/:clubId/integrations/ffbb` | club_admin |
 | PATCH | `/v1/clubs/:clubId/integrations/fbi` | club_admin |

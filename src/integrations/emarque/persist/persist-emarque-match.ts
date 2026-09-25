@@ -1,9 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, EmarqueImportStatus } from "../../../db/types.js";
 import { logError, logInfo } from "../../../logger.js";
-import type { EMarqueCoach, EMarqueMatchData, EMarqueOfficial, EMarquePlayer, EMarquePlayerStat, EMarqueTableOfficial } from "../types.js";
+import type { EMarqueCoach, EMarqueMatchData, EMarqueOfficial, EMarquePlayer, EMarquePlayerStat, EMarqueTableOfficial, TeamSide } from "../types.js";
 
 type Client = SupabaseClient<Database>;
+
+const UNIQUE_VIOLATION = "23505";
 
 export interface PersistEmarqueMatchParams {
   matchId: string;
@@ -49,19 +51,67 @@ function statusFromWarnings(data: EMarqueMatchData): "imported" | "needs_review"
   return hasError ? "needs_review" : "imported";
 }
 
+/**
+ * Auto-provisionne un `licencies` pour un·e joueur·se du CLUB LUI-MÊME
+ * (jamais l'équipe adverse — voir `insertParticipants`, qui ne l'appelle
+ * que pour `player.teamSide === clubTeamSide`) quand aucun licencié
+ * existant ne correspond déjà à son numéro de licence.
+ *
+ * Sans ce pas, `licencies` restait VIDE en production (rien d'autre dans
+ * ce backend n'y insère de ligne — confirmé le 2026-09-25, 0 licencié pour
+ * le club pilote malgré des numéros de licence correctement lus) : la
+ * demande du club ("associer chaque joueur à sa licence" pour une future
+ * fiche joueur, voir `docs/LICENCIES.md`) restait donc structurellement
+ * impossible à satisfaire, quelle que soit la qualité de l'OCR.
+ *
+ * Exige un prénom ET un nom de famille non vides — jamais un `licencies`
+ * créé avec une identité devinée ou vide (ARCHITECTURE.md §22) : reste
+ * `null` sinon, un futur import (autre match, meilleure lecture OCR pour
+ * cette même personne) pourra retenter.
+ */
+async function autoProvisionLicencieId(supabase: Client, clubId: string, player: EMarquePlayer): Promise<string | null> {
+  if (!player.licenseNumber || !player.firstName?.trim() || !player.lastName?.trim()) return null;
+
+  const { data, error } = await supabase
+    .from("licencies")
+    .insert({ club_id: clubId, first_name: player.firstName.trim(), last_name: player.lastName.trim(), license_number: player.licenseNumber })
+    .select("id")
+    .single();
+
+  if (!error) return data?.id ?? null;
+
+  if (error.code === UNIQUE_VIOLATION) {
+    // Course avec un autre import (même numéro de licence entre-temps déjà
+    // créé, ex: deux matchs de la même personne traités en parallèle) :
+    // jamais une erreur qui ferait échouer tout l'import, on retrouve
+    // simplement le licencié déjà créé par l'autre import.
+    return findLicencieIdByLicense(supabase, clubId, player.licenseNumber);
+  }
+
+  logError("Auto-provisionnement d'un licencié depuis e-Marque échoué", error, { clubId, licenseNumber: player.licenseNumber });
+  return null;
+}
+
 async function insertParticipants(
   supabase: Client,
   clubId: string,
   matchId: string,
   importId: string,
   players: EMarquePlayer[],
+  /** Le "camp" (home/away) tenu par CE club dans CE match — voir `persistEmarqueMatchData`. `null` si `matches.is_home` n'est pas renseigné : dans ce cas, aucun auto-provisionnement (on ne devine jamais quelle équipe est la nôtre). */
+  clubTeamSide: TeamSide | null,
 ): Promise<{ linked: number; unlinked: number; byKey: Map<string, string> }> {
   const byKey = new Map<string, string>();
   let linked = 0;
   let unlinked = 0;
 
   for (const player of players) {
-    const licencieId = await findLicencieIdByLicense(supabase, clubId, player.licenseNumber);
+    let licencieId = await findLicencieIdByLicense(supabase, clubId, player.licenseNumber);
+
+    if (!licencieId && clubTeamSide && player.teamSide === clubTeamSide) {
+      licencieId = await autoProvisionLicencieId(supabase, clubId, player);
+    }
+
     if (licencieId) linked += 1;
     else unlinked += 1;
 
@@ -254,8 +304,15 @@ export async function persistEmarqueMatchData(supabase: Client, params: PersistE
 
   const importId = importRow.id;
 
+  // Détermine quel "camp" e-Marque (home/away) est CELUI DU CLUB pour ce
+  // match — seul ce camp est éligible à l'auto-provisionnement de licenciés
+  // (voir `autoProvisionLicencieId`, jamais l'équipe adverse). `null` si
+  // `matches.is_home` n'est pas renseigné : jamais une supposition.
+  const { data: matchRow } = await supabase.from("matches").select("is_home").eq("id", matchId).maybeSingle();
+  const clubTeamSide: TeamSide | null = matchRow?.is_home === true ? "home" : matchRow?.is_home === false ? "away" : null;
+
   try {
-    const { linked, unlinked, byKey } = await insertParticipants(supabase, clubId, matchId, importId, data.players);
+    const { linked, unlinked, byKey } = await insertParticipants(supabase, clubId, matchId, importId, data.players, clubTeamSide);
     await insertPlayerStats(supabase, clubId, matchId, data.playerStats, byKey);
     await insertCoaches(supabase, clubId, matchId, importId, data.coaches);
     await insertOfficials(supabase, clubId, matchId, importId, data.officials);
