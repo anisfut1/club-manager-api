@@ -1813,6 +1813,46 @@ maillot), et vérification que le prénom complet remplace bien l'abrégé
 sans toucher au reste de l'identité. Suite complète (37 fichiers, 322
 tests) toujours verte après ce correctif.
 
+**Trente-sixième déclenchement — vérification en production du correctif
+précédent : plus de doublon MESTRES, prénoms complets affichés. Le club
+signale immédiatement après un TROISIÈME cas du même bug racine
+("2int c'est 11 pas 1") : `twoPointsInteriorMade` de MESTRES (maillot 11)
+affichait `1` au lieu de `11`.** Vérifié par l'arithmétique du score :
+28 points = 11×2 (2int) + 6 (LF), avec 2ext=0 — cohérent UNIQUEMENT avec
+2int=11, jamais 2int=1 (1×2+6=8 ≠ 28).
+
+Root-cause identique aux Trente-et-unième/Trente-cinquième déclenchements
+(fusion d'un chiffre RÉPÉTÉ IDENTIQUE en un seul glyphe par l'OCR), mais
+cette fois dans une cellule de STATISTIQUE, pas un numéro de maillot — le
+repli existant (`PdfRasterOcrExtractor.extractZone`) ne se déclenchait
+QUE quand la première passe ne trouvait AUCUN chiffre ; ici un chiffre
+FUT trouvé ("1", juste le mauvais), donc le repli ne s'exécutait jamais.
+C'était précisément la limite déjà documentée au Trente-et-unième
+déclenchement et jusqu'ici acceptée plutôt que corrigée ("accepté comme
+limitation mineure faute d'une seconde occurrence justifiant une
+heuristique dédiée") — la DEUXIÈME occurrence réelle (Trente-cinquième,
+sur un maillot) puis cette TROISIÈME (sur une statistique, donc une
+VALEUR AFFICHÉE fausse, pas seulement une donnée manquante) ont fait
+franchir ce seuil.
+
+**Corrigé** (`pdf-raster-ocr-extractor.ts`) : le repli se déclenche
+désormais aussi quand la première passe trouve EXACTEMENT UN chiffre
+(pas zéro, pas plusieurs) — mais son résultat n'est accepté QUE s'il
+révèle EXACTEMENT ce même chiffre RÉPÉTÉ ("11", "111"... jamais un
+chiffre différent) : le repli (alphabet restreint + agrandissement 2×)
+reste par ailleurs moins fiable qu'une lecture normale sur un chiffre
+isolé (mesuré au Trente-et-unième déclenchement, dégrade la lecture d'un
+"1" réellement isolé) — on ne le laisse jamais remplacer une lecture par
+autre chose qu'une correction de CE bug précis, jamais une supposition
+plus large. Validé contre le document réel : `shotsMade` de MESTRES
+passe aussi de (implicitement) une valeur suspecte à `11`, cohérent avec
+`twoPointsInteriorMade: 11` (aucun tir à 3 points ni extérieur pour elle
+sur cette rencontre). Nouvelle assertion dans `parse-resume.test.ts`
+(ligne MESTRES, vérifiée par l'arithmétique du score). Suite complète
+(37 fichiers, 322 tests) toujours verte, aucune régression sur les
+lignes déjà validées exactement (GEORGES, DA CUNHA, OLIVIERI, COUIX,
+N DIOGOYE).
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque

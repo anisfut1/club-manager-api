@@ -94,20 +94,24 @@ export class PdfRasterOcrExtractor implements DocumentExtractor {
     const primaryText = primary.data.text.trim();
 
     /**
-     * Seconde passe ciblée UNIQUEMENT sur une cellule censée être numérique
-     * (`expectDigitsOnly`) dont la première passe n'a trouvé AUCUN chiffre
-     * (jamais si un chiffre a déjà été trouvé, même incertain — voir la
-     * note ci-dessous) : mesuré en production (rencontre n°1481, §
-     * "Trente-et-unième déclenchement", docs/FBI.md) sur un échantillon de
-     * 120 cellules réelles, ce repli fait passer le taux de lecture
-     * correcte de 83,3 % à 89,2 %, en corrigeant notamment presque toutes
-     * les cellules à "0" (glyphe fin, souvent illisible à l'échelle de
-     * rendu normale) — jamais tenté EN PREMIER : appliquer d'emblée
-     * l'alphabet restreint aux chiffres dégrade la lecture d'un "1" isolé
-     * (le moteur LSTM semble avoir besoin du contexte non contraint pour
-     * ce glyphe précis, constaté sur le même échantillon).
+     * Seconde passe ciblée sur une cellule censée être numérique
+     * (`expectDigitsOnly`), dans deux cas : AUCUN chiffre trouvé, ou UN SEUL
+     * chiffre trouvé (voir plus bas pourquoi ce second cas a été ajouté) —
+     * jamais si plusieurs chiffres DIFFÉRENTS ont déjà été lus, où le repli
+     * n'apporterait rien de plus fiable.
+     *
+     * Mesuré en production (rencontre n°1481, § "Trente-et-unième
+     * déclenchement", docs/FBI.md) sur un échantillon de 120 cellules
+     * réelles, ce repli fait passer le taux de lecture correcte de 83,3 % à
+     * 89,2 %, en corrigeant notamment presque toutes les cellules à "0"
+     * (glyphe fin, souvent illisible à l'échelle de rendu normale) — jamais
+     * tenté EN PREMIER : appliquer d'emblée l'alphabet restreint aux
+     * chiffres dégrade la lecture d'un "1" isolé (le moteur LSTM semble
+     * avoir besoin du contexte non contraint pour ce glyphe précis, constaté
+     * sur le même échantillon).
      */
-    if (options?.expectDigitsOnly && !/\d/.test(primaryText)) {
+    const primaryIsSingleDigit = /^\d$/.test(primaryText);
+    if (options?.expectDigitsOnly && (!/\d/.test(primaryText) || primaryIsSingleDigit)) {
       const upscale = 2;
       const upscaled = createCanvas(cropped.width * upscale, cropped.height * upscale);
       const upscaledCtx = upscaled.getContext("2d");
@@ -129,6 +133,29 @@ export class PdfRasterOcrExtractor implements DocumentExtractor {
       await worker.setParameters({ tessedit_char_whitelist: "" });
 
       const retryText = retry.data.text.trim();
+
+      /**
+       * Constaté DEUX FOIS en production sur la même rencontre (n°1481) :
+       * un nombre à deux chiffres IDENTIQUES ("11") est parfois fusionné par
+       * l'OCR en un seul glyphe reconnu comme CE chiffre isolé ("1") — une
+       * fois sur un numéro de maillot (§ "Trente-cinquième déclenchement",
+       * docs/FBI.md, corrigé côté rapprochement dans `merge.ts` faute de
+       * mieux à l'époque), une fois sur une statistique
+       * (`twoPointsInteriorMade`, signalée directement par le club : "2int
+       * c'est 11 pas 1"). Le repli ci-dessus (agrandissement 2×) suffit
+       * souvent à séparer les deux glyphes fusionnés — mais seulement
+       * accepté ici s'il révèle EXACTEMENT ce même chiffre RÉPÉTÉ ("11",
+       * "22"... jamais un chiffre différent) : le repli lui-même est connu
+       * pour être moins fiable qu'une lecture normale sur un "1" isolé
+       * (voir plus haut), donc on ne le laisse jamais remplacer une lecture
+       * par autre chose qu'une correction de CE bug précis.
+       */
+      if (primaryIsSingleDigit) {
+        const repeatedDigitPattern = new RegExp(`^${primaryText}{2,}$`);
+        if (repeatedDigitPattern.test(retryText)) return { text: retryText, confidence: retry.data.confidence };
+        return { text: primaryText, confidence: primary.data.confidence };
+      }
+
       if (/\d/.test(retryText)) return { text: retryText, confidence: retry.data.confidence };
     }
 

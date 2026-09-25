@@ -144,6 +144,27 @@ describe("parseResume (document réel, rencontre n°1481)", () => {
           foulsCommitted: 4,
         });
 
+        // MESTRES (maillot 11) : signalée directement par le club ("2int
+        // c'est 11 pas 1", § "Trente-sixième déclenchement", docs/FBI.md) —
+        // un nombre à deux chiffres IDENTIQUES ("11") fusionné par l'OCR en
+        // un seul chiffre isolé ("1"), constaté ici sur une STATISTIQUE
+        // (`twoPointsInteriorMade`) et pas seulement sur un numéro de
+        // maillot (voir "Trente-cinquième déclenchement"). Vérifié par
+        // l'arithmétique du score : 28 points = 11×2 (2int) + 6 (LF), avec
+        // 2ext=0 — cohérent uniquement avec 2int=11, jamais 2int=1.
+        const mestres = away.find((r) => r.jerseyNumber === "11");
+        expect(mestres).toMatchObject({
+          lastName: "MESTRES",
+          firstName: "Julie",
+          isStarter: true,
+          secondsPlayed: 34 * 60 + 56,
+          points: 28,
+          twoPointsInteriorMade: 11,
+          twoPointsExteriorMade: 0,
+          freeThrowsMade: 6,
+          foulsCommitted: 3,
+        });
+
         // Aucune ligne ne doit jamais porter les statistiques d'une AUTRE
         // ligne (le bug corrigé — voir le commentaire du fichier) : chaque
         // valeur non-null doit rester dans une plage plausible pour une
