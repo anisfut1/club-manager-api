@@ -48,9 +48,21 @@ describe("mergePlayersWithStats", () => {
     // L'identité (nom/licence) vient toujours de feuillematch, jamais de resume.
     expect(merged[0]?.lastName).toBe("MARTIN");
     expect(merged[0]?.licenseNumber).toBe("OC123456");
+    // Pas de prénom lu côté "resume" ici (buildStatRow par défaut) : celui de "feuillematch" est conservé.
+    expect(merged[0]?.firstName).toBe("Léo");
 
     expect(playerStats).toHaveLength(1);
     expect(playerStats[0]).toMatchObject({ teamSide: "home", jerseyNumber: "6", points: 12 });
+  });
+
+  it("ramène le prénom COMPLET de 'resume' par-dessus celui, abrégé à une lettre, de 'feuillematch' (demande du club, § 'Trente-cinquième déclenchement', docs/FBI.md) — jamais le reste de l'identité", () => {
+    const players = [buildPlayer({ firstName: "L." })];
+    const stats = [buildStatRow({ firstName: "Léo" })];
+
+    const { players: merged } = mergePlayersWithStats(players, stats);
+
+    expect(merged[0]?.firstName).toBe("Léo");
+    expect(merged[0]?.lastName).toBe("MARTIN"); // jamais écrasé par resume
   });
 
   it("ne rapproche jamais deux joueurs de côtés différents portant le même numéro de maillot", () => {
@@ -117,14 +129,42 @@ describe("mergePlayersWithStats", () => {
     expect(merged[0]).toMatchObject({
       jerseyNumber: "8", // comblé depuis "resume", seule donnée que "feuillematch" n'avait pas lue
       isStarter: true, // idem
-      // Le reste de l'identité reste celui de "feuillematch", jamais écrasé par "resume".
+      // Le nom de famille, la licence et le capitanat restent ceux de "feuillematch", jamais écrasés.
       lastName: "COUIX L. Ô",
-      firstName: "LE",
+      // Le prénom, lui, est ramené COMPLET depuis "resume" (§ "Trente-cinquième déclenchement").
+      firstName: "Laetitia",
       licenseNumber: "VT640539",
       isCaptain: true,
     });
     expect(playerStats).toHaveLength(1);
   });
+
+  it(
+    "rapproche par nom de famille (jamais de doublon) un joueur 'feuillematch' dont le maillot EST lu, quand 'resume' a mal lu LE SIEN — régression production n°1481, § 'Trente-cinquième déclenchement', docs/FBI.md : \"MESTRES J.\" maillot 11 (lu correctement par 'feuillematch', licence JN870663) vs. la ligne 'resume' \"MESTRES\" maillot '1' (confusion OCR sur le chiffre répété '11'→'1') ne se rapprochaient jamais par maillot exact — la ligne 'resume' restait synthétisée en un DEUXIÈME participant fantôme (sans licence), qui récupérait les VRAIES statistiques à la place du participant licencié",
+    () => {
+      const players = [buildPlayer({ jerseyNumber: "11", lastName: "MESTRES", firstName: "J.", licenseNumber: "JN870663" })];
+      const stats = [buildStatRow({ jerseyNumber: "1", lastName: "MESTRES", firstName: "Julie", points: 28, isStarter: true })];
+
+      const { players: merged, playerStats } = mergePlayersWithStats(players, stats);
+
+      // Un seul participant, jamais un fantôme en plus.
+      expect(merged).toHaveLength(1);
+      expect(merged[0]).toMatchObject({
+        jerseyNumber: "11", // celui de "feuillematch", JAMAIS remplacé par le "1" erroné de "resume"
+        lastName: "MESTRES",
+        firstName: "Julie", // prénom complet ramené de "resume"
+        licenseNumber: "JN870663", // jamais perdue au profit d'un fantôme sans licence
+        isStarter: true,
+      });
+
+      // La statistique doit être réindexée sous le maillot FINAL (11), sans
+      // quoi persist-emarque-match.ts#insertPlayerStats ne retrouverait plus
+      // le participant (qui n'a jamais eu de maillot "1") et l'ignorerait
+      // silencieusement — régression du "Trente-deuxième déclenchement".
+      expect(playerStats).toHaveLength(1);
+      expect(playerStats[0]).toMatchObject({ teamSide: "home", jerseyNumber: "11", points: 28 });
+    },
+  );
 
   it("ne rapproche jamais par nom de famille en cas d'ambiguïté (plusieurs candidats possibles) — synthétise plutôt un doublon que de deviner", () => {
     const players = [buildPlayer({ jerseyNumber: null, lastName: "MARTIN X.", firstName: "?" })];

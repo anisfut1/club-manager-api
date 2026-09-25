@@ -1749,6 +1749,70 @@ club exploitant le compte FBI (SC Sète) : le club adverse d'une rencontre
 devra disposer de son propre compte pour accéder à ses propres
 statistiques par licencié.
 
+**Trente-cinquième déclenchement — vérification en production du correctif
+précédent : le club a re-déclenché le parsing de la rencontre n°1481
+depuis l'app (`POST .../fbi/parse-documents`, § "Huitième déclenchement"
+plus haut) après un reset complet de l'import. Les 15 numéros de licence
+et les 3 entraîneurs correspondent bien à la liste fournie par le club —
+mais un DEUXIÈME bug de rapprochement, distinct de celui du Trente-
+troisième déclenchement, s'est révélé sur les données réelles.**
+
+Constaté en base (`match_participants`, rencontre n°1481) : 16 lignes côté
+VISITEURS au lieu de 15 attendues. `MESTRES Julie` (maillot 11 réel,
+licence `JN870663`, correctement lue par "feuillematch") apparaissait
+DEUX FOIS : une fois correcte (maillot 11, licence renseignée, mais SANS
+statistiques), et une fois fantôme (maillot `1`, AUCUNE licence, mais avec
+ses vraies statistiques — 28 points, 2096 secondes jouées).
+
+Root-cause : `parse-resume.ts` avait lu son maillot "1" au lieu de "11"
+(confusion sur un chiffre répété — précisément la limite déjà documentée
+et acceptée au Trente-et-unième déclenchement, "un nombre à deux chiffres
+avec un chiffre répété est parfois lu comme un seul chiffre"). Le
+rapprochement par maillot exact (passe 1 de `mergePlayersWithStats`)
+échouait donc pour les deux : aucune ligne "resume" n'a le maillot "11".
+Le rapprochement par nom de famille (passe 2, corrigé au Trente-troisième
+déclenchement) ne se déclenchait, lui, QUE pour un joueur "feuillematch"
+dont le maillot était `null` — pas le cas ici, "feuillematch" avait bien
+lu "11". La ligne "resume" au maillot erroné restait donc non réclamée,
+puis synthétisée en un second participant fantôme (même mécanisme que le
+Trente-deuxième déclenchement) — les vraies statistiques s'attachaient à
+ce fantôme sans licence, jamais au participant licencié.
+
+**Corrigé** (`merge.ts`) : la passe 2 (rapprochement par nom de famille)
+s'applique désormais à TOUT joueur "feuillematch" non rapproché par la
+passe 1 — maillot lu ou non — au lieu de se limiter aux maillots `null`.
+Un maillot déjà lu par "feuillematch" n'est en revanche JAMAIS remplacé
+par celui de "resume" (moins fiable, voir ci-dessus) : seul un maillot
+`null` continue d'être comblé depuis "resume", exactement comme avant.
+`playerStats` (jusqu'ici dérivé naïvement des lignes "resume" brutes,
+donc encore indexé sous le maillot erroné après rapprochement) est
+maintenant réindexé sous l'IDENTITÉ FINALE du joueur — sans ce
+changement, `persist-emarque-match.ts#insertPlayerStats` n'aurait plus
+retrouvé de participant au maillot "1" (qui n'existe plus) et aurait
+ignoré la statistique en silence, réintroduisant sous une autre forme
+exactement le bug du Trente-deuxième déclenchement.
+
+**Deuxième correctif, demande explicite du club dans la foulée
+("j'aimerais mettre nom + prénom et pas juste nom + 1ère lettre du
+prénom dans les stats") :** le prénom affiché venait toujours de
+"feuillematch", qui n'imprime QUE l'initiale ("NOM P.", convention du
+document lui-même — voir `splitUppercaseAbbreviatedName`), jamais du
+"résumé" qui imprime le prénom complet ("NOM, Prénom" — voir
+`splitCommaSeparatedName`, confirmé sur l'échantillon réel dès le
+Trente-et-unième déclenchement : "Clemence", "Aurore"...). Corrigé :
+`mergePlayersWithStats` ramène désormais le prénom complet de "resume"
+par-dessus celui, abrégé, de "feuillematch" dans les deux passes de
+rapprochement (exact et par nom de famille) — jamais le reste de
+l'identité (nom de famille, licence, capitanat), qui reste toujours celui
+de "feuillematch", en vue de la fiche joueur à venir.
+
+Deux nouveaux tests dans `merge.test.ts` : régression exacte du cas
+MESTRES (maillot lu des deux côtés mais en désaccord → un seul
+participant, licence conservée, statistiques réindexées sous le bon
+maillot), et vérification que le prénom complet remplace bien l'abrégé
+sans toucher au reste de l'identité. Suite complète (37 fichiers, 322
+tests) toujours verte après ce correctif.
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque
