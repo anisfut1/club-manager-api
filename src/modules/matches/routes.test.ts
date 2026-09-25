@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildFakeClubSupabase, makeFakeClubSupabaseState, type FakeClubSupabaseState } from "../../test-support/fake-club-supabase.js";
+import { encryptSecret } from "../../security/crypto.js";
 
 let state: FakeClubSupabaseState;
 let currentUserId = "user-a";
@@ -56,6 +57,11 @@ function match(overrides: Partial<(typeof state.matches)[number]>): (typeof stat
     team_id: TEAM_A.id,
     ...overrides,
   };
+}
+
+function fakeFbiCredentials(): (typeof state.fbiCredentials)[number] {
+  const encrypted = encryptSecret("s3cret-fbi-password", CLUB_A.id);
+  return { club_id: CLUB_A.id, username: "club1234", password_ciphertext: encrypted.ciphertext, password_iv: encrypted.iv, password_auth_tag: encrypted.authTag };
 }
 
 function request(path: string, init: RequestInit = {}) {
@@ -153,6 +159,89 @@ describe("GET /v1/clubs/:clubId/matches — isolation cross-tenant", () => {
   it("un utilisateur non membre du club reçoit 404, jamais les matchs", async () => {
     currentUserId = "user-not-a-member";
     const res = await request("");
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("GET /v1/clubs/:clubId/matches/:matchId/derogation (voir docs/FBI.md)", () => {
+  it("renvoie derogation: null quand aucune vérification n'a encore été lancée", async () => {
+    state.matches = [match({ id: "match-1" })];
+    const res = await request("/match-1/derogation");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.derogation).toBeNull();
+  });
+
+  it("renvoie le dernier état connu, converti en camelCase", async () => {
+    state.matches = [match({ id: "match-1" })];
+    state.fbiDerogationChecks = [
+      {
+        id: "check-1",
+        club_id: CLUB_A.id,
+        match_id: "match-1",
+        numero: "1",
+        etat: "A Créer",
+        date_depot: null,
+        date_derogation: null,
+        date_rencontre: "26/09/2026",
+        heure: "15:30",
+        domicile: "SPORT CLUB DE SETE BASKET - 1",
+        visiteur: "CASTELNAU BASKET - 2",
+        checked_at: "2026-09-25T16:00:00.000Z",
+      },
+    ];
+
+    const res = await request("/match-1/derogation");
+    const body = await res.json();
+    expect(body.derogation).toMatchObject({ numero: "1", etat: "A Créer", dateRencontre: "26/09/2026", heure: "15:30", checkedAt: "2026-09-25T16:00:00.000Z" });
+  });
+});
+
+describe("POST /v1/clubs/:clubId/matches/:matchId/derogation/check (club_admin, voir docs/FBI.md)", () => {
+  beforeEach(() => {
+    state.roles = [{ membership_id: "membership-a1", role: "club_admin" }];
+  });
+
+  it("empile un job check_derogation quand FBI est configuré", async () => {
+    state.matches = [match({ id: "match-1", numero: "42" })];
+    state.fbiCredentials = [fakeFbiCredentials()];
+
+    const res = await request("/match-1/derogation/check", { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ queued: true });
+    expect(state.fbiJobs).toHaveLength(1);
+    expect(state.fbiJobs[0]).toMatchObject({ club_id: CLUB_A.id, match_id: "match-1", type: "check_derogation" });
+  });
+
+  it("rejette (409) quand FBI n'est pas configuré pour ce club", async () => {
+    state.matches = [match({ id: "match-1", numero: "42" })];
+    const res = await request("/match-1/derogation/check", { method: "POST" });
+    expect(res.status).toBe(409);
+  });
+
+  it("rejette (409) une deuxième vérification tant que la première est en attente", async () => {
+    state.matches = [match({ id: "match-1", numero: "42" })];
+    state.fbiCredentials = [fakeFbiCredentials()];
+
+    const first = await request("/match-1/derogation/check", { method: "POST" });
+    expect(first.status).toBe(200);
+    const second = await request("/match-1/derogation/check", { method: "POST" });
+    expect(second.status).toBe(409);
+  });
+
+  it("refuse (403) à un membre non club_admin", async () => {
+    state.roles = [{ membership_id: "membership-a1", role: "joueur" }];
+    state.matches = [match({ id: "match-1", numero: "42" })];
+    state.fbiCredentials = [fakeFbiCredentials()];
+
+    const res = await request("/match-1/derogation/check", { method: "POST" });
+    expect(res.status).toBe(403);
+  });
+
+  it("404 pour un match introuvable/d'un autre club", async () => {
+    state.fbiCredentials = [fakeFbiCredentials()];
+    const res = await request("/match-inexistant/derogation/check", { method: "POST" });
     expect(res.status).toBe(404);
   });
 });

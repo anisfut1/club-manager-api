@@ -3,7 +3,8 @@ import type { Browser, BrowserContext, Page } from "playwright-core";
 import { FbiError } from "./errors.js";
 import * as selectors from "./selectors.js";
 import { normalizeScheduleRow } from "./schedule-row.js";
-import type { FbiScheduleRow } from "./types.js";
+import { normalizeDerogationRow } from "./derogation-row.js";
+import type { FbiDerogationRow, FbiScheduleRow } from "./types.js";
 import { logInfo } from "../../logger.js";
 
 /**
@@ -767,6 +768,86 @@ export class BrowserFbiClient {
     }
 
     return collected;
+  }
+
+  /**
+   * Consulte l'état de la dérogation d'UN match, par numéro de rencontre —
+   * URL confirmée par capture d'écran du VRAI FBI le 2026-09-25 (le club a
+   * copié l'URL depuis sa barre d'adresse) : `rechercherDerogation.fbi`
+   * pour la recherche, `afficherDerogation.fbi?idDerogation=0&idRencontre=<jeton>`
+   * pour le détail d'une dérogation précise (jeton opaque, RENVOYÉ par la
+   * page de résultats — jamais construit ici, voir §Ce qui n'est pas fait).
+   *
+   * "faudra utiliser la recherche par numéro de rencontre, car on l'a déjà
+   * et c'est bcp + simple" (demande du club) — recherche donc DIRECTEMENT
+   * par numéro, jamais par division/date. LECTURE SEULE : cette méthode ne
+   * clique JAMAIS sur un résultat pour aller voir/modifier le détail —
+   * seule la ligne du tableau de résultats est lue (état, dates), qui
+   * suffit pour la portée v1 (voir docs/FBI.md).
+   */
+  async fetchDerogationForMatch(session: BrowserFbiSession, matchNumber: string): Promise<FbiDerogationRow | null> {
+    const { page } = session;
+    const targetUrl = `${this.baseUrl}/rechercherDerogation.fbi`;
+
+    try {
+      await page.goto(targetUrl, { waitUntil: "domcontentloaded" });
+      await this.settle(page);
+    } catch (error) {
+      throw new FbiError(`Écran de recherche des dérogations injoignable : ${targetUrl}`, "NAVIGATION_FAILED", error);
+    }
+
+    /**
+     * Réinitialise "Etat de la dérogation" à son premier `<option>" —
+     * confirmé par capture d'écran (2026-09-25) que ce filtre peut être
+     * positionné sur un état précis ("A Créer") : le laisser tel quel
+     * risquerait de cacher une dérogation déjà en cours/acceptée pour CE
+     * match précis. Recherché par le LIBELLÉ visible "Etat de la
+     * dérogation" (même principe que `seasonSelect`/`nonJoueCheckbox` sur
+     * l'écran de recherche de rencontre) — best effort, jamais bloquant.
+     */
+    try {
+      const etatSelect = page.locator("label", { hasText: /etat de la d[ée]rogation/i }).locator("select").first();
+      if ((await etatSelect.count().catch(() => 0)) > 0) {
+        const firstOption = etatSelect.locator("option").first();
+        const firstValue = await firstOption.getAttribute("value").catch(() => null);
+        await etatSelect.selectOption(firstValue !== null ? { value: firstValue } : { index: 0 }).catch(() => {});
+      }
+    } catch {
+      // Best effort — voir la note ci-dessus.
+    }
+
+    const numeroInput = await selectors.matchNumberSearchInput(page);
+    if (!numeroInput) {
+      throw new FbiError(
+        `Champ "Numéro de rencontre" introuvable sur l'écran de recherche des dérogations (${targetUrl}).`,
+        "NAVIGATION_FAILED",
+      );
+    }
+
+    try {
+      await numeroInput.fill(matchNumber);
+      const submit = selectors.searchSubmitControl(page).first();
+      if ((await submit.count().catch(() => 0)) > 0) await submit.click();
+      else await numeroInput.press("Enter");
+      await this.settle(page);
+      await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+    } catch (error) {
+      throw new FbiError(
+        `Recherche de dérogation échouée pour la rencontre ${matchNumber} : ${error instanceof Error ? error.message : String(error)}`,
+        "NAVIGATION_FAILED",
+        error,
+      );
+    }
+
+    const rows = await selectors.resultsTableGenericRows(page);
+    if (!rows || rows.length === 0) return null;
+
+    const normalized = rows.map(normalizeDerogationRow);
+    // Comparaison EXACTE du numéro — jamais la première ligne supposée
+    // correcte (même prudence que `matchNumberInResultsTable` côté
+    // découverte e-Marque : une recherche mal filtrée pourrait renvoyer
+    // d'autres rencontres).
+    return normalized.find((row) => row.numero === matchNumber) ?? null;
   }
 
   /**

@@ -1,11 +1,14 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../auth/context.js";
-import { requireAuth, requireClubMembership } from "../../auth/middleware.js";
-import { badRequest, notFound } from "../../api-error.js";
+import { requireAuth, requireClubMembership, requireClubRole } from "../../auth/middleware.js";
+import { badRequest, conflict, notFound } from "../../api-error.js";
 import { MatchesQueryDtoSchema, type MatchListItemDto, type MatchDetailsDto } from "../../contracts/matches.js";
+import type { DerogationStatusDto } from "../../contracts/derogations.js";
 import { computePeriodRange } from "../../util/timezone.js";
 import { sanitizeEmarqueError } from "../../integrations/emarque/sanitize-error.js";
 import type { QualityWarningDto } from "../../contracts/emarque.js";
+import { createServiceSupabaseClient } from "../../db/client.js";
+import { getFbiCredentials } from "../../integrations/fbi/credentials-store.js";
 
 export const matchesRouter = new Hono<AppEnv>();
 
@@ -215,4 +218,76 @@ matchesRouter.get("/:matchId", async (c) => {
   };
 
   return c.json(dto);
+});
+
+/**
+ * GET /v1/clubs/:clubId/matches/:matchId/derogation — dernier état CONNU
+ * de la dérogation de ce match (voir docs/FBI.md, demande du club : "faut
+ * qu'on gere les derog depuis l'outil"). `derogation: null` quand aucune
+ * vérification n'a encore été lancée, OU que la dernière vérification n'a
+ * trouvé aucune dérogation pour ce match — les deux cas sont normaux,
+ * jamais une erreur (la grande majorité des matchs n'ont aucune dérogation).
+ */
+matchesRouter.get("/:matchId/derogation", async (c) => {
+  const { club } = c.get("club");
+  const matchId = c.req.param("matchId");
+  if (!matchId) throw badRequest("Paramètre de route :matchId manquant.");
+
+  const { data } = await c
+    .get("supabase")
+    .from("fbi_derogation_checks")
+    .select("numero, etat, date_depot, date_derogation, date_rencontre, heure, domicile, visiteur, checked_at")
+    .eq("club_id", club.id)
+    .eq("match_id", matchId)
+    .maybeSingle();
+
+  const derogation: DerogationStatusDto | null = data
+    ? {
+        numero: data.numero,
+        etat: data.etat,
+        dateDepot: data.date_depot,
+        dateDerogation: data.date_derogation,
+        dateRencontre: data.date_rencontre,
+        heure: data.heure,
+        domicile: data.domicile,
+        visiteur: data.visiteur,
+        checkedAt: data.checked_at,
+      }
+    : null;
+
+  return c.json({ derogation });
+});
+
+/**
+ * POST /v1/clubs/:clubId/matches/:matchId/derogation/check — empile un job
+ * `check_derogation` (club_admin) pour ce match précis, consommé ensuite
+ * par POST .../fbi/process-jobs (ou le cron) — même modèle que
+ * `reconcile_schedule`, jamais synchrone ici (Playwright). LECTURE SEULE :
+ * consulte l'état FBI de la dérogation, n'en soumet/modifie jamais une
+ * (voir docs/FBI.md).
+ */
+matchesRouter.post("/:matchId/derogation/check", requireClubRole("club_admin"), async (c) => {
+  const { club } = c.get("club");
+  const matchId = c.req.param("matchId");
+  if (!matchId) throw badRequest("Paramètre de route :matchId manquant.");
+
+  const serviceSupabase = createServiceSupabaseClient();
+
+  const { data: match } = await serviceSupabase.from("matches").select("id, numero").eq("id", matchId).eq("club_id", club.id).maybeSingle();
+  if (!match) throw notFound("Match introuvable.");
+  if (!match.numero) throw badRequest("Ce match n'a pas de numéro de rencontre connu, impossible de rechercher sa dérogation sur FBI.");
+
+  const credentials = await getFbiCredentials(serviceSupabase, club.id);
+  if (!credentials) throw conflict("Configure d'abord un identifiant/mot de passe FBI avant de vérifier une dérogation.", "FBI_NOT_CONFIGURED");
+
+  const { error } = await serviceSupabase.from("fbi_jobs").insert({ club_id: club.id, match_id: matchId, type: "check_derogation" });
+
+  if (error) {
+    if (error.code === "23505") {
+      throw conflict("Une vérification de dérogation est déjà en attente ou en cours pour ce match.", "DEROGATION_CHECK_ALREADY_QUEUED");
+    }
+    throw new Error(`Création du job de vérification de dérogation échouée : ${error.message}`);
+  }
+
+  return c.json({ queued: true as const });
 });

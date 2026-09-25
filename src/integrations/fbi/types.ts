@@ -41,6 +41,28 @@ export interface FbiScheduleRow {
 }
 
 /**
+ * Une ligne du tableau de résultats de `rechercherDerogation.fbi` (gestion
+ * des dérogations, voir docs/FBI.md — demande du club, 2026-09-25 : "faut
+ * qu'on gere les derog depuis l'outil") — colonnes confirmées par capture
+ * d'écran du VRAI FBI le 2026-09-25 : Date de dépôt | N° Renc | Division |
+ * Domicile | Visiteur | Date rencontre | Heure | Date déro | Etat de la
+ * dérogation. `raw` conserve toutes les colonnes trouvées, y compris non
+ * modélisées.
+ */
+export interface FbiDerogationRow {
+  numero: string | null;
+  division: string | null;
+  domicile: string | null;
+  visiteur: string | null;
+  dateRencontre: string | null;
+  heure: string | null;
+  dateDepot: string | null;
+  dateDerogation: string | null;
+  etat: string | null;
+  raw: Record<string, string>;
+}
+
+/**
  * Contrat commun à `HttpFbiClient` (ce dossier, HTTP direct — cookie jar,
  * pas de navigateur) et `BrowserFbiClient` (./browser-client.ts, Playwright).
  * Le reste de l'application (jobs, actions serveur) programme contre cette
@@ -63,4 +85,13 @@ export interface FbiAutomationClient<TSession> {
    * ("Précédent 1 2 3 … Suivant", confirmé en production le 2026-09-25).
    */
   fetchScheduleRows(session: TSession): Promise<FbiScheduleRow[]>;
+  /**
+   * Consulte l'état de la dérogation d'UN match précis, par numéro de
+   * rencontre (voir `rechercherDerogation.fbi`) — "faudra utiliser la
+   * recherche par numéro de rencontre, car on l'a déjà et c'est bcp +
+   * simple" (demande du club). `null` quand aucune dérogation n'existe
+   * pour ce match — jamais une erreur (cas normal, la majorité des
+   * matchs n'ont aucune dérogation en cours).
+   */
+  fetchDerogationForMatch(session: TSession, matchNumber: string): Promise<FbiDerogationRow | null>;
 }

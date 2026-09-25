@@ -30,6 +30,9 @@ beforeEach(() => {
   // Écran de recherche RÉEL confirmé par capture d'écran du vrai FBI le
   // 2026-09-24 (§ "Dix-huitième déclenchement", docs/FBI.md) — jamais deviné.
   server.setRoute({ path: "/rechercherRencontreSaisieResultat.fbi", contentType: "text/html", body: fixture("rechercher-rencontre.html") });
+  // Écran de recherche des dérogations, confirmé par capture d'écran du vrai
+  // FBI le 2026-09-25 (URL copiée par le club depuis sa barre d'adresse).
+  server.setRoute({ path: "/rechercherDerogation.fbi", contentType: "text/html", body: fixture("rechercher-derogation.html") });
   server.setRoute({ path: "/detail.fbi", contentType: "text/html", body: fixture("detail.html") });
   server.setRoute({ path: "/export/2813.zip", contentType: "application/zip", body: Buffer.from("contenu-zip-synthetique") });
   // Beacon fetch() déclenché par la fixture rechercher-rencontre.html au
@@ -333,6 +336,37 @@ describe("BrowserFbiClient.fetchScheduleRows (rapprochement calendrier FFBB/FBI,
       score1: "69",
     });
 
+    await client.closeSession(session);
+  });
+});
+
+describe("BrowserFbiClient.fetchDerogationForMatch (gestion des dérogations, voir docs/FBI.md)", () => {
+  it("trouve la dérogation d'un match par numéro de rencontre, malgré le filtre 'Etat de la dérogation' préréglé sur 'A Créer'", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    const derogation = await client.fetchDerogationForMatch(session, "1");
+
+    expect(derogation).toMatchObject({
+      numero: "1",
+      division: "BU13FN23",
+      domicile: "SPORT CLUB DE SETE BASKET - 1",
+      visiteur: "CASTELNAU BASKET - 2",
+      dateRencontre: "26/09/2026",
+      heure: "15:30",
+      etat: "A Créer",
+    });
+
+    await client.closeSession(session);
+  });
+
+  it("renvoie null quand aucune dérogation n'existe pour ce numéro (cas normal, pas une erreur)", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    const derogation = await client.fetchDerogationForMatch(session, "9999");
+
+    expect(derogation).toBeNull();
     await client.closeSession(session);
   });
 });

@@ -35,6 +35,9 @@ export async function processJobBatch(supabase: DbClient, batchSize: number, cla
       } else if (job.type === "reconcile_schedule") {
         const { processReconcileScheduleJob } = await import("./process-reconcile-schedule.js");
         jobSucceeded = await processReconcileScheduleJob(supabase, job);
+      } else if (job.type === "check_derogation") {
+        const { processCheckDerogationJob } = await import("./process-check-derogation.js");
+        jobSucceeded = await processCheckDerogationJob(supabase, job);
       } else {
         const { processDiscoverEmarqueJob } = await import("./process-discover-emarque.js");
         jobSucceeded = await processDiscoverEmarqueJob(supabase, job);

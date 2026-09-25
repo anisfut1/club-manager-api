@@ -1,7 +1,7 @@
 import * as cheerio from "cheerio";
 import { SimpleCookieJar } from "./cookie-jar.js";
 import { FbiError } from "./errors.js";
-import type { EmarqueDocumentRef, FbiAutomationClient, FbiCredentialsInput, FbiScheduleRow } from "./types.js";
+import type { EmarqueDocumentRef, FbiAutomationClient, FbiCredentialsInput, FbiDerogationRow, FbiScheduleRow } from "./types.js";
 
 /**
  * HttpFbiClient — client HTTP direct pour FBI (pas de navigateur, voir
@@ -316,6 +316,20 @@ export class HttpFbiClient implements FbiAutomationClient<HttpFbiSession> {
     throw new FbiError(
       "Endpoint de recherche du calendrier FBI non confirmé en HTTP direct. Voir docs/FBI_AUTHENTICATED_SPIKE.md.",
       "SCHEDULE_SEARCH_ENDPOINT_NOT_CONFIRMED",
+    );
+  }
+
+  /**
+   * NON IMPLÉMENTÉ EN HTTP DIRECT, même raison que `fetchScheduleRows` :
+   * `rechercherDerogation.fbi` est un formulaire de recherche avec état
+   * (case état de la dérogation, etc.) — la requête HTTP exacte n'a pas pu
+   * être observée depuis cet environnement. `BrowserFbiClient` est la
+   * stratégie fonctionnelle (voir docs/FBI.md).
+   */
+  async fetchDerogationForMatch(_session: HttpFbiSession, matchNumber: string): Promise<FbiDerogationRow | null> {
+    throw new FbiError(
+      `Endpoint de recherche des dérogations FBI non confirmé en HTTP direct pour la rencontre ${matchNumber}. Voir docs/FBI_AUTHENTICATED_SPIKE.md.`,
+      "DEROGATION_SEARCH_ENDPOINT_NOT_CONFIRMED",
     );
   }
 

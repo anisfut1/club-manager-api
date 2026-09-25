@@ -143,6 +143,29 @@ export interface FakeFbiScheduleDiscrepancyRow {
   resolved_at: string | null;
 }
 
+export interface FakeFbiDerogationCheckRow {
+  id: string;
+  club_id: string;
+  match_id: string;
+  numero: string | null;
+  etat: string | null;
+  date_depot: string | null;
+  date_derogation: string | null;
+  date_rencontre: string | null;
+  heure: string | null;
+  domicile: string | null;
+  visiteur: string | null;
+  checked_at: string;
+}
+
+export interface FakeFbiJobRow {
+  id: string;
+  club_id: string;
+  match_id: string | null;
+  type: string;
+  status: string;
+}
+
 export interface FakeClubSupabaseState {
   clubs: FakeClubRow[];
   memberships: FakeMembershipRow[];
@@ -156,6 +179,8 @@ export interface FakeClubSupabaseState {
   profiles: FakeProfileRow[];
   licencies: FakeLicencieRow[];
   fbiScheduleDiscrepancies: FakeFbiScheduleDiscrepancyRow[];
+  fbiDerogationChecks: FakeFbiDerogationCheckRow[];
+  fbiJobs: FakeFbiJobRow[];
   isPlatformAdmin: boolean;
   /** Clés `${clubId}:${integration}` actuellement verrouillées (voir try_acquire_sync_lock/release_sync_lock). */
   syncLocks: Set<string>;
@@ -175,6 +200,8 @@ export function makeFakeClubSupabaseState(overrides: Partial<FakeClubSupabaseSta
     emarqueImports: [],
     profiles: [],
     fbiScheduleDiscrepancies: [],
+    fbiDerogationChecks: [],
+    fbiJobs: [],
     isPlatformAdmin: false,
     syncLocks: new Set(),
     ...overrides,
@@ -413,6 +440,24 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
   };
   const emarqueImportsTable = { select: (_cols?: string, _opts?: { count?: string }) => queryable(state.emarqueImports) };
   const fbiScheduleDiscrepanciesTable = { select: (_cols?: string) => queryable(state.fbiScheduleDiscrepancies) };
+  const fbiDerogationChecksTable = { select: (_cols?: string) => queryable(state.fbiDerogationChecks) };
+
+  let fbiJobCounter = 0;
+  const fbiJobsTable = {
+    select: (_cols?: string) => queryable(state.fbiJobs),
+    insert: (payload: { club_id: string; match_id?: string | null; type: string }) => {
+      const matchId = payload.match_id ?? null;
+      const blockingStatuses = ["pending", "claimed", "running"];
+      const hasConflict = state.fbiJobs.some(
+        (j) => j.club_id === payload.club_id && j.match_id === matchId && j.type === payload.type && blockingStatuses.includes(j.status),
+      );
+      if (hasConflict) return Promise.resolve({ error: { code: "23505", message: "duplicate key value violates unique constraint" } });
+
+      fbiJobCounter += 1;
+      state.fbiJobs.push({ id: `fbi-job-${fbiJobCounter}`, club_id: payload.club_id, match_id: matchId, type: payload.type, status: "pending" });
+      return Promise.resolve({ error: null });
+    },
+  };
   const syncRunsTable = { select: (_cols?: string) => queryable(state.syncRuns) };
   const profilesTable = {
     select: (_cols?: string) => ({
@@ -482,6 +527,10 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
           return emarqueImportsTable;
         case "fbi_schedule_discrepancies":
           return fbiScheduleDiscrepanciesTable;
+        case "fbi_derogation_checks":
+          return fbiDerogationChecksTable;
+        case "fbi_jobs":
+          return fbiJobsTable;
         case "profiles":
           return profilesTable;
         case "licencies":

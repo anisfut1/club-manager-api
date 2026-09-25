@@ -12,6 +12,7 @@ import {
   PatchFfbbIntegrationDtoSchema,
 } from "./contracts/integrations.js";
 import { MatchDocumentDtoSchema } from "./contracts/documents.js";
+import { DerogationStatusDtoSchema } from "./contracts/derogations.js";
 import { IssueDtoSchema } from "./contracts/issues.js";
 import { JobStatusDtoSchema } from "./contracts/jobs.js";
 import { PlatformClubDtoSchema, CreateClubDtoSchema } from "./contracts/platform.js";
@@ -145,6 +146,28 @@ registry.registerPath({
   security: bearerAuth,
   request: { params: clubAndMatchIdParams },
   responses: { 200: jsonResponse("Documents e-Marque du match", z.object({ documents: z.array(MatchDocumentDtoSchema) })), ...errorResponses },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/clubs/{clubId}/matches/{matchId}/derogation",
+  security: bearerAuth,
+  request: { params: clubAndMatchIdParams },
+  responses: {
+    200: jsonResponse("Dernier état connu de la dérogation de ce match (null si aucune)", z.object({ derogation: DerogationStatusDtoSchema.nullable() })),
+    ...errorResponses,
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/clubs/{clubId}/matches/{matchId}/derogation/check",
+  security: bearerAuth,
+  request: { params: clubAndMatchIdParams },
+  responses: {
+    200: jsonResponse("Job de vérification de dérogation empilé (un seul par match à la fois)", z.object({ queued: z.literal(true) })),
+    ...errorResponses,
+  },
 });
 
 registry.registerPath({

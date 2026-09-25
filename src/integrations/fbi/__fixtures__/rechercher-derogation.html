@@ -1,0 +1,59 @@
+<html>
+  <body>
+    <h1>Recherche de dérogation</h1>
+    <form>
+      <div class="row">
+        <label>Type de demande <select name="derogationSearchForm.derogationSearchBean.typeDemande"><option value="">Choisir...</option></select></label>
+        <!--
+          Confirmé par capture d'écran du VRAI FBI le 2026-09-25 : ce
+          sélecteur peut être positionné sur un état précis ("A Créer") au
+          chargement — reproduit ici pour vérifier que fetchDerogationForMatch
+          le réinitialise bien avant de chercher, sinon une dérogation déjà
+          "En cours"/"Acceptée" resterait invisible pour ce match précis.
+        -->
+        <label>Etat de la dérogation
+          <select name="derogationSearchForm.derogationSearchBean.etat">
+            <option value="">Tous</option>
+            <option value="A_CREER" selected>A Créer</option>
+            <option value="EN_COURS">En cours</option>
+            <option value="ACCEPTEE">Acceptée</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <label>Numéro de rencontre <input type="text" name="derogationSearchForm.derogationSearchBean.numeroRencontre" /></label>
+        <button type="submit">RECHERCHER</button>
+      </div>
+    </form>
+    <table>
+      <thead>
+        <tr>
+          <th></th>
+          <th>Date de dépôt</th>
+          <th>N° Renc</th>
+          <th>Division</th>
+          <th>Domicile</th>
+          <th>Visiteur</th>
+          <th>Date rencontre</th>
+          <th>Heure</th>
+          <th>Date déro</th>
+          <th>Etat de la dérogation</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td></td>
+          <td></td>
+          <td>1</td>
+          <td>BU13FN23</td>
+          <td>SPORT CLUB DE SETE BASKET - 1</td>
+          <td>CASTELNAU BASKET - 2</td>
+          <td>26/09/2026</td>
+          <td>15:30</td>
+          <td></td>
+          <td>A Créer</td>
+        </tr>
+      </tbody>
+    </table>
+  </body>
+</html>

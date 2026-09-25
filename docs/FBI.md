@@ -2005,3 +2005,94 @@ calendrier ci-dessus, sur la page /admin/issues :
 `IssueDtoSchema.integration`/`.type` étendus en conséquence
 (`"scheduling"`/`"venue_time_conflict"`). Testé (`venue-conflicts.test.ts`,
 `season.test.ts`, cas ajoutés à `modules/issues/routes.test.ts`).
+
+## Gestion des dérogations (lecture seule, phase 1)
+
+Demande du club, 2026-09-25 : **"faut qu'on gere les derog depuis
+l'outil."** Le club a partagé sa conversation avec son correspondant
+(Nicolas Correa), qui gère les dérogations au quotidien sur FBI
+(Compétitions → Dérogations) : recherche/filtre un match, coche ce qu'il
+veut modifier (salle/horaire/date/inversion), la demande part au club
+adverse (accord automatique pour un changement de SALLE SEULE, sinon
+acceptation du club adverse PUIS confirmation du comité pour les autres
+changements).
+
+**Décision explicite avant de construire quoi que ce soit** (voir
+AskUserQuestion) : ceci implique d'ÉCRIRE sur FBI (soumettre une vraie
+demande à un club adverse, difficile à annuler proprement) — risque d'une
+nature différente de tout ce qui précède dans ce document, qui ne fait
+QUE lire FBI. Le club a choisi explicitement de commencer par la LECTURE
+SEULE (consulter l'état d'une dérogation), la création/réponse aux
+demandes étant une phase future délibérément pas construite maintenant.
+
+**URLs confirmées** par le club (copiées depuis sa barre d'adresse le
+2026-09-25, jamais devinées) :
+- Recherche : `https://extranet.ffbb.com/fbi/rechercherDerogation.fbi`
+- Détail d'une dérogation précise : `https://extranet.ffbb.com/fbi/afficherDerogation.fbi?idDerogation=0&idRencontre=<jeton opaque>`
+  — le jeton `idRencontre` est renvoyé PAR la page de résultats (visible
+  au clic sur une ligne), jamais construit à partir du numéro de
+  rencontre : cette page de détail n'est donc PAS scrapée en phase 1 (pas
+  nécessaire — le tableau de résultats suffit, voir ci-dessous).
+
+**"Faudra utiliser la recherche par numéro de rencontre, car on l'a déjà
+et c'est bcp + simple"** (demande explicite du club) — `fetchDerogationForMatch`
+recherche donc DIRECTEMENT par `matches.numero` (déjà connu via la
+synchro FFBB), jamais par division/date/domicile-visiteur.
+
+**Architecture** :
+- `FbiAutomationClient.fetchDerogationForMatch(session, matchNumber)`
+  (nouvelle méthode, `types.ts`) : navigue vers `rechercherDerogation.fbi`,
+  réinitialise le sélecteur "Etat de la dérogation" à son premier
+  `<option>` (best effort, cherché par le LIBELLÉ visible — confirmé par
+  capture d'écran que ce filtre peut être préréglé sur "A Créer" au
+  chargement, ce qui cacherait une dérogation déjà "En cours"/"Acceptée"
+  pour CE match précis si on ne le réinitialisait pas), remplit "Numéro de
+  rencontre" (réutilise `selectors.matchNumberSearchInput`, déjà générique),
+  soumet, lit le tableau de résultats (réutilise
+  `selectors.resultsTableGenericRows` — MÊME structure générique que les
+  deux autres pages FBI), et ne retient QUE la ligne dont le "N° Renc"
+  correspond EXACTEMENT au numéro cherché. `null` quand rien n'est trouvé
+  — cas normal (la grande majorité des matchs n'ont aucune dérogation),
+  jamais une erreur. `HttpFbiClient` échoue explicitement
+  (`DEROGATION_SEARCH_ENDPOINT_NOT_CONFIRMED`, même discipline que les
+  deux autres pages FBI).
+- `derogation-row.ts#normalizeDerogationRow` : colonnes confirmées par
+  capture d'écran — "Date de dépôt | N° Renc | Division | Domicile |
+  Visiteur | Date rencontre | Heure | Date déro | Etat de la dérogation".
+  Fonction PURE, testée sans Playwright.
+- `fbi_derogation_checks` (nouvelle table, migration
+  `20260925130000_fbi_derogation_checks.sql`) : UNE ligne par match
+  (mise à jour à chaque vérification, jamais un historique accumulé).
+  Toutes les valeurs restent au format BRUT FBI (texte) — le format exact
+  n'a été observé QUE sur cette capture d'écran, pas confirmé pour tous
+  les états ("En cours", "Acceptée", "Refusée"...).
+- `process-check-derogation.ts` (nouveau type de job `check_derogation`,
+  file `fbi_jobs` existante, scopé à UN match comme `discover_emarque` —
+  un seul par match à la fois, contrainte
+  `fbi_jobs_unique_pending_derogation_check`) : login FBI, recherche,
+  écrit/supprime la ligne `fbi_derogation_checks` correspondante.
+- `GET /v1/clubs/:clubId/matches/:matchId/derogation` (tout membre du
+  club) — dernier état connu, `null` si jamais vérifié ou si la dernière
+  vérification n'a rien trouvé.
+- `POST /v1/clubs/:clubId/matches/:matchId/derogation/check` (club_admin)
+  — empile le job, consommé par le bouton "Traiter les jobs FBI en
+  attente" existant ou le cron quotidien (même modèle que
+  `reconcile-schedule`, jamais synchrone ici).
+
+**Ce qui n'est PAS fait (phase 1, volontairement)** :
+- Scraping de la page de détail (`afficherDerogation.fbi`) — le tableau de
+  résultats de la recherche suffit pour l'état/dates, phase 1 ne
+  construit pas le jeton `idRencontre` requis pour y naviguer.
+- **Toute écriture sur FBI** : créer une dérogation, cocher
+  salle/horaire/date/inversion, soumettre une demande, répondre à une
+  demande reçue. C'est la phase 2, plus risquée (envoie une vraie demande
+  à un club adverse, difficile à annuler proprement) — à cadrer
+  explicitement avec le club avant toute construction, une fois la phase 1
+  validée en conditions réelles.
+- Vérification en masse/planifiée (tous les matchs d'un coup, cron
+  périodique) — pour l'instant déclenchée manuellement, match par match.
+- Scraper JAMAIS exécuté contre le vrai FBI depuis cet environnement
+  (réseau `*.ffbb.com` bloqué) — testé contre une fixture HTML synthétique
+  (`browser-client.test.ts`, `__fixtures__/rechercher-derogation.html`),
+  reproduisant la structure confirmée par capture d'écran, pas contre le
+  vrai site.
