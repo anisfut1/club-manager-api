@@ -17,6 +17,8 @@ export const LicencieDtoSchema = z
     email: z.string().nullable(),
     phone: z.string().nullable(),
     photoUrl: z.string().nullable(),
+    /** Équipe de ce·tte licencié·e (demande du club, docs/TEAMS.md) — `null` si non rattaché·e. Admin-only en écriture (voir UpdateLicencieProfileDtoSchema). */
+    teamId: z.string().uuid().nullable(),
     active: z.boolean(),
   })
   .openapi("LicencieDto");
@@ -110,11 +112,9 @@ export const UpdateLicencieProfileDtoSchema = z
     lastName: z.string().trim().min(1, "Le nom ne peut pas être vide.").optional(),
     birthDate: z.string().date("birthDate doit être au format AAAA-MM-JJ.").nullable().optional(),
     licenseNumber: z.string().trim().min(1).nullable().optional(),
+    teamId: z.string().uuid().nullable().optional(),
     active: z.boolean().optional(),
   })
   .openapi("UpdateLicencieProfileDto");
 
 export type UpdateLicencieProfileDto = z.infer<typeof UpdateLicencieProfileDtoSchema>;
-
-/** Champs modifiables par le licencié lui-même — jamais son identité (voir UpdateLicencieProfileDtoSchema). */
-export const SELF_EDITABLE_LICENCIE_FIELDS = ["photoUrl", "email", "phone"] as const;

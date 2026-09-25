@@ -68,13 +68,19 @@ function statusFromWarnings(data: EMarqueMatchData): "imported" | "needs_review"
  * créé avec une identité devinée ou vide (ARCHITECTURE.md §22) : reste
  * `null` sinon, un futur import (autre match, meilleure lecture OCR pour
  * cette même personne) pourra retenter.
+ *
+ * `teamId` (celui du match d'origine, `matches.team_id`) est renseigné dès
+ * la création si connu — demande du club de sectoriser le roster par
+ * équipe (docs/TEAMS.md) : sans ce pas, un·e joueur·se nouvellement
+ * provisionné·e resterait sans équipe jusqu'à une affectation manuelle,
+ * alors que le match qui l'a fait apparaître connaît déjà son équipe.
  */
-async function autoProvisionLicencieId(supabase: Client, clubId: string, player: EMarquePlayer): Promise<string | null> {
+async function autoProvisionLicencieId(supabase: Client, clubId: string, player: EMarquePlayer, teamId: string | null): Promise<string | null> {
   if (!player.licenseNumber || !player.firstName?.trim() || !player.lastName?.trim()) return null;
 
   const { data, error } = await supabase
     .from("licencies")
-    .insert({ club_id: clubId, first_name: player.firstName.trim(), last_name: player.lastName.trim(), license_number: player.licenseNumber })
+    .insert({ club_id: clubId, first_name: player.firstName.trim(), last_name: player.lastName.trim(), license_number: player.licenseNumber, team_id: teamId })
     .select("id")
     .single();
 
@@ -100,6 +106,8 @@ async function insertParticipants(
   players: EMarquePlayer[],
   /** Le "camp" (home/away) tenu par CE club dans CE match — voir `persistEmarqueMatchData`. `null` si `matches.is_home` n'est pas renseigné : dans ce cas, aucun auto-provisionnement (on ne devine jamais quelle équipe est la nôtre). */
   clubTeamSide: TeamSide | null,
+  /** `matches.team_id` du match d'origine — transmis à `autoProvisionLicencieId` pour rattacher le·la nouveau·elle licencié·e à son équipe dès sa création (docs/TEAMS.md). `null` si le match n'a pas d'équipe interne connue. */
+  teamId: string | null,
 ): Promise<{ linked: number; unlinked: number; byKey: Map<string, string> }> {
   const byKey = new Map<string, string>();
   let linked = 0;
@@ -109,7 +117,7 @@ async function insertParticipants(
     let licencieId = await findLicencieIdByLicense(supabase, clubId, player.licenseNumber);
 
     if (!licencieId && clubTeamSide && player.teamSide === clubTeamSide) {
-      licencieId = await autoProvisionLicencieId(supabase, clubId, player);
+      licencieId = await autoProvisionLicencieId(supabase, clubId, player, teamId);
     }
 
     if (licencieId) linked += 1;
@@ -308,11 +316,12 @@ export async function persistEmarqueMatchData(supabase: Client, params: PersistE
   // match — seul ce camp est éligible à l'auto-provisionnement de licenciés
   // (voir `autoProvisionLicencieId`, jamais l'équipe adverse). `null` si
   // `matches.is_home` n'est pas renseigné : jamais une supposition.
-  const { data: matchRow } = await supabase.from("matches").select("is_home").eq("id", matchId).maybeSingle();
+  const { data: matchRow } = await supabase.from("matches").select("is_home, team_id").eq("id", matchId).maybeSingle();
   const clubTeamSide: TeamSide | null = matchRow?.is_home === true ? "home" : matchRow?.is_home === false ? "away" : null;
+  const matchTeamId: string | null = matchRow?.team_id ?? null;
 
   try {
-    const { linked, unlinked, byKey } = await insertParticipants(supabase, clubId, matchId, importId, data.players, clubTeamSide);
+    const { linked, unlinked, byKey } = await insertParticipants(supabase, clubId, matchId, importId, data.players, clubTeamSide, matchTeamId);
     await insertPlayerStats(supabase, clubId, matchId, data.playerStats, byKey);
     await insertCoaches(supabase, clubId, matchId, importId, data.coaches);
     await insertOfficials(supabase, clubId, matchId, importId, data.officials);

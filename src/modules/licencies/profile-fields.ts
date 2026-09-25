@@ -18,7 +18,7 @@ import type { UpdateLicencieProfileDto } from "../../contracts/licencies.js";
  * l'identité d'un licencié est ce qui relie ses statistiques à travers les
  * matchs, jamais laissée à la merci d'une auto-modification).
  */
-const ADMIN_EDITABLE_FIELDS = ["firstName", "lastName", "birthDate", "licenseNumber", "active", "photoUrl", "email", "phone"] as const;
+const ADMIN_EDITABLE_FIELDS = ["firstName", "lastName", "birthDate", "licenseNumber", "teamId", "active", "photoUrl", "email", "phone"] as const;
 const SELF_EDITABLE_FIELDS = ["photoUrl", "email", "phone"] as const;
 
 export interface EditPermission {

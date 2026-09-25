@@ -1,6 +1,6 @@
 import { OpenAPIRegistry, OpenApiGeneratorV3 } from "@asteasolutions/zod-to-openapi";
 import { z } from "./contracts/zod.js";
-import { ClubDtoSchema, TeamDtoSchema, UpdateClubDtoSchema } from "./contracts/clubs.js";
+import { ClubDtoSchema, TeamDtoSchema, UpdateClubDtoSchema, CreateTeamDtoSchema, UpdateTeamDtoSchema } from "./contracts/clubs.js";
 import { MatchListItemDtoSchema, MatchDetailsDtoSchema, MatchesQueryDtoSchema, MatchesPaginationDtoSchema } from "./contracts/matches.js";
 import {
   IntegrationStatusDtoSchema,
@@ -98,7 +98,25 @@ registry.registerPath({
   path: "/v1/clubs/{clubId}/teams",
   security: bearerAuth,
   request: { params: clubIdParam },
-  responses: { 200: jsonResponse("Équipes du club", z.object({ teams: z.array(TeamDtoSchema) })), ...errorResponses },
+  responses: { 200: jsonResponse("Équipes du club (y compris sans engagement FFBB, voir docs/TEAMS.md)", z.object({ teams: z.array(TeamDtoSchema) })), ...errorResponses },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/clubs/{clubId}/teams",
+  security: bearerAuth,
+  request: { params: clubIdParam, body: { content: { "application/json": { schema: CreateTeamDtoSchema } } } },
+  responses: { 201: jsonResponse("Équipe créée", TeamDtoSchema), ...errorResponses, ...validationResponses },
+});
+
+const clubAndTeamParams = clubIdParam.extend({ teamId: z.string().uuid() });
+
+registry.registerPath({
+  method: "patch",
+  path: "/v1/clubs/{clubId}/teams/{teamId}",
+  security: bearerAuth,
+  request: { params: clubAndTeamParams, body: { content: { "application/json": { schema: UpdateTeamDtoSchema } } } },
+  responses: { 200: jsonResponse("Équipe mise à jour", TeamDtoSchema), ...errorResponses, ...validationResponses },
 });
 
 registry.registerPath({

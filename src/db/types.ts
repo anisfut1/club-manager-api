@@ -149,6 +149,7 @@ export interface Database {
           email: string | null;
           phone: string | null;
           photo_url: string | null;
+          team_id: string | null;
           active: boolean;
           created_at: string;
           updated_at: string;
@@ -163,6 +164,7 @@ export interface Database {
           email?: string | null;
           phone?: string | null;
           photo_url?: string | null;
+          team_id?: string | null;
           active?: boolean;
           created_at?: string;
           updated_at?: string;
@@ -175,8 +177,28 @@ export interface Database {
       >;
 
       teams: Table<
-        { id: string; club_id: string; name: string; category: string | null; active: boolean; created_at: string; updated_at: string },
-        { id?: string; club_id: string; name: string; category?: string | null; active?: boolean; created_at?: string; updated_at?: string }
+        {
+          id: string;
+          club_id: string;
+          name: string;
+          category: string | null;
+          sexe: "M" | "F" | null;
+          numero_equipe: string | null;
+          active: boolean;
+          created_at: string;
+          updated_at: string;
+        },
+        {
+          id?: string;
+          club_id: string;
+          name: string;
+          category?: string | null;
+          sexe?: "M" | "F" | null;
+          numero_equipe?: string | null;
+          active?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        }
       >;
 
       competitions: Table<

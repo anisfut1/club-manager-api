@@ -462,3 +462,19 @@ SQL, pas via une migration — pas un changement de schéma) : la ligne
 2026-09-22 14:27, jamais terminée) a été requalifiée en "error" pour que
 `/admin/sync` reflète immédiatement l'état réel sans attendre le prochain
 cycle de synchronisation.
+
+## Douzième correctif — équipes garçons/filles fusionnées par erreur (2026-09-25, § docs/TEAMS.md)
+
+Découvert en creusant la demande du club de sectoriser le roster/calendrier
+par équipe (`docs/LICENCIES.md`/`docs/TEAMS.md`), pas signalé
+spontanément : `resolveTeamForEngagement` (`sync.ts`) résolvait/créait une
+équipe par un NOM dérivé de la catégorie + numéro d'équipe SEUL,
+n'encodant jamais le sexe — deux engagements de sexes différents
+partageant le même numéro (ex. Seniors 1 féminine ET masculine)
+généraient le même nom et fusionnaient dans LA MÊME ligne `teams`.
+Constaté sur 5 équipes du club pilote (57 matchs mal regroupés, jamais
+perdus). Corrigé : résolution par (catégorie, sexe, numéro d'équipe),
+jamais par le nom ; les 5 équipes déjà fusionnées séparées via une
+migration dédiée (matchs/engagements réaffectés selon leur compétition
+d'origine, qui a toujours porté le bon sexe indépendamment de ce bug).
+Détail complet, régression testée : `docs/TEAMS.md`.

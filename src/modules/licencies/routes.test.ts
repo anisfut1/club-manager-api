@@ -165,4 +165,26 @@ describe("PATCH /v1/clubs/:clubId/licencies/:licencieId/profile — permissions"
     const res = await request("/l1/profile", { method: "PATCH", body: JSON.stringify({ photoUrl: "https://example.com/x.jpg" }) });
     expect(res.status).toBe(403);
   });
+
+  const TEAM_A_ID = "11111111-1111-4111-8111-111111111111";
+  const TEAM_B_ID = "22222222-2222-4222-8222-222222222222";
+
+  it("club_admin peut rattacher un licencié à une équipe DE SON CLUB (demande du club, docs/TEAMS.md)", async () => {
+    state.licencies = [licencie({ id: "l1" })];
+    state.teams = [{ id: TEAM_A_ID, club_id: CLUB_A.id, name: "U11 1", active: true }];
+
+    const res = await request("/l1/profile", { method: "PATCH", body: JSON.stringify({ teamId: TEAM_A_ID }) });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.teamId).toBe(TEAM_A_ID);
+  });
+
+  it("rejette un teamId appartenant à un AUTRE club (400, jamais un rattachement cross-tenant silencieux)", async () => {
+    state.licencies = [licencie({ id: "l1" })];
+    state.teams = [{ id: TEAM_B_ID, club_id: CLUB_B.id, name: "Équipe B", active: true }];
+
+    const res = await request("/l1/profile", { method: "PATCH", body: JSON.stringify({ teamId: TEAM_B_ID }) });
+    expect(res.status).toBe(400);
+    expect(state.licencies.find((l) => l.id === "l1")?.team_id).toBeUndefined();
+  });
 });

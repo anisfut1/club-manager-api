@@ -141,35 +141,64 @@ async function upsertPools(supabase: Client, pools: NormalizedPool[], competitio
 
 /**
  * Résout l'équipe interne correspondant à un engagement FFBB, en créant
- * l'équipe si nécessaire. Heuristique volontairement simple (nom dérivé de
- * la catégorie + numéro d'équipe) : à affiner plus tard depuis une UI
- * d'administration des équipes, pas de sur-ingénierie ici.
+ * l'équipe si nécessaire.
+ *
+ * Recherche/crée par (club_id, category, sexe, numero_equipe) — JAMAIS par
+ * le nom de l'équipe (`teams.name` reste un simple libellé affichable,
+ * librement renommable par un·e club_admin sans jamais casser cette
+ * résolution). Corrigé le 2026-09-25 (§ migration
+ * `20260925100000_teams_gender_split_and_licencie_team.sql`) : la version
+ * précédente résolvait/créait par NOM dérivé de la catégorie + numéro
+ * SEUL, sans le sexe — deux engagements de sexes différents partageant le
+ * même numéro (ex : Seniors 1 féminine ET masculine) généraient le MÊME
+ * nom ("Seniors 1") et fusionnaient donc silencieusement dans LA MÊME
+ * ligne `teams`, mélangeant les matchs des deux équipes sous un seul
+ * `team_id`. Constaté en production sur 5 équipes du club pilote (57
+ * matchs mal regroupés, jamais perdus — corrigés par cette même
+ * migration, `matches.competition_id` ayant toujours porté le bon sexe
+ * indépendamment de ce bug de regroupement).
+ *
+ * `numero_equipe` peut être `null` (FFBB ne fournit pas toujours ce champ,
+ * ex. une catégorie sans équipe concurrente numérotée) : une équipe déjà
+ * existante peut aussi avoir été créée manuellement sans numéro (voir
+ * `modules/teams/routes.ts`) — `is("numero_equipe", null)` la retrouve
+ * correctement dans ce cas plutôt que de la dupliquer.
  */
-async function resolveTeamForEngagement(
+/** FFBB n'expose aucune garantie formelle sur le contenu de `sexe` (texte libre côté API publique) — jamais assumé "M"/"F" sans vérification, `null` sinon (ARCHITECTURE.md §22). */
+function normalizeSexe(value: string | null): "M" | "F" | null {
+  return value === "M" || value === "F" ? value : null;
+}
+
+/** Exporté uniquement pour son test dédié (régression du bug de fusion M/F, voir son commentaire) — jamais appelé hors de ce module en production. */
+export async function resolveTeamForEngagement(
   supabase: Client,
   clubId: string,
   engagement: NormalizedTeamEngagement,
   competition: NormalizedCompetition | undefined,
 ): Promise<string> {
-  const label = competition?.categoryLabel ?? competition?.name ?? "Équipe";
-  const teamName = engagement.numeroEquipe ? `${label} ${engagement.numeroEquipe}`.trim() : (engagement.name ?? label);
+  const category = competition?.categoryCode ?? null;
+  const sexe = normalizeSexe(competition?.sexe ?? null);
+  const numeroEquipe = engagement.numeroEquipe;
 
-  const { data: existing, error: selectError } = await supabase
-    .from("teams")
-    .select("id")
-    .eq("club_id", clubId)
-    .eq("name", teamName)
-    .maybeSingle();
+  let query = supabase.from("teams").select("id").eq("club_id", clubId);
+  query = category === null ? query.is("category", null) : query.eq("category", category);
+  query = sexe === null ? query.is("sexe", null) : query.eq("sexe", sexe);
+  query = numeroEquipe === null ? query.is("numero_equipe", null) : query.eq("numero_equipe", numeroEquipe);
+
+  const { data: existing, error: selectError } = await query.maybeSingle();
 
   if (selectError) {
-    throw new Error(`Recherche équipe "${teamName}" échouée : ${selectError.message}`);
+    throw new Error(`Recherche équipe (catégorie ${category ?? "?"}, sexe ${sexe ?? "?"}, n°${numeroEquipe ?? "?"}) échouée : ${selectError.message}`);
   }
 
   if (existing) return existing.id;
 
+  const label = competition?.categoryLabel ?? competition?.name ?? "Équipe";
+  const teamName = numeroEquipe ? `${label} ${numeroEquipe}`.trim() : (engagement.name ?? label);
+
   const { data: created, error: insertError } = await supabase
     .from("teams")
-    .insert({ club_id: clubId, name: teamName, category: competition?.categoryCode ?? null })
+    .insert({ club_id: clubId, name: teamName, category, sexe, numero_equipe: numeroEquipe })
     .select("id")
     .single();
 

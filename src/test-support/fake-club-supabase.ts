@@ -44,6 +44,7 @@ export interface FakeLicencieRow {
   email: string | null;
   phone: string | null;
   photo_url: string | null;
+  team_id?: string | null;
   active: boolean;
 }
 
@@ -99,6 +100,10 @@ export interface FakeTeamRow {
   id: string;
   club_id: string;
   name: string;
+  category?: string | null;
+  sexe?: "M" | "F" | null;
+  numero_equipe?: string | null;
+  active?: boolean;
 }
 
 export interface FakeEmarqueImportRow {
@@ -349,7 +354,38 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
     },
   };
 
-  const teamsTable = { select: (_cols?: string) => queryable(state.teams) };
+  let teamCounter = 0;
+  const teamsTable = {
+    select: (_cols?: string) => queryable(state.teams),
+    insert: (payload: Omit<FakeTeamRow, "id">) => ({
+      select: () => ({
+        single: () => {
+          teamCounter += 1;
+          // `active` par défaut à `true` (comme la colonne Postgres `not null default true`) si non fourni.
+          const row: FakeTeamRow = { id: `team-auto-${teamCounter}`, active: true, ...payload };
+          state.teams.push(row);
+          return Promise.resolve({ data: row, error: null });
+        },
+      }),
+    }),
+    update: (patch: Partial<FakeTeamRow>) => {
+      const filters: { col: string; value: unknown }[] = [];
+      const api = {
+        eq(col: string, value: unknown) {
+          filters.push({ col, value });
+          return api;
+        },
+        select() {
+          const rows = state.teams.filter((t) => filters.every((f) => (t as unknown as Record<string, unknown>)[f.col] === f.value));
+          rows.forEach((r) => Object.assign(r, patch));
+          return {
+            single: () => (rows[0] ? Promise.resolve({ data: rows[0], error: null }) : Promise.resolve({ data: null, error: { message: "not found" } })),
+          };
+        },
+      };
+      return api;
+    },
+  };
   const emarqueImportsTable = { select: (_cols?: string, _opts?: { count?: string }) => queryable(state.emarqueImports) };
   const syncRunsTable = { select: (_cols?: string) => queryable(state.syncRuns) };
   const profilesTable = {

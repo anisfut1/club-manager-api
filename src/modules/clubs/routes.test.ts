@@ -116,3 +116,52 @@ describe("PATCH /:clubId (gap 1 de la demande)", () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe("POST /:clubId/teams — enregistrer une équipe avant tout engagement FFBB (demande du club, docs/TEAMS.md)", () => {
+  it("club_admin peut créer une équipe manuellement, avec catégorie/sexe/numéro", async () => {
+    const res = await request(`/${CLUB_A.id}/teams`, {
+      method: "POST",
+      body: JSON.stringify({ name: "U9", category: "U9", sexe: null, numeroEquipe: null }),
+    });
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body).toMatchObject({ name: "U9", category: "U9", sexe: null, numeroEquipe: null, active: true });
+    expect(state.teams.find((t) => t.id === body.id)?.club_id).toBe(CLUB_A.id);
+  });
+
+  it("rejette un nom vide (validation)", async () => {
+    const res = await request(`/${CLUB_A.id}/teams`, { method: "POST", body: JSON.stringify({ name: "" }) });
+    expect(res.status).toBe(400);
+  });
+
+  it("un coach (non club_admin) reçoit 403, ne peut jamais créer d'équipe", async () => {
+    currentUserId = "user-coach";
+    const res = await request(`/${CLUB_A.id}/teams`, { method: "POST", body: JSON.stringify({ name: "U9" }) });
+    expect(res.status).toBe(403);
+  });
+});
+
+describe("PATCH /:clubId/teams/:teamId — renommer/reclasser/activer une équipe", () => {
+  beforeEach(() => {
+    state.teams = [{ id: "team-1", club_id: CLUB_A.id, name: "U11 1", category: "U11", sexe: "M", numero_equipe: "1", active: true }];
+  });
+
+  it("club_admin peut renommer et désactiver une équipe", async () => {
+    const res = await request(`/${CLUB_A.id}/teams/team-1`, { method: "PATCH", body: JSON.stringify({ name: "U11 Masculin 1", active: false }) });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({ name: "U11 Masculin 1", active: false, sexe: "M" }); // sexe inchangé (non soumis)
+  });
+
+  it("404 pour une équipe d'un AUTRE club, jamais une erreur qui en révèle l'existence", async () => {
+    state.teams.push({ id: "team-b", club_id: CLUB_B.id, name: "Équipe B", category: null, sexe: null, numero_equipe: null, active: true });
+    const res = await request(`/${CLUB_A.id}/teams/team-b`, { method: "PATCH", body: JSON.stringify({ name: "Piraté" }) });
+    expect(res.status).toBe(404);
+  });
+
+  it("un coach (non club_admin) reçoit 403", async () => {
+    currentUserId = "user-coach";
+    const res = await request(`/${CLUB_A.id}/teams/team-1`, { method: "PATCH", body: JSON.stringify({ name: "Tentative coach" }) });
+    expect(res.status).toBe(403);
+  });
+});

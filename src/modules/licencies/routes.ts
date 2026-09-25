@@ -18,7 +18,7 @@ export const licenciesRouter = new Hono<AppEnv>();
 licenciesRouter.use("*", requireAuth);
 licenciesRouter.use("*", requireClubMembership);
 
-const LICENCIE_COLUMNS = "id, club_id, first_name, last_name, license_number, birth_date, email, phone, photo_url, active";
+const LICENCIE_COLUMNS = "id, club_id, first_name, last_name, license_number, birth_date, email, phone, photo_url, team_id, active";
 
 interface LicencieRow {
   id: string;
@@ -30,6 +30,7 @@ interface LicencieRow {
   email: string | null;
   phone: string | null;
   photo_url: string | null;
+  team_id: string | null;
   active: boolean;
 }
 
@@ -44,6 +45,7 @@ function mapLicencieRow(row: LicencieRow): LicencieDto {
     email: row.email,
     phone: row.phone,
     photoUrl: row.photo_url,
+    teamId: row.team_id,
     active: row.active,
   };
 }
@@ -201,6 +203,15 @@ licenciesRouter.patch("/:licencieId/profile", async (c) => {
   const { data: existing } = await serviceSupabase.from("licencies").select(LICENCIE_COLUMNS).eq("id", licencieId).eq("club_id", club.id).maybeSingle();
   if (!existing) throw notFound("Licencié introuvable.");
 
+  // Une équipe fournie doit appartenir à CE club — sinon un club_admin
+  // pourrait (même par erreur) rattacher un licencié à l'équipe d'un AUTRE
+  // club, jamais vérifié par la RLS (teams_all_club_admin) qui ne regarde
+  // que club_id de la ligne teams écrite, pas d'une référence externe.
+  if (parsed.data.teamId) {
+    const { data: team } = await serviceSupabase.from("teams").select("id").eq("id", parsed.data.teamId).eq("club_id", club.id).maybeSingle();
+    if (!team) throw badRequest("teamId ne correspond à aucune équipe de ce club.");
+  }
+
   const patch: Partial<{
     photo_url: string | null;
     email: string | null;
@@ -209,6 +220,7 @@ licenciesRouter.patch("/:licencieId/profile", async (c) => {
     last_name: string;
     birth_date: string | null;
     license_number: string | null;
+    team_id: string | null;
     active: boolean;
   }> = {};
   if (parsed.data.photoUrl !== undefined) patch.photo_url = parsed.data.photoUrl;
@@ -218,6 +230,7 @@ licenciesRouter.patch("/:licencieId/profile", async (c) => {
   if (parsed.data.lastName !== undefined) patch.last_name = parsed.data.lastName;
   if (parsed.data.birthDate !== undefined) patch.birth_date = parsed.data.birthDate;
   if (parsed.data.licenseNumber !== undefined) patch.license_number = parsed.data.licenseNumber;
+  if (parsed.data.teamId !== undefined) patch.team_id = parsed.data.teamId;
   if (parsed.data.active !== undefined) patch.active = parsed.data.active;
 
   if (Object.keys(patch).length === 0) return c.json(mapLicencieRow(existing));

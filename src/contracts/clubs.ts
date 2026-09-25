@@ -61,8 +61,44 @@ export const TeamDtoSchema = z
     id: z.string().uuid(),
     name: z.string(),
     category: z.string().nullable(),
+    /** `null` = non renseigné (jamais un mélange, voir la découverte documentée dans supabase/migrations/20260925100000_teams_gender_split_and_licencie_team.sql). */
+    sexe: z.enum(["M", "F"]).nullable(),
+    numeroEquipe: z.string().nullable(),
     active: z.boolean(),
   })
   .openapi("TeamDto");
 
 export type TeamDto = z.infer<typeof TeamDtoSchema>;
+
+/**
+ * POST /v1/clubs/:clubId/teams (club_admin) — enregistrer une équipe AVANT
+ * même tout engagement FFBB confirmé (ex : catégories encore en phase de
+ * brassage, voir docs/TEAMS.md). `category`/`sexe`/`numeroEquipe` renseignés
+ * ici permettent à la synchro FFBB de retrouver et RÉUTILISER cette même
+ * équipe plus tard (résolution par ces trois champs, jamais par le nom —
+ * voir `resolveTeamForEngagement`, integrations/ffbb/sync.ts) plutôt que
+ * d'en créer une en double une fois l'engagement confirmé.
+ */
+export const CreateTeamDtoSchema = z
+  .object({
+    name: z.string().trim().min(1, "Le nom de l'équipe ne peut pas être vide."),
+    category: z.string().trim().min(1).nullable().optional(),
+    sexe: z.enum(["M", "F"]).nullable().optional(),
+    numeroEquipe: z.string().trim().min(1).nullable().optional(),
+  })
+  .openapi("CreateTeamDto");
+
+export type CreateTeamDto = z.infer<typeof CreateTeamDtoSchema>;
+
+/** PATCH /v1/clubs/:clubId/teams/:teamId (club_admin) — renommer/reclasser/activer-désactiver une équipe. */
+export const UpdateTeamDtoSchema = z
+  .object({
+    name: z.string().trim().min(1, "Le nom de l'équipe ne peut pas être vide.").optional(),
+    category: z.string().trim().min(1).nullable().optional(),
+    sexe: z.enum(["M", "F"]).nullable().optional(),
+    numeroEquipe: z.string().trim().min(1).nullable().optional(),
+    active: z.boolean().optional(),
+  })
+  .openapi("UpdateTeamDto");
+
+export type UpdateTeamDto = z.infer<typeof UpdateTeamDtoSchema>;

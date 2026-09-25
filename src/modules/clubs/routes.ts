@@ -3,8 +3,8 @@ import type { AppEnv } from "../../auth/context.js";
 import { requireAuth, requireClubMembership, requireClubRole } from "../../auth/middleware.js";
 import { getClubCapabilities } from "../../tenancy/club-capabilities.js";
 import type { ClubRole } from "../../tenancy/roles.js";
-import { UpdateClubDtoSchema, type ClubDto, type TeamDto } from "../../contracts/clubs.js";
-import { badRequest } from "../../api-error.js";
+import { UpdateClubDtoSchema, CreateTeamDtoSchema, UpdateTeamDtoSchema, type ClubDto, type TeamDto } from "../../contracts/clubs.js";
+import { badRequest, notFound } from "../../api-error.js";
 
 export const clubsRouter = new Hono<AppEnv>();
 
@@ -161,18 +161,84 @@ clubsRouter.get("/:clubId/capabilities", requireClubMembership, async (c) => {
   return c.json(capabilities);
 });
 
-/** GET /v1/clubs/:clubId/teams */
+const TEAM_COLUMNS = "id, name, category, sexe, numero_equipe, active";
+
+function mapTeamRow(row: { id: string; name: string; category: string | null; sexe: "M" | "F" | null; numero_equipe: string | null; active: boolean }): TeamDto {
+  return { id: row.id, name: row.name, category: row.category, sexe: row.sexe, numeroEquipe: row.numero_equipe, active: row.active };
+}
+
+/** GET /v1/clubs/:clubId/teams — TOUTES les équipes, y compris celles sans aucun match (créées manuellement en attendant un engagement FFBB, voir docs/TEAMS.md). */
 clubsRouter.get("/:clubId/teams", requireClubMembership, async (c) => {
   const { club } = c.get("club");
-  const { data, error } = await c
-    .get("supabase")
-    .from("teams")
-    .select("id, name, category, active")
-    .eq("club_id", club.id)
-    .order("name");
+  const { data, error } = await c.get("supabase").from("teams").select(TEAM_COLUMNS).eq("club_id", club.id).order("name");
 
   if (error) throw new Error(`Lecture des équipes échouée : ${error.message}`);
 
-  const teams: TeamDto[] = (data ?? []).map((t) => ({ id: t.id, name: t.name, category: t.category, active: t.active }));
+  const teams: TeamDto[] = (data ?? []).map(mapTeamRow);
   return c.json({ teams });
+});
+
+/**
+ * POST /v1/clubs/:clubId/teams (club_admin) — demande du club : enregistrer
+ * une équipe AVANT tout engagement FFBB confirmé (brassage), voir
+ * docs/TEAMS.md. Utilise le client "au nom de l'utilisateur" : la RLS
+ * (`teams_all_club_admin`, supabase/migrations/20260921100090_rls_
+ * multitenant_rewrite.sql) garantit déjà que seul un club_admin de CE club
+ * peut écrire ici, ce handler n'est qu'une validation de forme.
+ */
+clubsRouter.post("/:clubId/teams", requireClubMembership, requireClubRole("club_admin"), async (c) => {
+  const { club } = c.get("club");
+  const body = await c.req.json().catch(() => ({}));
+  const parsed = CreateTeamDtoSchema.safeParse(body);
+  if (!parsed.success) throw badRequest(parsed.error.issues.map((issue) => issue.message).join(" "));
+
+  const { data, error } = await c
+    .get("supabase")
+    .from("teams")
+    .insert({
+      club_id: club.id,
+      name: parsed.data.name,
+      category: parsed.data.category ?? null,
+      sexe: parsed.data.sexe ?? null,
+      numero_equipe: parsed.data.numeroEquipe ?? null,
+    })
+    .select(TEAM_COLUMNS)
+    .single();
+
+  if (error || !data) throw new Error(`Création de l'équipe échouée : ${error?.message}`);
+
+  return c.json(mapTeamRow(data), 201);
+});
+
+/**
+ * PATCH /v1/clubs/:clubId/teams/:teamId (club_admin) — renommer/reclasser/
+ * activer-désactiver. Changer `category`/`sexe`/`numeroEquipe` ici modifie
+ * ce que `resolveTeamForEngagement` (integrations/ffbb/sync.ts) utilisera
+ * pour retrouver cette équipe au prochain engagement FFBB confirmé.
+ */
+clubsRouter.patch("/:clubId/teams/:teamId", requireClubMembership, requireClubRole("club_admin"), async (c) => {
+  const { club } = c.get("club");
+  const teamId = c.req.param("teamId");
+  if (!teamId) throw badRequest("Paramètre de route :teamId manquant.");
+
+  const body = await c.req.json().catch(() => ({}));
+  const parsed = UpdateTeamDtoSchema.safeParse(body);
+  if (!parsed.success) throw badRequest(parsed.error.issues.map((issue) => issue.message).join(" "));
+
+  const patch: Partial<{ name: string; category: string | null; sexe: "M" | "F" | null; numero_equipe: string | null; active: boolean }> = {};
+  if (parsed.data.name !== undefined) patch.name = parsed.data.name;
+  if (parsed.data.category !== undefined) patch.category = parsed.data.category;
+  if (parsed.data.sexe !== undefined) patch.sexe = parsed.data.sexe;
+  if (parsed.data.numeroEquipe !== undefined) patch.numero_equipe = parsed.data.numeroEquipe;
+  if (parsed.data.active !== undefined) patch.active = parsed.data.active;
+
+  const { data: existing } = await c.get("supabase").from("teams").select(TEAM_COLUMNS).eq("id", teamId).eq("club_id", club.id).maybeSingle();
+  if (!existing) throw notFound("Équipe introuvable.");
+
+  if (Object.keys(patch).length === 0) return c.json(mapTeamRow(existing));
+
+  const { data, error } = await c.get("supabase").from("teams").update(patch).eq("id", teamId).select(TEAM_COLUMNS).single();
+  if (error || !data) throw new Error(`Mise à jour de l'équipe échouée : ${error?.message}`);
+
+  return c.json(mapTeamRow(data));
 });

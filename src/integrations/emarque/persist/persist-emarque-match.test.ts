@@ -36,6 +36,8 @@ interface FakeSupabaseOptions {
   failOnTable?: string;
   /** `matches.is_home` pour BASE_PARAMS.matchId — `undefined`/absent = non renseigné (jamais une supposition, voir persist-emarque-match.ts). */
   isHome?: boolean;
+  /** `matches.team_id` pour BASE_PARAMS.matchId — transmis à l'auto-provisionnement (docs/TEAMS.md). */
+  teamId?: string;
   /** Simule une course avec un autre import (23505) sur LE PROCHAIN insert dans `licencies` uniquement. */
   licenciesInsertConflict?: boolean;
 }
@@ -133,7 +135,7 @@ function makeFakeSupabase(options: FakeSupabaseOptions = {}) {
           return {
             select: () => ({
               eq: () => ({
-                maybeSingle: () => Promise.resolve({ data: { is_home: options.isHome ?? null }, error: null }),
+                maybeSingle: () => Promise.resolve({ data: { is_home: options.isHome ?? null, team_id: options.teamId ?? null }, error: null }),
               }),
             }),
             update: (payload: unknown) => ({
@@ -384,8 +386,17 @@ describe("persistEmarqueMatchData — auto-provisionnement des licenciés (deman
     const result = await persistEmarqueMatchData(supabase, { ...BASE_PARAMS, data });
 
     expect(result.participantsLinked).toBe(1);
-    expect(supabase._inserted.licencies).toEqual([{ club_id: "club-1", first_name: "Julie", last_name: "MESTRES", license_number: "JN870663" }]);
+    expect(supabase._inserted.licencies).toEqual([{ club_id: "club-1", first_name: "Julie", last_name: "MESTRES", license_number: "JN870663", team_id: null }]);
     expect(supabase._inserted.match_participants[0]).toMatchObject({ licencie_id: "licencie-auto-1" });
+  });
+
+  it("rattache le licencié nouvellement créé à l'équipe DU MATCH d'origine (matches.team_id) — demande du club de sectoriser le roster par équipe, docs/TEAMS.md", async () => {
+    const supabase = makeFakeSupabase({ isHome: true, teamId: "team-u18-1" });
+    const data = buildData({ players: [buildHomePlayer()] });
+
+    await persistEmarqueMatchData(supabase, { ...BASE_PARAMS, data });
+
+    expect(supabase._inserted.licencies[0]).toMatchObject({ team_id: "team-u18-1" });
   });
 
   it("n'auto-provisionne JAMAIS un licencié pour l'équipe ADVERSE, même avec un numéro de licence lu (scope explicite du club)", async () => {

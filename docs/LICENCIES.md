@@ -52,6 +52,15 @@ manuel de `club_admin` en base à ce stade — aucune UI dédiée n'a été
 construite pour cette demande précise, seule la fiche joueur elle-même
 (lecture + édition selon ce rattachement) l'a été.
 
+## Sectorisation par équipe (voir docs/TEAMS.md)
+
+`licencies.team_id` renseigné automatiquement depuis `matches.team_id` du
+match d'origine à l'auto-provisionnement — jamais réécrit ensuite
+automatiquement, modifiable uniquement par `club_admin` (jamais le
+licencié lui-même, identité admin-contrôlée comme le reste). Détail
+complet (dont un bug de fusion garçons/filles découvert et corrigé au
+passage) : `docs/TEAMS.md`.
+
 ## Fiche joueur : lecture
 
 `GET /v1/clubs/:clubId/licencies/:licencieId` — identité (nom, prénom,

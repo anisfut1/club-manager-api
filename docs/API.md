@@ -21,6 +21,8 @@ n'existe que si elle correspond à un vrai service déjà construit — voir
 | PATCH | `/v1/clubs/:clubId` | club_admin |
 | GET | `/v1/clubs/:clubId/capabilities` | membre du club |
 | GET | `/v1/clubs/:clubId/teams` | membre du club |
+| POST | `/v1/clubs/:clubId/teams` | club_admin (voir docs/TEAMS.md) |
+| PATCH | `/v1/clubs/:clubId/teams/:teamId` | club_admin |
 | GET | `/v1/clubs/:clubId/matches` | membre du club |
 | GET | `/v1/clubs/:clubId/matches/:matchId` | membre du club |
 | GET | `/v1/clubs/:clubId/matches/:matchId/documents` | membre du club (URL de téléchargement réservée à club_admin) |
