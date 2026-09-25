@@ -128,6 +128,21 @@ export interface FakeProfileRow {
   display_name: string | null;
 }
 
+export interface FakeFbiScheduleDiscrepancyRow {
+  id: string;
+  club_id: string;
+  match_id: string | null;
+  division_code: string | null;
+  numero: string | null;
+  kind: "mismatch" | "missing_in_ffbb" | "missing_in_fbi";
+  field_name: string | null;
+  ffbb_value: string | null;
+  fbi_value: string | null;
+  fbi_opponent_name: string | null;
+  detected_at: string;
+  resolved_at: string | null;
+}
+
 export interface FakeClubSupabaseState {
   clubs: FakeClubRow[];
   memberships: FakeMembershipRow[];
@@ -140,6 +155,7 @@ export interface FakeClubSupabaseState {
   emarqueImports: FakeEmarqueImportRow[];
   profiles: FakeProfileRow[];
   licencies: FakeLicencieRow[];
+  fbiScheduleDiscrepancies: FakeFbiScheduleDiscrepancyRow[];
   isPlatformAdmin: boolean;
   /** Clés `${clubId}:${integration}` actuellement verrouillées (voir try_acquire_sync_lock/release_sync_lock). */
   syncLocks: Set<string>;
@@ -158,6 +174,7 @@ export function makeFakeClubSupabaseState(overrides: Partial<FakeClubSupabaseSta
     teams: [],
     emarqueImports: [],
     profiles: [],
+    fbiScheduleDiscrepancies: [],
     isPlatformAdmin: false,
     syncLocks: new Set(),
     ...overrides,
@@ -180,6 +197,10 @@ function queryable<T extends object>(rows: T[]) {
     },
     in(col: string, values: unknown[]) {
       filtered = filtered.filter((r) => values.includes(field(r, col)));
+      return api;
+    },
+    is(col: string, value: null) {
+      filtered = filtered.filter((r) => field(r, col) === value);
       return api;
     },
     gte(col: string, value: string) {
@@ -387,6 +408,7 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
     },
   };
   const emarqueImportsTable = { select: (_cols?: string, _opts?: { count?: string }) => queryable(state.emarqueImports) };
+  const fbiScheduleDiscrepanciesTable = { select: (_cols?: string) => queryable(state.fbiScheduleDiscrepancies) };
   const syncRunsTable = { select: (_cols?: string) => queryable(state.syncRuns) };
   const profilesTable = {
     select: (_cols?: string) => ({
@@ -454,6 +476,8 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
           return teamsTable;
         case "emarque_imports":
           return emarqueImportsTable;
+        case "fbi_schedule_discrepancies":
+          return fbiScheduleDiscrepanciesTable;
         case "profiles":
           return profilesTable;
         case "licencies":

@@ -303,6 +303,38 @@ integrationsRouter.post("/fbi/process-jobs", requireClubRole("club_admin"), asyn
 });
 
 /**
+ * POST /v1/clubs/:clubId/integrations/fbi/reconcile-schedule — rapprochement
+ * calendrier FFBB/FBI (demande du club, voir docs/FBI.md) : "FBI est l'info
+ * réelle. si ya une info sur fbi pour la même rencontre différente de ffbb,
+ * c'est une anomalie. si un match est sur fbi, et pas sur ffbb, c'est à
+ * alerter aussi." Empile un job `reconcile_schedule` (un seul par club, voir
+ * la contrainte `fbi_jobs_unique_pending_reconcile_schedule`) plutôt que de
+ * faire tourner Playwright dans cette requête — même modèle que
+ * `discover_emarque` : consommé par `POST .../fbi/process-jobs` (ou le cron),
+ * jamais synchrone ici. FFBB reste la SEULE source écrite dans `matches`
+ * pour TOUS les clubs — cette route n'existe QUE pour les clubs ayant FBI
+ * configuré, elle ne remplace jamais la synchro FFBB.
+ */
+integrationsRouter.post("/fbi/reconcile-schedule", requireClubRole("club_admin"), async (c) => {
+  const { club } = c.get("club");
+  const serviceSupabase = createServiceSupabaseClient();
+
+  const credentials = await getFbiCredentials(serviceSupabase, club.id);
+  if (!credentials) throw conflict("Configure d'abord un identifiant/mot de passe FBI avant de lancer un rapprochement calendrier.", "FBI_NOT_CONFIGURED");
+
+  const { error } = await serviceSupabase.from("fbi_jobs").insert({ club_id: club.id, type: "reconcile_schedule" });
+
+  if (error) {
+    if (error.code === "23505") {
+      throw conflict("Un rapprochement calendrier FBI est déjà en attente ou en cours pour ce club.", "RECONCILE_SCHEDULE_ALREADY_QUEUED");
+    }
+    throw new Error(`Création du job de rapprochement calendrier échouée : ${error.message}`);
+  }
+
+  return c.json({ queued: true as const });
+});
+
+/**
  * POST /v1/clubs/:clubId/integrations/fbi/parse-documents — §9 de la
  * demande, deuxième étape du même problème : `POST .../fbi/process-jobs`
  * télécharge les documents e-Marque (Playwright), mais ne les PARSE pas —

@@ -307,6 +307,36 @@ describe("BrowserFbiClient.findEmarqueDocuments (§ 'Dix-huitième déclenchemen
   });
 });
 
+describe("BrowserFbiClient.fetchScheduleRows (rapprochement calendrier FFBB/FBI, voir docs/FBI.md)", () => {
+  it("lit le tableau de résultats confirmé (même fixture que findEmarqueDocuments) par libellé d'en-tête, sur les deux passes 'non joué'", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    const rows = await client.fetchScheduleRows(session);
+
+    // La fixture ne réagit pas à l'état de la case "non joué" (serveur de
+    // test statique) : les 3 lignes du tableau sont donc récupérées à
+    // CHAQUE passe — 6 au total. Vérifie surtout que le contenu de chaque
+    // ligne est correctement extrait par libellé de colonne, pas la
+    // déduplication entre passes (non applicable ici, voir docs/FBI.md).
+    expect(rows).toHaveLength(6);
+
+    const match2813 = rows.find((r) => r.numero === "2813");
+    expect(match2813).toMatchObject({
+      division: "RM3",
+      equipe1: "SC Sète",
+      equipe2: "Thuir",
+      dateRencontre: "27/09/2025",
+      heure: "21:00",
+      salle: "Gymnase",
+      em: "DCBLRCA7",
+      score1: "69",
+    });
+
+    await client.closeSession(session);
+  });
+});
+
 describe("BrowserFbiClient.downloadDocument", () => {
   it("télécharge le contenu via le contexte authentifié, sans passer par le système de fichiers", async () => {
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });

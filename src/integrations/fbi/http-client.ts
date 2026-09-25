@@ -1,7 +1,7 @@
 import * as cheerio from "cheerio";
 import { SimpleCookieJar } from "./cookie-jar.js";
 import { FbiError } from "./errors.js";
-import type { EmarqueDocumentRef, FbiAutomationClient, FbiCredentialsInput } from "./types.js";
+import type { EmarqueDocumentRef, FbiAutomationClient, FbiCredentialsInput, FbiScheduleRow } from "./types.js";
 
 /**
  * HttpFbiClient — client HTTP direct pour FBI (pas de navigateur, voir
@@ -300,6 +300,22 @@ export class HttpFbiClient implements FbiAutomationClient<HttpFbiSession> {
       `Endpoint de découverte des documents e-Marque non confirmé pour la rencontre ${matchNumber}. ` +
         "Voir docs/FBI_AUTHENTICATED_SPIKE.md : à compléter avec un rapport sanitisé réel du spike navigateur.",
       "EMARQUE_DOWNLOAD_ENDPOINT_NOT_CONFIRMED",
+    );
+  }
+
+  /**
+   * NON IMPLÉMENTÉ EN HTTP DIRECT, même raison que `findEmarqueDocuments` :
+   * `rechercherRencontreSaisieResultat.fbi` est un formulaire de recherche
+   * avec état (case "non joué", saison, pagination) — la requête HTTP
+   * exacte qu'il déclenche n'a pas pu être observée depuis cet
+   * environnement. `BrowserFbiClient` (./browser-client.ts) est la
+   * stratégie fonctionnelle pour le rapprochement calendrier FFBB/FBI
+   * (voir docs/FBI.md).
+   */
+  async fetchScheduleRows(_session: HttpFbiSession): Promise<FbiScheduleRow[]> {
+    throw new FbiError(
+      "Endpoint de recherche du calendrier FBI non confirmé en HTTP direct. Voir docs/FBI_AUTHENTICATED_SPIKE.md.",
+      "SCHEDULE_SEARCH_ENDPOINT_NOT_CONFIRMED",
     );
   }
 

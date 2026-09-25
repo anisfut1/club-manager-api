@@ -11,7 +11,7 @@ export const JobAcceptedDtoSchema = z
 export const JobStatusDtoSchema = z
   .object({
     id: z.string().uuid(),
-    type: z.enum(["test_connection", "discover_emarque"]),
+    type: z.enum(["test_connection", "discover_emarque", "reconcile_schedule"]),
     status: z.enum(["pending", "claimed", "running", "succeeded", "failed"]),
     attemptCount: z.number(),
     lastError: z.string().nullable(),

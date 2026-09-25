@@ -217,6 +217,19 @@ registry.registerPath({
 
 registry.registerPath({
   method: "post",
+  path: "/v1/clubs/{clubId}/integrations/fbi/reconcile-schedule",
+  security: bearerAuth,
+  request: { params: clubIdParam },
+  responses: {
+    // 200 (job empilé) plutôt que 202+jobId — même modèle qu'un `discover_emarque`
+    // enqueue, consommé ensuite par POST .../fbi/process-jobs (ou le cron).
+    200: jsonResponse("Job de rapprochement calendrier FFBB/FBI empilé (un seul par club à la fois)", z.object({ queued: z.literal(true) })),
+    ...errorResponses,
+  },
+});
+
+registry.registerPath({
+  method: "post",
   path: "/v1/clubs/{clubId}/integrations/fbi/parse-documents",
   security: bearerAuth,
   request: { params: clubIdParam },

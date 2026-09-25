@@ -48,10 +48,11 @@ export type CoachRole = "principal" | "adjoint";
 export type RefereeRole = "referee_1" | "referee_2" | "referee_3";
 export type TableOfficialRole = "scorer" | "assistant_scorer" | "timekeeper" | "shot_clock_operator" | "commissioner" | "other";
 export type HistoricalSyncMode = "current_season" | "last_30_days" | "none";
-export type FbiJobType = "test_connection" | "discover_emarque";
+export type FbiJobType = "test_connection" | "discover_emarque" | "reconcile_schedule";
 export type FbiJobStatus = "pending" | "claimed" | "running" | "succeeded" | "failed";
 export type MatchDocumentType = "emarque_zip" | "match_sheet" | "summary" | "shot_chart" | "other";
 export type MatchDocumentStatus = "downloaded" | "parsing" | "imported" | "error";
+export type FbiScheduleDiscrepancyKind = "mismatch" | "missing_in_ffbb" | "missing_in_fbi";
 
 // `type`, pas `interface` : `GenericTable["Row"]` (postgrest-js) attend
 // `Record<string, unknown>`, et seul un alias de type sur un littéral d'objet
@@ -553,6 +554,41 @@ export interface Database {
       sync_locks: Table<
         { club_id: string; integration: SyncProvider; locked_at: string },
         { club_id: string; integration: SyncProvider; locked_at?: string }
+      >;
+
+      fbi_schedule_discrepancies: Table<
+        {
+          id: string;
+          club_id: string;
+          match_id: string | null;
+          division_code: string | null;
+          numero: string | null;
+          kind: FbiScheduleDiscrepancyKind;
+          field_name: string | null;
+          ffbb_value: string | null;
+          fbi_value: string | null;
+          fbi_opponent_name: string | null;
+          detected_at: string;
+          last_seen_at: string;
+          resolved_at: string | null;
+          created_at: string;
+        },
+        {
+          id?: string;
+          club_id: string;
+          match_id?: string | null;
+          division_code?: string | null;
+          numero?: string | null;
+          kind: FbiScheduleDiscrepancyKind;
+          field_name?: string | null;
+          ffbb_value?: string | null;
+          fbi_value?: string | null;
+          fbi_opponent_name?: string | null;
+          detected_at?: string;
+          last_seen_at?: string;
+          resolved_at?: string | null;
+          created_at?: string;
+        }
       >;
 
       emarque_imports: Table<

@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import type { Browser, BrowserContext, Page } from "playwright-core";
 import { FbiError } from "./errors.js";
 import * as selectors from "./selectors.js";
+import { normalizeScheduleRow } from "./schedule-row.js";
+import type { FbiScheduleRow } from "./types.js";
 import { logInfo } from "../../logger.js";
 
 /**
@@ -664,6 +666,107 @@ export class BrowserFbiClient {
     } finally {
       page.off("response", onResponse);
     }
+  }
+
+  /**
+   * Récupère TOUTES les rencontres du club listées par FBI (rapprochement
+   * calendrier FFBB/FBI, voir docs/FBI.md) — pas une rencontre ciblée comme
+   * `findEmarqueDocuments`. DEUX passes obligatoires : la case "non joué"
+   * (cochée par défaut, voir `selectors.nonJoueCheckbox`) filtre à un SEUL
+   * des deux états à la fois — cochée pour les rencontres à venir/résultat
+   * pas encore saisi (confirmé le 2026-09-25 : le club a montré un listing
+   * de rencontres FUTURES, scores tous vides, case cochée par défaut),
+   * décochée pour les rencontres déjà jouées. Sans les deux passes, la
+   * moitié du calendrier du club serait invisible au rapprochement.
+   *
+   * Recherche à NUMÉRO VIDE (jamais rempli, contrairement à
+   * `trySearchByMatchNumber`) : renvoie alors TOUTES les rencontres du club
+   * connecté, toutes divisions confondues — confirmé par la capture d'écran
+   * fournie par le club (colonnes Division/N°/Equipe 1/Equipe 2/Date de
+   * rencontre/Heure/Salle/EM/Score 1/Forfait 1, pagination "Précédent 1 2 3
+   * 4 5 6 Suivant").
+   */
+  async fetchScheduleRows(session: BrowserFbiSession): Promise<FbiScheduleRow[]> {
+    const { page } = session;
+    const rawRows: Record<string, string>[] = [];
+
+    for (const nonJoueChecked of [true, false]) {
+      await this.trySetNonJoueAndSearch(page, nonJoueChecked);
+      rawRows.push(...(await this.collectAllResultPages(page)));
+    }
+
+    return rawRows.map(normalizeScheduleRow);
+  }
+
+  /**
+   * Rejoint l'écran de recherche (état frais, sans filtre numéro ni
+   * pagination résiduelle d'une passe précédente), règle la case "non
+   * joué" sur l'état demandé, puis soumet une recherche à numéro vide.
+   */
+  private async trySetNonJoueAndSearch(page: Page, nonJoueChecked: boolean): Promise<void> {
+    await this.tryNavigateToSearchScreen(page);
+
+    try {
+      const nonJoue = selectors.nonJoueCheckbox(page);
+      if ((await nonJoue.count().catch(() => 0)) > 0) {
+        const isChecked = await nonJoue.isChecked().catch(() => nonJoueChecked);
+        if (isChecked !== nonJoueChecked) {
+          if (nonJoueChecked) await nonJoue.check();
+          else await nonJoue.uncheck();
+        }
+      }
+    } catch {
+      // Best effort — une case introuvable/impossible à régler ne doit
+      // jamais empêcher la tentative de recherche (elle renverra alors la
+      // page par défaut, mieux que rien).
+    }
+
+    try {
+      const submit = selectors.searchSubmitControl(page).first();
+      if ((await submit.count().catch(() => 0)) > 0) {
+        await submit.click();
+      }
+      await this.settle(page);
+      await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+    } catch {
+      // Best effort — voir collectAllResultPages, qui renvoie []  si la
+      // page courante n'a pas la forme d'un tableau de résultats.
+    }
+  }
+
+  /**
+   * Parcourt toutes les pages du tableau de résultats courant ("Suivant",
+   * voir `selectors.nextPageControl`), en s'arrêtant dès qu'un clic ne
+   * change plus le contenu de la page (dernière page, contrôle inerte) —
+   * jamais un nombre de pages supposé à l'avance, et jamais de boucle
+   * infinie (`MAX_PAGES` en filet de sécurité).
+   */
+  private async collectAllResultPages(page: Page): Promise<Record<string, string>[]> {
+    const MAX_PAGES = 50;
+    const collected: Record<string, string>[] = [];
+    let previousSignature: string | null = null;
+
+    for (let i = 0; i < MAX_PAGES; i += 1) {
+      const rows = await selectors.resultsTableGenericRows(page).catch(() => null);
+      const signature = JSON.stringify(rows);
+      if (signature === previousSignature) break;
+      previousSignature = signature;
+      if (rows) collected.push(...rows);
+
+      const next = selectors.nextPageControl(page);
+      if ((await next.count().catch(() => 0)) === 0) break;
+      if (!(await next.first().isEnabled().catch(() => false))) break;
+
+      try {
+        await next.first().click();
+        await this.settle(page);
+        await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+      } catch {
+        break;
+      }
+    }
+
+    return collected;
   }
 
   /**

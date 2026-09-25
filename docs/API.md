@@ -35,6 +35,7 @@ n'existe que si elle correspond à un vrai service déjà construit — voir
 | PATCH | `/v1/clubs/:clubId/integrations/fbi` | club_admin |
 | POST | `/v1/clubs/:clubId/integrations/fbi` | club_admin |
 | POST | `/v1/clubs/:clubId/integrations/fbi/test` | club_admin |
+| POST | `/v1/clubs/:clubId/integrations/fbi/reconcile-schedule` | club_admin (empile un rapprochement calendrier FFBB/FBI, voir docs/FBI.md) |
 | POST | `/v1/clubs/:clubId/integrations/ffbb/sync` | club_admin |
 | GET | `/v1/clubs/:clubId/sync-runs` | membre du club |
 | GET | `/v1/clubs/:clubId/issues` | membre du club |

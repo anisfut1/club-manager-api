@@ -1862,3 +1862,103 @@ classée READ_ONLY par `action-classification.ts`) ont été rapportés lors
 d'un spike antérieur côté SCSB (`docs/FBI_AUTHENTICATED_SPIKE.md`, jamais
 confirmé indépendamment). Point d'extension prévu mais non implémenté :
 une méthode `listDerogations()` sur l'interface `FbiAutomationClient`.
+
+## Rapprochement calendrier FFBB/FBI
+
+Demande explicite du club (2026-09-25), en réaction à une question sur le
+remplacement du calendrier FFBB par FBI : **"il faut pas remplacer ffbb par
+fbi, car certains clubs seront que en sync ffbb et d'autres ffbb + fbi. FBI
+est l'info réelle. si ya une info sur fbi pour la même rencontre différente
+de ffbb, c'est une anomalie. si un match est sur fbi, et pas sur ffbb, c'est
+à alerter aussi."**
+
+FFBB reste donc la SEULE source du calendrier écrite dans `matches`, pour
+TOUS les clubs (`syncFfbb`, inchangé). FBI, quand un club l'a configuré, sert
+UNIQUEMENT à détecter des anomalies sur ce calendrier — jamais à le
+remplacer ni à y écrire quoi que ce soit. Un club FFBB-only continue de
+fonctionner exactement comme avant, zéro dépendance à FBI.
+
+**Page FBI utilisée** : `rechercherRencontreSaisieResultat.fbi` — la MÊME
+page déjà utilisée pour la découverte de documents e-Marque (voir
+`selectors.ts#resultsTableColumns`, confirmée par capture d'écran le
+2026-09-24). Le club a fourni le 2026-09-25 une nouvelle capture montrant
+son usage en LISTING complet (recherche à numéro vide) : colonnes
+`Division | N° | Equipe 1 | Equipe 2 | Date de rencontre | Heure | Salle |
+EM | Score 1 | Forfait 1`, pagination "Précédent 1 2 3 4 5 6 Suivant"
+(confirmée gérant plusieurs pages, jamais supposée à une seule).
+
+**Clé de rapprochement** : `competitions.code` + `matches.numero` =
+exactement les colonnes "Division"/"N°" de FBI — déjà présentes dans le
+schéma existant, aucune nouvelle donnée à synchroniser côté FFBB pour
+permettre le rapprochement.
+
+**Architecture** :
+- `FbiAutomationClient.fetchScheduleRows(session)` (nouvelle méthode,
+  `types.ts`) : récupère TOUTES les rencontres du club, toutes divisions
+  confondues. `HttpFbiClient` échoue explicitement
+  (`SCHEDULE_SEARCH_ENDPOINT_NOT_CONFIRMED`, même discipline que
+  `EMARQUE_DOWNLOAD_ENDPOINT_NOT_CONFIRMED` — jamais une route HTTP
+  devinée) ; `BrowserFbiClient.fetchScheduleRows` est l'implémentation
+  fonctionnelle : navigue vers l'écran de recherche, DEUX passes (case "non
+  joué" cochée puis décochée — elle filtre à un SEUL état à la fois, voir
+  `selectors.nonJoueCheckbox` ; sans les deux passes, la moitié du
+  calendrier du club serait invisible), recherche à numéro VIDE (renvoie
+  tout le club), parcourt toutes les pages via le contrôle "Suivant"
+  (`selectors.nextPageControl`, s'arrête dès qu'un clic ne change plus le
+  contenu — jamais un nombre de pages supposé).
+- `selectors.resultsTableGenericRows(page)` : lecture GÉNÉRIQUE du tableau
+  de résultats (une ligne = un dictionnaire "libellé d'en-tête" → "texte de
+  cellule"), jamais une position de colonne câblée — survit à un
+  réordonnancement/ajout de colonne FBI.
+- `schedule-row.ts#normalizeScheduleRow` : convertit ce dictionnaire en
+  `FbiScheduleRow` typé (fonction PURE, testée sans Playwright).
+- `schedule-reconciliation.ts#reconcileFbiSchedule` : fonction PURE (aucune
+  IO) qui compare le listing FBI aux rencontres FFBB déjà synchronisées et
+  produit les anomalies. Portée v1 volontairement limitée à ce qui est
+  FIABLE sans avoir observé le format réel d'un match déjà joué sur FBI (les
+  captures fournies ne montrent que des rencontres À VENIR) :
+  - **présence** (`missing_in_ffbb`/`missing_in_fbi`) — la demande explicite
+    du club, jamais ambiguë ; une rencontre "Exempt" (bye) n'est jamais une
+    anomalie ; une rencontre `cancelled` côté FFBB absente de FBI non plus.
+  - **date/heure** (`mismatch`) — précisément la valeur citée par le club
+    ("les modifs en avance") : FBI reflète un changement de planning AVANT
+    que la resynchro FFBB périodique ne le rattrape.
+  - Score/forfait/salle **PAS COMPARÉS** pour l'instant : le format réel
+    d'un "Score 1"/"Forfait 1" FBI sur un match joué n'a jamais été observé,
+    et "Forfait 1" est une case à cocher (jamais un texte — l'extracteur
+    générique ne lit que du texte de cellule, donc toujours vide pour cette
+    colonne). Prochaine étape si le club le souhaite : étendre l'extracteur
+    pour lire l'état `checked` d'une case, puis confirmer le format d'un
+    score réel contre un vrai match joué.
+- `fbi_schedule_discrepancies` (nouvelle table, migration
+  `20260925120000_fbi_schedule_reconciliation.sql`) : journal d'anomalies
+  OUVERTES/résolues — jamais une écriture sur `matches`. Une anomalie
+  précédemment ouverte que le rapprochement suivant ne revoit plus est
+  résolue automatiquement (`resolved_at`), sans action manuelle.
+- `process-reconcile-schedule.ts` (nouveau type de job `reconcile_schedule`,
+  file `fbi_jobs` existante — un seul par club à la fois, contrainte
+  `fbi_jobs_unique_pending_reconcile_schedule`) : login FBI, scrape,
+  rapprochement, écriture des anomalies. Déclenché à la demande pour
+  l'instant (`POST /v1/clubs/:clubId/integrations/fbi/reconcile-schedule`,
+  club_admin, empile le job — consommé par le bouton "Traiter les jobs FBI
+  en attente" existant ou le cron quotidien), PAS encore planifié
+  automatiquement (voir "Ce qui n'est pas fait" ci-dessous).
+- `modules/issues/routes.ts` : `GET /v1/clubs/:clubId/issues` surface
+  désormais aussi les anomalies `fbi_schedule_discrepancies` ouvertes, à
+  côté des anomalies e-Marque existantes (`IssueDto.integration` étendu à
+  `"fbi_schedule"`, `matchId` devenu nullable pour `missing_in_ffbb`) —
+  même page /admin/issues côté SCSB, aucune nouvelle UI dédiée nécessaire.
+
+**Ce qui n'est PAS fait** :
+- Scraper JAMAIS exécuté contre le vrai FBI depuis cet environnement
+  (réseau `*.ffbb.com` bloqué) — statut PREPARED comme le reste de
+  `BrowserFbiClient`, testé contre des fixtures HTML synthétiques
+  (`browser-client.test.ts`), pas contre le vrai site.
+- Comparaison score/forfait/salle (voir ci-dessus).
+- Planification automatique (cron quotidien/hebdomadaire) — pour l'instant
+  déclenché uniquement à la demande via le bouton admin. À ajouter une fois
+  le scraper confirmé contre un vrai compte FBI.
+- Résolution manuelle d'une anomalie individuelle côté API (`POST
+  .../issues/:matchId/resolve` ne cible que les anomalies e-Marque) — une
+  anomalie FBI se résout uniquement en corrigeant la donnée FFBB source,
+  automatiquement constatée au rapprochement suivant.

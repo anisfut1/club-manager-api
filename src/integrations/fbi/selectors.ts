@@ -421,6 +421,57 @@ export async function matchNumberInResultsTable(page: Page, matchNumber: string)
 }
 
 /**
+ * Lit TOUT le tableau de résultats de la page courante de façon générique :
+ * une ligne par `<tr>` du corps, chaque cellule indexée par le LIBELLÉ de
+ * sa colonne d'en-tête (jamais une position fixe) — voir `FbiScheduleRow`
+ * (types.ts), qui construit ses champs connus à partir de ce dictionnaire
+ * tout en conservant les colonnes non modélisées dans `raw`. `null` quand
+ * la page courante n'a pas la forme d'un tableau de résultats (pas d'en-tête
+ * exploitable) — jamais un tableau vide silencieusement pris pour "zéro
+ * rencontre".
+ */
+export async function resultsTableGenericRows(page: Page): Promise<Record<string, string>[] | null> {
+  const headerCells = page.locator("table th, table thead td");
+  const headerTexts = (await headerCells.allTextContents().catch(() => [])).map((t) => t.trim());
+  if (headerTexts.length === 0 || headerTexts.every((t) => t === "")) return null;
+
+  const rows = page.locator("table tbody tr");
+  const rowCount = await rows.count().catch(() => 0);
+  const results: Record<string, string>[] = [];
+
+  for (let i = 0; i < rowCount; i += 1) {
+    const cells = rows.nth(i).locator("td");
+    const cellCount = await cells.count().catch(() => 0);
+    if (cellCount === 0) continue;
+
+    const record: Record<string, string> = {};
+    for (let col = 0; col < Math.min(cellCount, headerTexts.length); col += 1) {
+      const header = headerTexts[col];
+      if (!header) continue;
+      record[header] = ((await cells.nth(col).textContent().catch(() => "")) ?? "").trim();
+    }
+    results.push(record);
+  }
+
+  return results;
+}
+
+/**
+ * Contrôle "page suivante" de la pagination du tableau de résultats —
+ * confirmé en production le 2026-09-25 (capture d'écran du VRAI FBI,
+ * fournie par le club) : liens numérotés "Précédent 1 2 3 … Suivant" en
+ * pied de tableau. Cherché par TEXTE visible ("Suivant"), jamais une classe
+ * CSS devinée. `null` quand absent (dernière page, ou page sans
+ * pagination — un seul écran de résultats) ou désactivé (dernière page —
+ * un lien/bouton "Suivant" grisé n'a généralement plus de `href`/n'est
+ * plus cliquable, voir l'appelant qui vérifie `isEnabled()` avant de
+ * cliquer).
+ */
+export function nextPageControl(page: Page): Locator {
+  return page.getByRole("link", { name: /^suivant$/i }).or(page.getByRole("button", { name: /^suivant$/i }));
+}
+
+/**
  * Checkbox "non joué" (résultat pas encore saisi) du formulaire de
  * recherche — confirmé en production le 2026-09-24 (§ "Dix-neuvième
  * déclenchement", docs/FBI.md, dump complet des champs) : COCHÉE par
