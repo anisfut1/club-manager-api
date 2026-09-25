@@ -2397,3 +2397,89 @@ par le cron existant.
   Augmenter `JOB_BATCH_SIZE` réduirait ce délai mais réintroduirait le
   risque de timeout Vercel déjà rencontré — à décider explicitement avec
   le club, pas changé ici.
+
+### Détail par ligne restauré dans le bulk le 2026-09-25 (cinquième round — HTML source réel d'une ligne du tableau)
+
+Le round précédent ("Incident et revert") avait explicitement laissé
+"le clic ligne→détail... une HYPOTHÈSE DE TEST non confirmée — jamais vu
+le HTML réel des LIGNES du tableau de résultats". Le club a alors testé de
+nouveau en production ("ca marche tjr pas les motifs etc, c ca la page
+rechercher une dérogation") et fourni l'`outerHTML` RÉEL d'une ligne :
+
+```html
+<tr role="row" class="odd">
+  <td class=" dt-body-center"><input type="checkbox" class="FBICheckbox rechercheCheckBox" name="rechercheCheckBox14" value="M1077LX%2B5SKhWamEPnnf%2FQ%3D%3D"></td>
+  <td><div class="alignCentrer"><a href="afficherDerogation.fbi?idDerogation=M1077LX%2B5SKhWamEPnnf%2FQ%3D%3D&idDerogationPrecedente=...&idDerogationSuivante=...&idRencontre=0">08/09/2026 09:14</a></div></td>
+  <!-- ... une cellule <td><div class="alignCentrer"><a href="même URL">texte</a></div></td> par colonne restante ... -->
+</tr>
+```
+
+Deux faits confirmés qui invalident les deux tentatives précédentes :
+1. La 1ère colonne est une checkbox (`class="FBICheckbox rechercheCheckBox"`)
+   — **jamais** un lien ni une cible de clic.
+2. **Chaque cellule de donnée enveloppe son texte dans un vrai
+   `<a href="afficherDerogation.fbi?idDerogation=...&idRencontre=0">`** —
+   un lien HTML statique et navigable, jamais un `onclick`/gestionnaire JS
+   attaché en ligne (contrairement au lien EM de
+   `rechercherRencontreSaisieResultat.fbi`, lui bien confirmé sans `href`,
+   voir plus haut — DEUX pages FBI différentes, DEUX mécaniques
+   différentes, jamais supposées identiques).
+
+**Conséquence directe** : le détail n'a jamais eu besoin d'un clic sur la
+ligne (perd le tableau AJAX au retour) ni d'une reconstruction de
+recherche après chaque ligne (a fait perdre des résultats en production,
+round précédent) — il suffit de LIRE le `href`, sans jamais interagir avec
+la page principale :
+
+- `derogationRowDetailHref(page, rowIndex)` : lit `href` sur
+  `row.locator('a[href*="afficherDerogation"]').first()` — aucun clic,
+  aucune navigation de la page courante.
+- `fetchDerogationDetailByHref(page, href)` : ouvre CET `href` dans un
+  **second onglet** du même `BrowserContext` (`page.context().newPage()`,
+  mêmes cookies de session, aucune reconnexion), y lit le détail via
+  `selectors.derogationDetailFields` (déjà correct depuis le round 3), puis
+  ferme l'onglet. La page principale — son URL, son tableau DataTables, sa
+  pagination — n'est JAMAIS touchée, qu'il réussisse ou échoue (best effort
+  intégral, `null` sans exception).
+- `collectAllDerogationsWithDetail(page)` remplace la lecture simple
+  (`collectAllResultPages` + `normalizeDerogationRow` sans détail) dans
+  `fetchAllDerogations` : parcourt les pages de résultats EXACTEMENT comme
+  avant (même pagination "Suivant"), et enrichit chaque ligne avec son
+  détail via le mécanisme ci-dessus avant de passer à la page suivante.
+- `fetchDerogationDetailForRow` (utilisée par `fetchDerogationForMatch`,
+  un seul match) devient un simple assemblage
+  `derogationRowDetailHref` + `fetchDerogationDetailByHref` — signature
+  inchangée, mais ne clique/ne navigue plus la page principale du tout,
+  donc plus besoin de `page.goBack()` non plus.
+
+**Pourquoi cette fois est structurellement différente des deux échecs
+précédents** (jamais une simple 3ème tentative "on croise les doigts") :
+1. Le clic+`goBack()` (round 3) perdait le tableau AJAX injecté — cause
+   racine désormais évitée : on ne quitte JAMAIS la page principale.
+2. La reconstruction de recherche après chaque ligne (fix raté du round 3,
+   cause de l'incident du round 4) multipliait les points de défaillance
+   sur des dizaines d'allers-retours réseau sur la MÊME page — cause
+   racine désormais évitée : chaque détail est un aller-retour isolé sur
+   un ONGLET séparé, sans jamais réémettre la recherche principale.
+3. Une tentative intermédiaire (interception de route Playwright,
+   `route.abort()` sur la navigation vers le détail pour l'empêcher côté
+   page principale) a été testée et **immédiatement rejetée avant tout
+   commit** : `route.abort()` sur une navigation de premier niveau fait
+   atterrir Chromium sur `chrome-error://chromewebdata/`, cassant la page
+   entière (confirmé par 4 échecs de test — jamais poussé en production).
+   Le `href` était déjà connu à ce moment-là mais mal exploité (interception
+   au lieu de lecture directe) — la vraie leçon de cette tentative ratée
+   est que la page principale ne doit **jamais** être touchée, ce qui a
+   directement guidé le choix du second onglet ci-dessus.
+
+**Vérifié** : `rechercher-derogation.html` (fixture) réécrite pour
+reproduire EXACTEMENT cette structure (checkbox en 1ère colonne, chaque
+cellule de donnée dans `<div class="alignCentrer"><a href="...">`) ;
+`browser-client.test.ts` vérifie désormais que `fetchAllDerogations`
+ramène motif/dates demandées/demandeur pour CHAQUE ligne ET que
+`session.page.url()` reste sur `rechercherDerogation.fbi` tout le
+parcours (jamais quittée) — 24/24 tests passants, suite complète
+(415 tests) inchangée par ailleurs. `processCheckAllDerogationsJob`
+n'a nécessité AUCUN changement : il écrivait déjà les 8 colonnes de
+détail sans condition, restées `null` tant que `fetchAllDerogations` ne
+les remplissait pas.

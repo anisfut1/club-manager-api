@@ -836,20 +836,14 @@ export class BrowserFbiClient {
    * TOUTES les dérogations du club connecté. UNE SEULE connexion FBI pour
    * tout le club, jamais une boucle de connexions par match (déjà à
    * l'origine d'un blocage anti-bot par le passé pour `discover_emarque`,
-   * voir ProcessFbiJobsButton.tsx côté SCSB). Lit le tableau de résultats
-   * via `collectAllResultPages` — MÊME pagination générique que les deux
-   * autres pages FBI, JAMAIS de détail par ligne ici.
+   * voir ProcessFbiJobsButton.tsx côté SCSB).
    *
-   * Une version antérieure cliquait dans le détail de CHAQUE ligne (pour
-   * motif/dates demandées) — retirée le 2026-09-25 après avoir constaté en
-   * production qu'un lot d'une vingtaine de dérogations en tombait à 3
-   * trouvées : reconstruire le tableau après chaque ligne (login unique,
-   * mais une recherche FBI de plus par dérogation) multiplie les points de
-   * défaillance possibles sur un enchaînement de dizaines
-   * d'allers-retours, et une recherche dégradée qui en "perd" en cours de
-   * route n'est jamais détectable depuis ce seul job. Le détail par ligne
-   * reste disponible via `fetchDerogationForMatch` (un seul match, un seul
-   * aller-retour, éprouvé fiable) — voir docs/FBI.md.
+   * Ramène aussi le détail (motif/dates demandées/réponse adversaire) de
+   * CHAQUE ligne — troisième tentative, cette fois via `outerHTML` RÉEL
+   * d'une ligne fourni par le club le 2026-09-25 ("ca marche tjr pas les
+   * motifs etc") : voir `collectAllDerogationsWithDetail` pour pourquoi ce
+   * mécanisme (extraction de `href`, nouvel onglet) n'a PAS les défauts des
+   * deux précédents.
    */
   async fetchAllDerogations(session: BrowserFbiSession): Promise<FbiDerogationRow[]> {
     const { page } = session;
@@ -868,47 +862,120 @@ export class BrowserFbiClient {
       );
     }
 
-    const rawRows = await this.collectAllResultPages(page);
-    return rawRows.map(normalizeDerogationRow);
+    return await this.collectAllDerogationsWithDetail(page);
   }
 
   /**
-   * Ouvre le détail d'UNE ligne du tableau de résultats de dérogations
-   * (clic sur le `<tr>`, jamais la case à cocher en première colonne —
-   * suppose que le clic déclenche la même navigation qu'un clic manuel
-   * vers `afficherDerogation.fbi`, JAMAIS CONFIRMÉ contre le vrai FBI,
-   * réseau `*.ffbb.com` bloqué depuis cet environnement) puis revient sur
-   * le tableau (`page.goBack()`) avant de rendre la main à l'appelant.
-   * Best effort intégral : si le clic ne mène pas à une URL
-   * `afficherDerogation.fbi`, ou que la page de détail n'a pas la forme
-   * attendue, renvoie `null` SANS lever d'erreur — une ligne dont le détail
-   * échoue à s'ouvrir ne doit jamais interrompre tout le lot (le
-   * tableau de résultats reste la source de vérité minimale).
+   * Parcourt toutes les pages du tableau de résultats de dérogations
+   * (même pagination que `collectAllResultPages`), et enrichit CHAQUE ligne
+   * avec son détail — troisième tentative après deux échecs (voir
+   * docs/FBI.md, "Incident et revert") :
+   *
+   * 1. Cliquer la ligne + `page.goBack()` : fiable pour UNE ligne
+   *    (`fetchDerogationForMatch`), mais `goBack()` ne restaure pas le
+   *    tableau injecté en AJAX pour une ligne suivante (page vide).
+   * 2. Reconstruire toute la recherche après chaque ligne : a fait tomber un
+   *    lot de ~20 dérogations à 3 trouvées en production (perte de données).
+   *
+   * Le HTML RÉEL d'une ligne de résultat (fourni par le club le 2026-09-25,
+   * outerHTML d'un vrai `<tr>`) montre que CHAQUE cellule de donnée
+   * enveloppe son texte dans un vrai `<a href="afficherDerogation.fbi?
+   * idDerogation=...&idRencontre=0">` — un lien HTML statique, jamais un
+   * `onclick`/gestionnaire JS. Lire cet `href` (`derogationRowDetailHref`)
+   * ne touche JAMAIS la page principale (pas de clic, pas de navigation,
+   * pas d'interception de route) : le détail est ouvert dans un second
+   * onglet séparé (`fetchDerogationDetailByHref`), lu, fermé — le tableau
+   * de résultats et sa pagination restent intacts pendant tout le
+   * parcours, contrairement aux deux tentatives précédentes.
+   */
+  private async collectAllDerogationsWithDetail(page: Page): Promise<FbiDerogationRow[]> {
+    const MAX_PAGES = 50;
+    const collected: FbiDerogationRow[] = [];
+    let previousSignature: string | null = null;
+
+    for (let i = 0; i < MAX_PAGES; i += 1) {
+      const rows = await selectors.resultsTableGenericRows(page).catch(() => null);
+      const signature = JSON.stringify(rows);
+      if (signature === previousSignature) break;
+      previousSignature = signature;
+
+      if (rows) {
+        for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+          const normalized = normalizeDerogationRow(rows[rowIndex]);
+          const detail = await this.fetchDerogationDetailForRow(page, rowIndex);
+          collected.push(detail ? { ...normalized, ...detail } : normalized);
+        }
+      }
+
+      const next = selectors.nextPageControl(page);
+      if ((await next.count().catch(() => 0)) === 0) break;
+      if (!(await next.first().isEnabled().catch(() => false))) break;
+
+      try {
+        await next.first().click();
+        await this.settle(page);
+        await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+      } catch {
+        break;
+      }
+    }
+
+    return collected;
+  }
+
+  /**
+   * Détail d'UNE ligne du tableau de résultats, par extraction directe de
+   * `href` (voir `collectAllDerogationsWithDetail`) — jamais un clic sur la
+   * ligne. Best effort intégral : si la ligne n'a pas de lien, ou que
+   * l'onglet ouvert n'a pas la forme attendue, renvoie `null` SANS lever
+   * d'erreur — une ligne dont le détail échoue à s'ouvrir ne doit jamais
+   * interrompre tout le lot (le tableau de résultats reste la source de
+   * vérité minimale). Utilisée aussi par `fetchDerogationForMatch`.
    */
   private async fetchDerogationDetailForRow(page: Page, rowIndex: number): Promise<FbiDerogationDetailFields | null> {
+    const href = await this.derogationRowDetailHref(page, rowIndex);
+    if (!href) return null;
+    return await this.fetchDerogationDetailByHref(page, href);
+  }
+
+  /**
+   * `href` du lien de détail (`afficherDerogation.fbi?idDerogation=...`)
+   * porté par CHAQUE cellule de donnée de la ligne — confirmé par le HTML
+   * source réel d'une ligne fourni par le club le 2026-09-25. La 1ère
+   * colonne est une checkbox (jamais un lien, voir la fixture), d'où
+   * `a[href]` cherché sur la ligne entière plutôt qu'une cellule précise —
+   * n'importe quelle cellule de donnée porte le même `href`.
+   */
+  private async derogationRowDetailHref(page: Page, rowIndex: number): Promise<string | null> {
     const row = page.locator("table tbody tr").nth(rowIndex);
     if ((await row.count().catch(() => 0)) === 0) return null;
 
-    const urlBeforeClick = page.url();
+    const link = row.locator('a[href*="afficherDerogation"]').first();
+    if ((await link.count().catch(() => 0)) === 0) return null;
+
+    return await link.getAttribute("href").catch(() => null);
+  }
+
+  /**
+   * Ouvre `href` dans un NOUVEL onglet du même `BrowserContext` (mêmes
+   * cookies de session, aucune reconnexion) — jamais la page principale —
+   * lit son détail, puis ferme l'onglet. Best effort intégral : la page
+   * principale (son URL, son tableau, sa pagination) n'est JAMAIS touchée
+   * par cette méthode, qu'elle réussisse ou échoue.
+   */
+  private async fetchDerogationDetailByHref(page: Page, href: string): Promise<FbiDerogationDetailFields | null> {
+    let detailPage: Page | null = null;
     try {
-      await row.click();
-      await this.settle(page);
-      await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+      const absoluteUrl = new URL(href, page.url()).toString();
+      detailPage = await page.context().newPage();
+      await detailPage.goto(absoluteUrl, { waitUntil: "domcontentloaded" });
+      await this.settle(detailPage);
+      return await selectors.derogationDetailFields(detailPage).catch(() => null);
     } catch {
       return null;
+    } finally {
+      if (detailPage) await detailPage.close().catch(() => {});
     }
-
-    if (!/afficherDerogation\.fbi/i.test(page.url())) {
-      if (page.url() !== urlBeforeClick) await page.goBack().catch(() => {});
-      return null;
-    }
-
-    const detail = await selectors.derogationDetailFields(page).catch(() => null);
-
-    await page.goBack().catch(() => {});
-    await this.settle(page);
-
-    return detail;
   }
 
   /**

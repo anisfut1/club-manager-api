@@ -393,8 +393,10 @@ describe("BrowserFbiClient.fetchDerogationForMatch (gestion des dérogations, vo
       acceptation: null,
       motifRefus: null,
     });
-    // Retombe bien sur le tableau de résultats après avoir lu le détail
-    // (page.goBack()) — jamais coincé sur afficherDerogation.fbi.
+    // Le détail est lu dans un ONGLET SÉPARÉ (extraction directe du `href`
+    // réel de la ligne, jamais un clic) — la page principale ne quitte
+    // jamais rechercherDerogation.fbi, contrairement à l'ancien mécanisme
+    // clic + page.goBack() (perdait le tableau AJAX pour la ligne suivante).
     expect(session.page.url()).toContain("rechercherDerogation.fbi");
 
     await client.closeSession(session);
@@ -429,7 +431,7 @@ describe("BrowserFbiClient.fetchAllDerogations ('je veux un bouton global qui ch
     await client.closeSession(session);
   });
 
-  it("ne clique JAMAIS dans le détail des lignes (lit uniquement le tableau) — retiré le 2026-09-25 après avoir constaté qu'un enchaînement de recherches-par-ligne pouvait faire perdre des résultats en production (23 dérogations trouvées avant, 3 après)", async () => {
+  it("ramène le détail (motif/dates demandées/réponse adversaire) de CHAQUE ligne, via un onglet séparé par ligne — jamais un clic sur le tableau principal (troisième tentative, après l'échec production du clic+goBack puis de la reconstruction de recherche, voir docs/FBI.md 'Incident et revert')", async () => {
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
     const session = await client.login({ username: "club1234", password: "secret" });
 
@@ -437,10 +439,19 @@ describe("BrowserFbiClient.fetchAllDerogations ('je veux un bouton global qui ch
 
     expect(derogations).toHaveLength(2);
     for (const derogation of derogations) {
-      expect(derogation.motif).toBeNull();
-      expect(derogation.dateRencontreDemandee).toBeNull();
+      // Le serveur de test STATIQUE route par CHEMIN seulement (query string
+      // ignorée) : les deux lignes renvoient donc la MÊME fixture de détail
+      // (afficher-derogation.html) — suffisant pour prouver que le détail
+      // est bien récupéré pour chaque ligne, sans dépendre d'un contenu
+      // distinct par idDerogation.
+      expect(derogation.motif).toBe("Gymnase indisponible ce jour-là");
+      expect(derogation.dateRencontreDemandee).toBe("03/10/2026");
+      expect(derogation.demandeur).toBe("Domicile");
     }
-    // Jamais parti sur afficherDerogation.fbi — reste sur le tableau de résultats.
+    // Le tableau principal n'a JAMAIS été quitté pendant la collecte du
+    // détail (extraction de href + nouvel onglet, jamais un clic) — reste
+    // sur rechercherDerogation.fbi tout le parcours, contrairement à
+    // l'ancien mécanisme "reconstruire la recherche après chaque ligne".
     expect(session.page.url()).toContain("rechercherDerogation.fbi");
 
     await client.closeSession(session);

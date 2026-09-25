@@ -18,6 +18,18 @@
       page ne navigue JAMAIS — `rechercherDerogationAjax()` injecte le
       résultat dans #getTableauDerogation) : reproduit ici par un script
       minimal, jamais un vrai appel réseau.
+
+      3. Ligne de résultat réelle fournie par le club le 2026-09-25 (outerHTML
+         d'un `<tr>` copié depuis le VRAI FBI, "ca marche tjr pas les motifs
+         etc") : la 1ère `<td>` est une checkbox
+         (`class="FBICheckbox rechercheCheckBox"`, JAMAIS un lien), et CHAQUE
+         cellule de donnée qui suit enveloppe son texte dans
+         `<div class="alignCentrer"><a href="afficherDerogation.fbi?idDerogation=...&idRencontre=0">...</a></div>`
+         — un VRAI lien HTML statique, jamais un `onclick` ni un gestionnaire
+         JS attaché en ligne. C'est ce lien qu'exploite
+         `derogationRowDetailHref` (browser-client.ts) pour ouvrir le détail
+         dans un NOUVEL onglet, sans jamais cliquer/naviguer sur CETTE page
+         (voir le commentaire au-dessus de `fetchDerogationDetailByHref`).
     -->
     <form id="rechercherDerogation">
       <div class="row">
@@ -74,26 +86,29 @@
       // ACTUELLEMENT sélectionnés — comme le fait jQuery.serialize() sur le
       // vrai FBI, ce qui valide que le code de production modifie bien le
       // <select> AVANT de cliquer, jamais après.
+      // `cells` : les 9 colonnes de DONNÉES (Date de dépôt → Etat), jamais
+      // la colonne checkbox (col 0), construite séparément ci-dessous — même
+      // découpage que la ligne réelle fournie par le club.
       const ALL_ROWS = [
         {
           numero: "1",
           etat: "ORGCREACC",
           etatLabel: "Acceptée par l'organisme dirigeant",
-          cells: ["", "19/08/2026 17:42", "1", "BU13FN23", "SPORT CLUB DE SETE BASKET - 1", "CASTELNAU BASKET - 2", "26/09/2026", "15:30", "", "Acceptée par l'organisme dirigeant"],
+          cells: ["19/08/2026 17:42", "1", "BU13FN23", "SPORT CLUB DE SETE BASKET - 1", "CASTELNAU BASKET - 2", "26/09/2026", "15:30", "", "Acceptée par l'organisme dirigeant"],
           detailUrl: "afficherDerogation.fbi?idDerogation=1k%2BJhfgiN4lc&idRencontre=0",
         },
         {
           numero: "9578",
           etat: "ORGCREACC",
           etatLabel: "Acceptée par l'organisme dirigeant",
-          cells: ["", "20/08/2026 07:47", "9578", "DM2", "LES LOUPS DU PIC OCCIDENTAL BASKET - 1", "IE - SPORT CLUB DE SETE BASKET - 2", "24/04/2027", "20:30", "", "Acceptée par l'organisme dirigeant"],
+          cells: ["20/08/2026 07:47", "9578", "DM2", "LES LOUPS DU PIC OCCIDENTAL BASKET - 1", "IE - SPORT CLUB DE SETE BASKET - 2", "24/04/2027", "20:30", "", "Acceptée par l'organisme dirigeant"],
           detailUrl: "afficherDerogation.fbi?idDerogation=FGzH5N295hQh&idRencontre=0",
         },
         {
           numero: "2659",
           etat: "CREER",
           etatLabel: "A Créer",
-          cells: ["", "", "2659", "PRF", "OUEST MONTPELLIER METROPOLE BASKET - 3", "SPORT CLUB DE SETE BASKET - 1", "07/11/2026", "18:30", "", "A Créer"],
+          cells: ["", "2659", "PRF", "OUEST MONTPELLIER METROPOLE BASKET - 3", "SPORT CLUB DE SETE BASKET - 1", "07/11/2026", "18:30", "", "A Créer"],
           detailUrl: "afficherDerogation.fbi?idDerogation=xuFqkhFXKcVOZPHKMXZhbQ&idRencontre=0",
         },
       ];
@@ -113,10 +128,25 @@
         tbody.innerHTML = "";
         for (const row of rows) {
           const tr = document.createElement("tr");
-          tr.setAttribute("onclick", `location.href='${row.detailUrl}'`);
+
+          // Col 0 : checkbox, JAMAIS un lien (structure réelle confirmée).
+          const checkboxTd = document.createElement("td");
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.className = "FBICheckbox rechercheCheckBox";
+          checkboxTd.appendChild(checkbox);
+          tr.appendChild(checkboxTd);
+
+          // Chaque cellule de donnée enveloppe son texte dans un vrai <a href>.
           for (const cellText of row.cells) {
             const td = document.createElement("td");
-            td.textContent = cellText;
+            const div = document.createElement("div");
+            div.className = "alignCentrer";
+            const a = document.createElement("a");
+            a.href = row.detailUrl;
+            a.textContent = cellText;
+            div.appendChild(a);
+            td.appendChild(div);
             tr.appendChild(td);
           }
           tbody.appendChild(tr);
