@@ -4,7 +4,6 @@ import { FbiError } from "./errors.js";
 import * as selectors from "./selectors.js";
 import { normalizeScheduleRow } from "./schedule-row.js";
 import { normalizeDerogationRow } from "./derogation-row.js";
-import { extractDerogationDetailFields } from "./derogation-detail.js";
 import type { FbiDerogationDetailFields, FbiDerogationRow, FbiScheduleRow } from "./types.js";
 import { logInfo } from "../../logger.js";
 
@@ -896,8 +895,7 @@ export class BrowserFbiClient {
       return null;
     }
 
-    const lines = await selectors.derogationDetailPageLines(page).catch(() => null);
-    const detail = lines ? extractDerogationDetailFields(lines) : null;
+    const detail = await selectors.derogationDetailFields(page).catch(() => null);
 
     await page.goBack().catch(() => {});
     await this.settle(page);

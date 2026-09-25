@@ -1,4 +1,5 @@
 import type { Locator, Page } from "playwright-core";
+import type { FbiDerogationDetailFields } from "./types.js";
 
 /**
  * Détection FBI centralisée (§16 du brief FBI) : AUCUN sélecteur fragile
@@ -555,19 +556,54 @@ export async function searchControlsHtmlSnippet(page: Page, maxLength = 3000): P
 }
 
 /**
- * Lit le texte visible de la page de détail d'une dérogation
- * (`afficherDerogation.fbi`), ligne par ligne — `null` quand la page
- * courante n'a pas la forme attendue (pas de section "Demande de
- * dérogation" détectée dans le texte), jamais un tableau vide
- * silencieusement pris pour "rien à lire" (même discipline que
- * `resultsTableGenericRows`). Volontairement basé sur `innerText` plutôt
- * que sur une structure DOM précise (labels/inputs) — la mise en page de
- * cette page (floating labels + soulignement, probable Angular Material)
- * n'a été vue qu'en capture d'écran, jamais en HTML source, voir
- * `derogation-detail.ts#extractDerogationDetailFields`.
+ * Lit les champs de détail d'une dérogation (`afficherDerogation.fbi`) —
+ * confirmés par le HTML SOURCE réel de DEUX dérogations différentes,
+ * fourni par le club le 2026-09-25 (jamais une capture d'écran seule
+ * cette fois) : les champs sont des `<input disabled>`/`<textarea
+ * readonly>` classiques, chacun avec un `id` STABLE identique sur les
+ * deux exemples (`demandeurLibelle`, `motif`, `dateDerogation` — le
+ * "Date rencontre" DEMANDÉ, dans "Demande de dérogation" —, `horaireHour`,
+ * `adversaire`, `reponseAdversaireDate`, `acceptation` [affiche en fait
+ * `acceptationLibelle`], `motifRefus`).
+ *
+ * ⚠️ La toute première version de ce lecteur (avant d'avoir ce HTML)
+ * lisait le texte visible de la page via `innerText()`, en supposant à
+ * tort un layout "libellé au-dessus de la valeur" tiré d'une CAPTURE
+ * D'ÉCRAN — ça ne pouvait structurellement pas marcher : `innerText()` ne
+ * contient JAMAIS la `value` d'un `<input>`/`<textarea>`, uniquement le
+ * texte "en dur" du DOM. D'où motif/dates demandées systématiquement
+ * vides en production. Corrigé en lisant directement `.inputValue()` de
+ * chaque champ par son `id` confirmé.
+ *
+ * `input#dateDerogation` (jamais juste `#dateDerogation`) : le vrai HTML
+ * a un `id="dateDerogation"` en DOUBLE — une fois sur le `<div>`
+ * englobant, une fois sur le vrai `<input>` à l'intérieur (HTML invalide
+ * mais bien réel) — un sélecteur `#dateDerogation` seul retomberait sur
+ * le `<div>` (premier du document) et `.inputValue()` y échouerait.
+ *
+ * `null` quand la page courante n'a pas la forme attendue (`#demandeurLibelle`
+ * absent), jamais un objet à champs vides silencieusement pris pour "rien
+ * à lire" (même discipline que `resultsTableGenericRows`).
  */
-export async function derogationDetailPageLines(page: Page): Promise<string[] | null> {
-  const bodyText = await page.locator("body").innerText().catch(() => "");
-  if (!/demande de d[ée]rogation/i.test(bodyText)) return null;
-  return bodyText.split("\n");
+export async function derogationDetailFields(page: Page): Promise<FbiDerogationDetailFields | null> {
+  const marker = page.locator("input#demandeurLibelle");
+  if ((await marker.count().catch(() => 0)) === 0) return null;
+
+  const readValue = async (selector: string): Promise<string | null> => {
+    const locator = page.locator(selector).first();
+    if ((await locator.count().catch(() => 0)) === 0) return null;
+    const value = await locator.inputValue().catch(() => null);
+    return value && value.trim().length > 0 ? value.trim() : null;
+  };
+
+  return {
+    demandeur: await readValue("input#demandeurLibelle"),
+    motif: await readValue("textarea#motif"),
+    dateRencontreDemandee: await readValue("input#dateDerogation"),
+    heureDemandee: await readValue("input#horaireHour"),
+    adversaire: await readValue("input#adversaire"),
+    dateReponse: await readValue("input#reponseAdversaireDate"),
+    acceptation: await readValue("input#acceptation"),
+    motifRefus: await readValue("textarea#motifRefus"),
+  };
 }

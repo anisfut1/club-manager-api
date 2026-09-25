@@ -2,46 +2,41 @@
   <body>
     <h1>Détail de la dérogation</h1>
     <!--
-      Reproduit l'ORDRE DE LECTURE visible sur la capture d'écran du VRAI
-      FBI (afficherDerogation.fbi, 2026-09-25) — jamais son HTML source réel
-      (non observable depuis cet environnement, réseau *.ffbb.com bloqué).
-      Chaque bloc label/valeur est un simple <div> empilé : innerText()
-      produit alors une ligne par élément, dans l'ordre du document — c'est
-      cet ordre que `derogationDetailPageLines`/`extractDerogationDetailFields`
-      exploitent, jamais une classe CSS ou un attribut deviné.
+      Reproduit fidèlement le HTML SOURCE réel de afficherDerogation.fbi,
+      fourni par le club le 2026-09-25 (deux exemples réels distincts,
+      mêmes id de champ sur les deux) — jamais une capture d'écran seule
+      cette fois. Champs réels : <input disabled>/<textarea readonly>,
+      chacun avec un id STABLE (demandeurLibelle, motif, dateDerogation,
+      horaireHour, adversaire, reponseAdversaireDate, acceptation,
+      motifRefus). id="dateDerogation" existe en DOUBLE dans le vrai FBI
+      (le <div> englobant ET l'<input> à l'intérieur) — reproduit ici
+      volontairement pour vérifier que le code cible bien
+      input#dateDerogation, jamais juste #dateDerogation.
     -->
-    <div>
-      <div>Equipe domicile</div>
-      <div>SPORT CLUB DE SETE BASKET - 1</div>
-      <div>Equipe visiteur</div>
-      <div>CASTELNAU BASKET - 2</div>
-      <div>Salle</div>
-      <div>GYMNASE MAURICE CLAVEL - SETE</div>
-      <div>Rencontre du</div>
-      <div>26/09/2026</div>
-      <div>Heure</div>
-      <div>15:30</div>
-    </div>
-    <div class="section">
-      <h2>Demande de dérogation</h2>
-      <div>Demandeur</div>
-      <div>Domicile</div>
-      <div>Date de dépôt</div>
-      <div>19/08/2026 17:42</div>
-      <div>Date rencontre</div>
-      <div>03/10/2026</div>
-      <div>Horaire</div>
-      <div>20:00</div>
-      <div>Motif de la demande</div>
-      <div>Gymnase indisponible ce jour-là</div>
-    </div>
-    <div class="section">
-      <h2>Réponse de l'adversaire</h2>
-      <div>Adversaire</div>
-      <div>CASTELNAU BASKET</div>
-      <div>Date de réponse</div>
-      <div>Acceptation</div>
-      <div>Motif de refus</div>
-    </div>
+    <form id="afficherDerogation">
+      <input type="hidden" id="idDerogation" value="1k+JhfgiN4lc" />
+
+      <div class="row sousTitre"><p>Généralités</p></div>
+      <input type="text" id="rencontreEquipeDomicile" value="SPORT CLUB DE SETE BASKET - 1" disabled="disabled" />
+      <input type="text" id="rencontreEquipeVisiteur" value="CASTELNAU BASKET - 2" disabled="disabled" />
+      <input type="text" id="rencontreDateRencontre" value="26/09/2026" disabled="disabled" />
+      <input type="text" id="rencontreDateDerogation" value="" disabled="disabled" />
+      <input type="text" id="rencontreHeure" value="15:30" disabled="disabled" />
+
+      <div class="row sousTitre"><p>Demande de dérogation</p></div>
+      <input type="text" id="demandeurLibelle" value="Domicile" disabled="disabled" />
+      <input type="text" id="dateDepot" value="19/08/2026 17:42" disabled="disabled" />
+      <div id="dateDerogation" style="margin-top:-15px;">
+        <input type="text" id="dateDerogation" value="03/10/2026" disabled="disabled" />
+      </div>
+      <input type="text" id="horaireHour" value="20:00" disabled="disabled" />
+      <textarea id="motif" readonly="readonly">Gymnase indisponible ce jour-là</textarea>
+
+      <div class="row sousTitre"><p>Réponse de l'adversaire</p></div>
+      <input type="text" id="adversaire" value="CASTELNAU BASKET" disabled="disabled" />
+      <input type="text" id="reponseAdversaireDate" value="" disabled="disabled" />
+      <input type="text" id="acceptation" value="" disabled="disabled" />
+      <textarea id="motifRefus" readonly="readonly"></textarea>
+    </form>
   </body>
 </html>

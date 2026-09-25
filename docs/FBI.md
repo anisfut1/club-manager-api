@@ -2247,13 +2247,58 @@ plus par dérogation trouvée), mais fiable quel que soit le comportement
 de cache du navigateur réel — accepté comme compromis (lecture seule,
 job asynchrone, pas de contrainte de temps de réponse).
 
-**Ce qui reste potentiellement à vérifier** (pas confirmé par ce round de
-test) : pourquoi la toute PREMIÈRE recherche de la session (avant tout
-`goBack()`) semblait déjà renvoyer "A Créer" pour tout — le filtre
-`select[name*="etat" i]` corrigé DEVRAIT résoudre ça (il force
-explicitement "TT" au lieu de faire confiance au défaut de page), mais
-seul un nouveau test réel après ce correctif peut le confirmer
-définitivement.
+### Bug corrigé le 2026-09-25 (troisième round — HTML source réel de la page de détail)
+
+Après le round 2, un nouveau test réel a montré le filtre état enfin
+fonctionnel (une rencontre est ressortie avec un état RÉEL différent de
+"A Créer" pour la première fois), mais deux problèmes restaient :
+
+1. **Le motif/dates demandées restaient vides, même pour la rencontre
+   dont l'état était correct.** Le club a fourni le HTML SOURCE RÉEL de
+   DEUX pages de détail différentes (jamais juste une capture d'écran
+   cette fois), qui a révélé que `derogationDetailPageLines`
+   (précédente version) ne pouvait STRUCTURELLEMENT pas fonctionner :
+   elle lisait `page.locator("body").innerText()` en supposant un layout
+   "libellé au-dessus de la valeur" tiré d'une capture d'écran — mais
+   `innerText()` ne contient JAMAIS la `value` d'un `<input>` ou le
+   contenu d'un `<textarea>`, uniquement le texte "en dur" du DOM. Les
+   vrais champs (`demandeurLibelle`, `motif`, `dateDerogation`,
+   `horaireHour`, `adversaire`, `reponseAdversaireDate`, `acceptation`,
+   `motifRefus`) sont des `<input disabled>`/`<textarea readonly>`, avec
+   des `id` STABLES et IDENTIQUES confirmés sur les deux exemples
+   fournis. **Corrigé** : `selectors.derogationDetailFields` lit
+   maintenant directement `.inputValue()` de chaque champ par son `id`
+   confirmé (remplace `derogation-detail.ts#extractDerogationDetailFields`,
+   supprimé). Piège relevé au passage : `id="dateDerogation"` existe en
+   DOUBLE dans le vrai HTML (le `<div>` englobant ET l'`<input>` à
+   l'intérieur) — `input#dateDerogation` cible spécifiquement le bon,
+   jamais `#dateDerogation` seul (qui retomberait sur le `<div>`).
+2. **Toutes les autres rencontres du club restaient à "A Créer", avec
+   une "Dernière vérification" DATÉE D'AVANT le correctif du filtre
+   état** (confirmé par les horodatages : une seule ligne à 16:06:07,
+   toutes les autres à 15:42:19 — la vérification précédente, jamais
+   rafraîchie). `processCheckAllDerogationsJob` n'a jamais nettoyé les
+   lignes `fbi_derogation_checks` PÉRIMÉES : une dérogation qu'une
+   recherche plus récente ne retrouve plus (état résolu, ou — ici —
+   l'ancien bug de filtre qui avait laissé des lignes "A Créer" à tort)
+   restait affichée indéfiniment. **Corrigé** : le job supprime
+   maintenant, après chaque exécution, les lignes du club dont
+   `checked_at` est antérieur à CETTE exécution et dont le match n'a pas
+   été retrouvé cette fois-ci — jamais une ligne écrite par un job
+   concurrent entre-temps (filtre sur `checked_at`, pas un simple "tout
+   sauf ceux-là").
+
+**Limite connue, pas construite** : la page de détail a une TROISIÈME
+section, "Réponse de l'organisme dirigeant" (masquée par défaut dans le
+HTML fourni, `style="display:none"`), distincte de "Réponse de
+l'adversaire" — pertinente pour un état comme "Acceptée par l'organisme
+dirigeant" (validation du comité plutôt que réponse directe du club
+adverse). Non lue pour l'instant : `adversaire`/`dateReponse`/
+`acceptation` peuvent donc rester vides pour ce cas précis même une fois
+le motif de la demande récupéré correctement — à construire si le club
+en a besoin, sur la base des mêmes `id` stables
+(`dateReponseOrganismeDirigeant`, `reponseOrganismeDirigeantValidee`,
+`organismeDirigeantMotifRefus`), déjà confirmés par le même HTML source.
 
 **Ce qui n'est PAS fait (volontairement)** :
 - **Toute écriture sur FBI** : créer une dérogation, cocher
@@ -2263,17 +2308,18 @@ définitivement.
   explicitement avec le club avant toute construction, une fois la phase 1
   validée en conditions réelles.
 - Les 5 cases à cocher de "Demande de dérogation" (Modifier la
-  date/l'horaire/la salle, Inverser la rencontre/les équipes) — voir
-  ci-dessus.
-- Le scraper de RECHERCHE (`rechercherDerogation.fbi`) est maintenant
-  construit contre le HTML SOURCE réel fourni par le club (fixture
-  `__fixtures__/rechercher-derogation.html` réécrite en conséquence,
-  formulaire AJAX fidèle, vraies valeurs d'option). La page de DÉTAIL
-  (`afficherDerogation.fbi`, `__fixtures__/afficher-derogation.html`)
-  reste construite uniquement à partir de captures d'écran (jamais son
-  HTML source) — le clic ligne→détail (`onclick`/navigation) reste une
-  HYPOTHÈSE DE TEST non confirmée, de même que l'extraction texte de
-  cette page précise.
+  date/l'horaire/la salle, Inverser la rencontre/les équipes) et la pièce
+  jointe éventuelle (`#docDerogation`, lien de téléchargement) — pas
+  demandées.
+- La section "Réponse de l'organisme dirigeant" — voir ci-dessus.
+- Le scraper de RECHERCHE (`rechercherDerogation.fbi`) ET la page de
+  DÉTAIL (`afficherDerogation.fbi`) sont maintenant construits contre le
+  HTML SOURCE réel fourni par le club (fixtures
+  `__fixtures__/rechercher-derogation.html` et
+  `__fixtures__/afficher-derogation.html` réécrites en conséquence). Seul
+  le clic ligne→détail (navigation `onclick`) reste une HYPOTHÈSE DE TEST
+  non confirmée — jamais vu le HTML réel des LIGNES du tableau de
+  résultats (uniquement leur contenu texte, via capture d'écran).
 
 ### Cron quotidien — vérifications automatiques (2026-09-25)
 

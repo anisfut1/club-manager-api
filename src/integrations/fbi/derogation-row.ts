@@ -41,7 +41,7 @@ function lookupHeader(raw: Record<string, string>, aliases: string[]): string | 
  * Champs de détail (`FbiDerogationDetailFields`) à `null` par défaut — ce
  * tableau de résultats ne les contient jamais, ils ne sont connus qu'après
  * un passage par la page de détail (voir `BrowserFbiClient`,
- * `extractDerogationDetailFields`).
+ * `selectors.derogationDetailFields`).
  */
 export function normalizeDerogationRow(raw: Record<string, string>): FbiDerogationRow {
   return {
