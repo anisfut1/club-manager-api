@@ -1645,6 +1645,110 @@ statut titulaire (que "feuillematch" n'avait pas) viennent de "resume" —
 nom, prénom, licence et capitanat restent ceux de "feuillematch", jamais
 écrasés (même principe que le rapprochement par maillot exact).
 
+**Trente-quatrième déclenchement — demande du club (« associer chaque
+joueur à sa licence ») : `feuillematch-layout.ts` n'avait JAMAIS été
+recalibré avec la même rigueur que `resume-layout.ts` (Trente-et-unième
+déclenchement) alors que c'est l'UNIQUE source des numéros de licence.**
+Le club a fourni le vrai document "feuillematch" de la rencontre n°1481
+ainsi que la liste complète des 15 joueuses des deux équipes avec leurs
+numéros de licence réels — première vérité de terrain disponible pour ce
+document précis (jusqu'ici jamais testé contre un exemplaire réel, voir
+la limite documentée au Trente-deuxième déclenchement).
+
+Root-cause, deux bugs de calibration indépendants, confirmés par lecture
+OCR isolée de cellules contre le document réel puis comparés à la liste
+fournie par le club :
+
+1. **Colonnes LICENCE/Nom de l'équipe VISITEURS tronquaient
+   systématiquement le préfixe à deux lettres du numéro de licence**
+   (ex. `00970` lu au lieu de `VT000970`, `DEI` au lieu de `DENIS`).
+   Contrairement au document "résumé" (mêmes colonnes pour les deux
+   équipes), les deux encadrés "Équipe A"/"Équipe B" de "feuillematch"
+   sont dessinés INDÉPENDAMMENT dans le gabarit FFBB — une détection de
+   grille RE-FAITE séparément sur la zone Y de l'équipe B a trouvé des
+   bornes X réellement différentes de celles de l'équipe A
+   (`[40,114,185,460,...]` contre `[40,210,277,539,...]`). Le code
+   réutilisait telles quelles les bornes de l'équipe A pour l'équipe B,
+   jamais mesurées séparément.
+2. **Confusion OCR "O"/"0" BIDIRECTIONNELLE à l'intérieur d'un même
+   numéro de licence isolé** (2 lettres + 6 chiffres) : certaines
+   licences avaient un vrai "0" lu comme "O" (`VT010167` → `VTO10167`),
+   d'autres un vrai "O" lu comme "0" (`OH954244` → `0H954244`). Une
+   substitution aveugle dans un seul sens (comme celle déjà en place pour
+   `extractSingleInteger`, réservée aux cellules numériques pures) aurait
+   nécessairement cassé l'un des deux cas.
+3. **Repli** : en creusant pourquoi 0 entraîneur n'était initialement lu
+   côté équipe LOCAUX (qui en a pourtant deux, principal + adjoint), la
+   position des lignes s'est révélée correcte (coordonnées Y calculées à
+   partir du même `rowHeight` extrapolé tombant quasi exactement sur les
+   lignes de grille détectées, `y≈1560`/`1619`) — le problème était en X,
+   pas en Y : sur une ligne entraîneur, la colonne
+   "type/surclassement" adjacente à la licence (qui contient un vrai
+   marqueur sur une ligne joueuse, ex. `1C`/`2C`/`N`) est vide et non
+   délimitée visuellement, donc le texte de la licence y démarre PLUS À
+   GAUCHE que sur une ligne joueuse — la borne étroite habituelle
+   tronquait alors systématiquement les deux premiers caractères
+   (préfixe lettre) de la licence de l'entraîneur.
+
+En creusant ce dernier point, deux bugs préexistants (non introduits ce
+déclenchement-ci) ont aussi été découverts dans `parse-feuillematch.ts` :
+un `break` immédiat sur la PREMIÈRE ligne "entraineur" trouvée (donc
+l'entraîneur adjoint, sur la ligne suivante, n'était jamais atteint pour
+une équipe qui en a deux), et un `role` toujours codé en dur à
+`"principal"` sans jamais lire le mot "adjoint" présent dans la cellule.
+
+**Corrigé** :
+- `feuillematch-layout.ts` : `ROSTER_COLUMNS_TEAM_A`/`ROSTER_COLUMNS_TEAM_B`
+  désormais entièrement séparées (plus jamais un seul jeu de colonnes
+  partagé), mesurées pixel par pixel contre le document réel et vérifiées
+  par superposition visuelle + OCR isolé. Nouvelle zone de repli
+  `licenseNumberWideZone` (bornes X élargies absorbant la colonne
+  "type/surclassement"), utilisée UNIQUEMENT quand la cellule contient le
+  mot "entraineur" — testé explicitement que l'élargir pour une ligne
+  joueuse contamine la lecture (le marqueur de la colonne voisine
+  s'invite dans le texte), donc jamais utilisée hors de ce cas précis.
+- `text-fields.ts` : nouvelle fonction `extractIsolatedLicenseNumber`,
+  correction "O"/"0" PAR POSITION (index 0-1 : lettre, un "0" lu devient
+  "O" ; index 2-7 : chiffre, un "O" lu devient "0") plutôt qu'une
+  substitution aveugle — exige exactement 8 caractères après suppression
+  des espaces (jamais de tolérance sur la longueur, un décalage d'un
+  caractère décalerait la correspondance position→rôle de façon
+  indétectable). Validé sur les 15 licences réelles fournies par le club :
+  15/15 correctes avec cette correction positionnelle, contre 6/15 sans
+  elle.
+- `parse-feuillematch.ts` : `readTeamRosterAndCoach` renommée
+  `readTeamRosterAndCoaches`, ne fait plus jamais `break` sur la première
+  ligne entraîneur — collecte tous les entraîneurs trouvés dans un
+  tableau, `role` désormais détecté depuis le texte de la cellule
+  (`principal`/`adjoint`) au lieu d'être toujours `"principal"`. Nouvelle
+  fonction `stripCoachRolePrefix` : le préfixe "Entraineur Principal :"
+  n'était auparavant jamais retiré avant de découper le nom, donc
+  `lastName` incluait cette phrase.
+- Nouveau test contre le document réel
+  (`parser/parse-feuillematch.test.ts`, fixture
+  `__fixtures__/feuillematch-1481.pdf`, fournie directement par le club) :
+  les 15 joueuses (numéro de maillot, numéro de licence exact,
+  capitanat), et les 3 entraîneurs (2 côté LOCAUX avec leurs rôles
+  respectifs, 1 côté VISITEURS) avec leur numéro de licence — comparés
+  ligne à ligne à la liste fournie par le club.
+
+Limite restante, honnêtement documentée : le nom complet d'un des trois
+entraîneurs reste partiellement tronqué par l'OCR (le prénom abrégé,
+jamais le numéro de licence — la clé de liaison réelle — qui est exact) ;
+accepté comme limitation mineure faute d'une seconde occurrence dans
+l'échantillon justifiant une heuristique dédiée, cohérent avec le
+principe `null`/valeur honnête plutôt que devinée déjà en place ailleurs
+dans ce module.
+
+Cette calibration débloque directement la demande du club : relier
+chaque joueur/joueuse à son numéro de licence FFBB pour, à terme, une
+fiche joueur listant tous ses matchs et ses statistiques par match — non
+implémentée à ce stade, la présente calibration en est le prérequis.
+Portée explicitement limitée, sur demande du club, aux licencié(e)s du
+club exploitant le compte FBI (SC Sète) : le club adverse d'une rencontre
+devra disposer de son propre compte pour accéder à ses propres
+statistiques par licencié.
+
 ## Dérogations / licenciés FBI
 
 Non développé (§60/§40/§41 de la demande — pas de module tables de marque

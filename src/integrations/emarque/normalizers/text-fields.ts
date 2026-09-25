@@ -37,6 +37,45 @@ export function extractLicenseNumber(rawText: string): string | null {
   return findLicenseMatch(rawText)?.license ?? null;
 }
 
+/**
+ * Extrait un numéro de licence d'une cellule OCR ISOLÉE censée ne contenir
+ * QUE ce numéro (jamais un texte libre mélangé, voir `findLicenseMatch`
+ * pour ce cas) — colonne "numéro" du document "feuillematch".
+ *
+ * Corrige la confusion "O"/"0" PAR POSITION plutôt qu'une substitution
+ * aveugle : un numéro de licence FFBB fait toujours EXACTEMENT 2 lettres
+ * puis 6 chiffres (ex: VT010167, OH954244) — la même lettre "O" doit donc
+ * être comprise comme un "0" en position 3-8 (chiffre), mais un vrai "O"
+ * en position 1-2 (préfixe, ex: le "O" de "OH954244"). Constaté en
+ * production (rencontre n°1481, § "Trente-quatrième déclenchement",
+ * docs/FBI.md) : sur 15 licences réelles, l'OCR confondait "0"/"O" dans
+ * LES DEUX SENS selon la position ("VTO10167" au lieu de "VT010167" ET
+ * "0H954244" au lieu de "OH954244") — une substitution aveugle "O"->"0"
+ * (comme `extractSingleInteger`) aurait cassé le second cas. Validé sur
+ * l'échantillon complet : 15/15 après cette correction positionnelle,
+ * contre 6/15 sans elle.
+ *
+ * Exige EXACTEMENT 8 caractères après suppression des espaces (jamais de
+ * tolérance sur la longueur) : un caractère en trop ou manquant décale la
+ * correspondance position->rôle (lettre/chiffre) de façon indétectable —
+ * mieux vaut `null` qu'une correction appliquée au mauvais caractère.
+ */
+export function extractIsolatedLicenseNumber(rawText: string): string | null {
+  const stripped = rawText.replace(/\s/g, "").toUpperCase();
+  if (stripped.length !== 8) return null;
+
+  const corrected = stripped
+    .split("")
+    .map((char, index) => {
+      if (index < 2) return char === "0" ? "O" : char;
+      return char === "O" ? "0" : char;
+    })
+    .join("");
+
+  const match = corrected.match(/^([A-Z]{2})(\d{6})$/);
+  return match ? corrected : null;
+}
+
 /** "NOM, Prénom" -> { lastName: "NOM", firstName: "Prénom" } (format du document "résumé"). */
 export function splitCommaSeparatedName(text: string): { lastName: string | null; firstName: string | null } {
   const trimmed = text.trim();

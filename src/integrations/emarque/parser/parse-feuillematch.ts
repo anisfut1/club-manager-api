@@ -1,8 +1,9 @@
 import type { DocumentExtractor, ZoneFraction } from "../extractors/types.js";
-import { FEUILLEMATCH_PAGE1, FEUILLEMATCH_ROSTER, OFFICIALS_TABLE_PAGE2 } from "../layout/feuillematch-layout.js";
+import { FEUILLEMATCH_PAGE1, FEUILLEMATCH_ROSTER, OFFICIALS_TABLE_PAGE2, type RosterColumn } from "../layout/feuillematch-layout.js";
 import { parseFinalResultLine, parsePouleLabel, parseRencontreHeaderLine } from "../normalizers/header-fields.js";
-import { extractJerseyNumber, findLicenseMatch, splitUppercaseAbbreviatedName } from "../normalizers/text-fields.js";
+import { extractIsolatedLicenseNumber, extractJerseyNumber, extractLicenseNumber, findLicenseMatch, splitUppercaseAbbreviatedName } from "../normalizers/text-fields.js";
 import type {
+  CoachRole,
   EMarqueCoach,
   EMarqueMatchInfo,
   EMarqueOfficial,
@@ -28,53 +29,80 @@ function cleanNameFragment(text: string): string {
   return text.replace(/\(CAP\)/i, "").replace(/[^A-Za-zÀ-ÿ.'\- ]/g, " ").replace(/\s+/g, " ").trim();
 }
 
+/** "Entraineur Principal: TOUR DE WILDEMAN L." -> "TOUR DE WILDEMAN L." — jamais le mot-clé lui-même dans le nom. */
+function stripCoachRolePrefix(text: string): string {
+  return text.replace(/^.*?entra[iî]neur\s*(principal|adjoint)?\s*:?/i, "");
+}
+
 /**
- * Lit l'effectif ET la ligne entraîneur d'une équipe en un seul balayage de
- * lignes. Volontairement tolérant à un décalage de calibration (lignes
- * d'en-tête de tableau sans licence en tout début, lignes vides
- * intercalaires) : on ne s'arrête jamais tant qu'aucun joueur n'a encore été
- * trouvé, et la ligne entraîneur est identifiée par le mot-clé
- * "entraineur", pas par sa position supposée — beaucoup plus robuste qu'un
- * calcul de ligne par index (voir docs/FBI_AUTHENTICATED_SPIKE.md sur la
- * fragilité de la calibration pixel).
+ * Lit chaque colonne d'une ligne SÉPARÉMENT (licence, nom, maillot) plutôt
+ * que la ligne entière en un seul appel OCR suivi d'un découpage par regex
+ * — corrigé en production le 2026-09-25 (rencontre n°1481, § "Trente-
+ * quatrième déclenchement", docs/FBI.md), même classe de bug déjà
+ * rencontrée et corrigée sur le document "résumé" (§ "Trente-et-unième
+ * déclenchement") : un chiffre ou caractère mal lu n'importe où dans la
+ * ligne entière risquait de décaler TOUTES ses valeurs.
+ *
+ * La colonne LICENCE sert de "porte d'entrée" (comme le maillot dans
+ * `parse-resume.ts`) : une ligne vide du gabarit n'a pas de licence valide
+ * — inutile de payer le coût des autres colonnes dans ce cas. On ne
+ * s'arrête JAMAIS sur un nombre de lignes vides consécutives : les lignes
+ * "Entraineur Principal"/"1er Entraineur adjoint" sont précédées de
+ * plusieurs lignes vides du gabarit (5 à 6 sur l'échantillon réel) — un
+ * seuil bas les aurait fait manquer entièrement. Le nombre fixe
+ * `FEUILLEMATCH_ROSTER.maxRows` reste l'unique filet de sécurité.
+ *
+ * Jamais de `break` sur la première ligne entraîneur trouvée (bug
+ * silencieux de l'ancienne version : le rôle "adjoint", sur la ligne
+ * suivante, n'était alors jamais atteint) — les deux rôles sont collectés
+ * séparément, distingués par le mot-clé "principal"/"adjoint" présent
+ * dans la cellule elle-même.
  */
-async function readTeamRosterAndCoach(
+async function readTeamRosterAndCoaches(
   extractor: DocumentExtractor,
   teamSide: TeamSide,
-  rowZone: (row: number) => ZoneFraction,
-): Promise<{ players: EMarquePlayer[]; coach: EMarqueCoach | null }> {
+  team: { cellZone: (row: number, column: RosterColumn) => ZoneFraction; licenseNumberWideZone: (row: number) => ZoneFraction },
+): Promise<{ players: EMarquePlayer[]; coaches: EMarqueCoach[] }> {
   const players: EMarquePlayer[] = [];
-  let coach: EMarqueCoach | null = null;
-  let consecutiveEmptyAfterFirstPlayer = 0;
+  const coaches: EMarqueCoach[] = [];
 
   for (let row = 0; row < FEUILLEMATCH_ROSTER.maxRows; row++) {
-    const { text, confidence } = await extractor.extractZone(1, rowZone(row));
-    const isCoachLine = /entra[iî]neur/i.test(text);
-    const match = findLicenseMatch(text);
+    const licenseText = (await extractor.extractZone(1, team.cellZone(row, "licenseNumber"))).text;
+    let licenseNumber = extractIsolatedLicenseNumber(licenseText);
 
-    if (!match) {
-      if (players.length > 0 && !isCoachLine) {
-        consecutiveEmptyAfterFirstPlayer += 1;
-        if (consecutiveEmptyAfterFirstPlayer >= 5) break; // fin de la section équipe
-      }
+    const { text: nameText, confidence } = await extractor.extractZone(1, team.cellZone(row, "name"));
+    const coachRoleMatch = nameText.match(/entra[iî]neur\s*(principal|adjoint)?/i);
+
+    // Repli UNIQUEMENT pour une ligne entraîneur (voir
+    // `licenseNumberWideZone`) : la colonne "type/surclassement", vide sur
+    // ce type de ligne, n'y est pas séparée par un filet, donc la borne
+    // étroite ci-dessus tronque systématiquement le préfixe lettre du
+    // numéro de licence — jamais utilisé pour un joueur (où cette colonne
+    // contient un vrai marqueur, contaminerait la lecture).
+    if (!licenseNumber && coachRoleMatch) {
+      const wideLicenseText = (await extractor.extractZone(1, team.licenseNumberWideZone(row))).text;
+      licenseNumber = extractLicenseNumber(wideLicenseText);
+    }
+
+    if (!licenseNumber) continue;
+
+    if (coachRoleMatch) {
+      const role: CoachRole = /adjoint/i.test(coachRoleMatch[0]) ? "adjoint" : "principal";
+      const { lastName, firstName } = splitUppercaseAbbreviatedName(cleanNameFragment(stripCoachRolePrefix(nameText)));
+      coaches.push({ teamSide, role, lastName, firstName, licenseNumber });
       continue;
     }
-    consecutiveEmptyAfterFirstPlayer = 0;
 
-    const { lastName, firstName } = splitUppercaseAbbreviatedName(cleanNameFragment(match.remainder));
-
-    if (isCoachLine) {
-      coach = { teamSide, role: "principal", lastName, firstName, licenseNumber: match.license };
-      break; // la ligne entraîneur marque la fin de la section équipe
-    }
+    const jerseyText = (await extractor.extractZone(1, team.cellZone(row, "jerseyNumber"), { expectDigitsOnly: true })).text;
+    const { lastName, firstName } = splitUppercaseAbbreviatedName(cleanNameFragment(nameText));
 
     players.push({
       teamSide,
-      jerseyNumber: extractJerseyNumber(match.remainder),
+      jerseyNumber: extractJerseyNumber(jerseyText),
       lastName,
       firstName,
-      licenseNumber: match.license,
-      isCaptain: /\(CAP\)/i.test(match.remainder),
+      licenseNumber,
+      isCaptain: /\(CAP\)/i.test(nameText),
       // La case "en jeu" (titulaire) n'est pas dans cette zone : renseignée
       // plus tard depuis le document "résumé" (colonne "5 de départ"),
       // voir parse-resume.ts et parser/merge.ts.
@@ -83,7 +111,7 @@ async function readTeamRosterAndCoach(
     });
   }
 
-  return { players, coach };
+  return { players, coaches };
 }
 
 async function readOfficialsTable(extractor: DocumentExtractor): Promise<{ officials: EMarqueOfficial[]; tableOfficials: EMarqueTableOfficial[] }> {
@@ -149,8 +177,8 @@ export async function parseFeuillematch(extractor: DocumentExtractor): Promise<F
   const homeClubCode = normalizeClubCode(homeCodeText.text);
   const awayClubCode = normalizeClubCode(awayCodeText.text);
 
-  const { players: homeRoster, coach: homeCoach } = await readTeamRosterAndCoach(extractor, "home", FEUILLEMATCH_ROSTER.teamA.columnZone);
-  const { players: awayRoster, coach: awayCoach } = await readTeamRosterAndCoach(extractor, "away", FEUILLEMATCH_ROSTER.teamB.columnZone);
+  const { players: homeRoster, coaches: homeCoaches } = await readTeamRosterAndCoaches(extractor, "home", FEUILLEMATCH_ROSTER.teamA);
+  const { players: awayRoster, coaches: awayCoaches } = await readTeamRosterAndCoaches(extractor, "away", FEUILLEMATCH_ROSTER.teamB);
   const officialsResult = await readOfficialsTable(extractor);
 
   return {
@@ -168,7 +196,7 @@ export async function parseFeuillematch(extractor: DocumentExtractor): Promise<F
       scoreAway: finalResult.scoreAway,
     },
     players: [...homeRoster, ...awayRoster],
-    coaches: [homeCoach, awayCoach].filter((c): c is EMarqueCoach => c !== null),
+    coaches: [...homeCoaches, ...awayCoaches],
     officials: officialsResult.officials,
     tableOfficials: officialsResult.tableOfficials,
   };

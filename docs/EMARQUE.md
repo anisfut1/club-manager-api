@@ -143,6 +143,25 @@ essentiellement inutilisable avant, données décalées ou valeurs absurdes
 comme "101 points"). Premier test de ce module contre un vrai document
 (`parser/parse-resume.test.ts`, fixture `__fixtures__/resume-1481.pdf`).
 
+**`feuillematch-layout.ts` — l'unique source des numéros de licence —
+n'avait jamais reçu la même recalibration (§ "Trente-quatrième
+déclenchement", docs/FBI.md, détail complet là-bas) :** les colonnes
+LICENCE/Nom de l'équipe VISITEURS tronquaient systématiquement le préfixe
+à deux lettres de la licence (les deux encadrés d'équipe du gabarit FFBB
+ont des largeurs de colonnes différentes, jamais mesurées séparément
+avant), et la confusion OCR "O"/"0" à l'intérieur d'un numéro de licence
+isolé était bidirectionnelle (un "0" réel lu "O" ET un "O" réel lu "0"
+selon le cas) — corrigée par une correction positionnelle plutôt
+qu'aveugle. Un bug de repli distinct affectait aussi la lecture des
+entraîneurs (`break` sur le premier trouvé, `role` toujours codé en dur).
+Validé à 15/15 numéros de licence exacts contre la liste fournie par le
+club (rencontre n°1481), nouveau test contre le document réel
+(`parser/parse-feuillematch.test.ts`, fixture
+`__fixtures__/feuillematch-1481.pdf`). Débloque la demande du club de
+relier chaque joueur/joueuse à sa licence FFBB ; scope explicitement
+limité aux licencié(e)s du club exploitant le compte FBI, jamais ceux du
+club adverse d'une rencontre.
+
 ## Cron
 
 `GET /internal/cron/emarque-parse` (toutes les 10 minutes, voir
