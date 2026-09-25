@@ -918,7 +918,7 @@ export class BrowserFbiClient {
     const collected: FbiDerogationRow[] = [];
     let previousSignature: string | null = null;
 
-    for (let i = 0; i < MAX_PAGES; i += 1) {
+    for (let pageIndex = 0; pageIndex < MAX_PAGES; pageIndex += 1) {
       const rawRows = await selectors.resultsTableGenericRows(page).catch(() => null);
       const signature = JSON.stringify(rawRows);
       if (signature === previousSignature) break;
@@ -929,6 +929,19 @@ export class BrowserFbiClient {
           const normalized = normalizeDerogationRow(rawRows[rowIndex]);
           const detail = await this.fetchDerogationDetailForRow(page, rowIndex);
           collected.push(detail ? { ...normalized, ...detail } : normalized);
+
+          // Le tableau de résultats est peuplé par AJAX (jamais une
+          // navigation, voir navigateToDerogationSearchScreen) :
+          // `page.goBack()` dans fetchDerogationDetailForRow ne restaure
+          // PAS ce tableau, contrairement à une vraie page navigable —
+          // constaté en test réel (la ligne suivante n'existait plus dans
+          // le DOM après un premier aller-retour détail, son détail
+          // ressortait toujours `null`). Reconstitue donc le tableau
+          // (nouvelle recherche + repagination jusqu'à la page courante)
+          // avant la ligne suivante — plus lent (une recherche de plus par
+          // dérogation), mais fiable quel que soit le comportement de
+          // cache du navigateur réel.
+          await this.rebuildDerogationResultsTable(page, pageIndex);
         }
       }
 
@@ -946,6 +959,41 @@ export class BrowserFbiClient {
     }
 
     return collected;
+  }
+
+  /**
+   * Relance la recherche "toutes dérogations" depuis zéro puis reclique
+   * "Suivant" jusqu'à `targetPageIndex` — utilisé par
+   * `collectAllDerogationsWithDetail` pour reconstituer le tableau de
+   * résultats après chaque visite de détail (voir ci-dessus). Best effort
+   * intégral : un échec ici laisse simplement le tableau dans l'état où il
+   * se trouve, les lignes déjà collectées ne sont jamais perdues.
+   */
+  private async rebuildDerogationResultsTable(page: Page, targetPageIndex: number): Promise<void> {
+    await this.navigateToDerogationSearchScreen(page);
+
+    try {
+      const submit = selectors.searchSubmitControl(page).first();
+      if ((await submit.count().catch(() => 0)) > 0) await submit.click();
+      await this.settle(page);
+      await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+    } catch {
+      return;
+    }
+
+    for (let p = 0; p < targetPageIndex; p += 1) {
+      const next = selectors.nextPageControl(page);
+      if ((await next.count().catch(() => 0)) === 0) return;
+      if (!(await next.first().isEnabled().catch(() => false))) return;
+
+      try {
+        await next.first().click();
+        await this.settle(page);
+        await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+      } catch {
+        return;
+      }
+    }
   }
 
   /**
@@ -969,20 +1017,39 @@ export class BrowserFbiClient {
 
     /**
      * Sélectionne "Tous les états (sauf à créer)" — confirmé par capture
-     * d'écran du VRAI FBI le 2026-09-25 : les 6 options réelles sont "A
-     * Créer | En Cours | Acceptée par les deux associations sportives |
-     * Acceptée par l'organisme dirigeant | Refusée | Tous les états (sauf
-     * à créer)", cette dernière étant celle déjà sélectionnée par défaut.
-     * Recherché par le LIBELLÉ ("tous les états"), jamais par position —
-     * un précédent correctif sélectionnait à tort le PREMIER `<option>`
-     * ("A Créer" dans la vraie liste), ce qui aurait restreint chaque
-     * recherche à cet unique état au lieu de toutes les VRAIES demandes en
-     * cours ("A Créer" désigne une rencontre sans dérogation active, pas
-     * une demande — l'exclure est le comportement voulu pour "vérifier
+     * d'écran ET par le HTML source réel de `rechercherDerogation.fbi`
+     * fourni par le club le 2026-09-25 : les 6 options réelles sont "A
+     * Créer" (value="CREER") | "En Cours" (value="EC") | "Acceptée par
+     * les deux associations sportives" (value="ACCEPT") | "Acceptée par
+     * l'organisme dirigeant" (value="ORGCREACC") | "Refusée"
+     * (value="ORGCREREF") | "Tous les états (sauf à créer)" (value="TT",
+     * `selected="selected"` par défaut) — valeurs jamais devinées, lues
+     * dynamiquement ci-dessous, jamais codées en dur.
+     *
+     * **Bug corrigé le 2026-09-25 (deuxième round, HTML réel fourni par le
+     * club après un premier test en production qui ne renvoyait QUE des
+     * lignes "A Créer")** : le sélecteur `<select>` est trouvé par
+     * attribut `name` (`*="etat" i`, même principe que `nonJoueCheckbox`
+     * ci-dessus), JAMAIS en le cherchant comme ENFANT d'un `<label>` — le
+     * vrai balisage FBI (MDB/bootstrap-select) place le `<label>` APRÈS le
+     * `<select>`, comme FRÈRE, jamais autour de lui :
+     * `<select name="...etatDerogation">...</select><label>Etat de la
+     * dérogation</label>`. L'ancienne recherche `label:has-text(...) >
+     * select` ne trouvait donc RIEN sur le vrai site (0 correspondance,
+     * `count() === 0`) — le bloc entier était silencieusement ignoré
+     * (best effort), laissant le filtre à son état de fait au moment du
+     * chargement de page, jamais explicitement forcé sur "Tous les
+     * états". Recherché par le LIBELLÉ visible de l'option ("tous les
+     * états"), jamais par position — un tout premier correctif (avant
+     * celui-ci) sélectionnait à tort le PREMIER `<option>` ("A Créer"
+     * dans la vraie liste), ce qui aurait restreint chaque recherche à
+     * cet unique état au lieu de toutes les VRAIES demandes en cours ("A
+     * Créer" désigne une rencontre sans dérogation active, pas une
+     * demande — l'exclure est le comportement voulu pour "vérifier
      * toutes les demandes", jamais un oubli).
      */
     try {
-      const etatSelect = page.locator("label", { hasText: /etat de la d[ée]rogation/i }).locator("select").first();
+      const etatSelect = page.locator('select[name*="etat" i]').first();
       if ((await etatSelect.count().catch(() => 0)) > 0) {
         const options = etatSelect.locator("option");
         const optionCount = await options.count().catch(() => 0);

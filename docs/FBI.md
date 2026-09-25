@@ -2193,6 +2193,68 @@ manquait est UNIQUEMENT sur la page de détail :
   en conséquence — visible sur `/matchs/:id` (carte Dérogation) ET
   `/admin/derogations`.
 
+### Bug corrigé le 2026-09-25 (deuxième round — test réel en production)
+
+Premier test en conditions réelles du bouton "Vérifier toutes les
+dérogations" : la recherche/liaison au bon match fonctionnait (rencontres
+réelles retrouvées, numéros/adversaires corrects), MAIS **toutes les
+lignes ressortaient à l'état "A Créer"** et sans aucun détail
+(motif/dates demandées vides partout) — alors que le club avait
+confirmé par capture d'écran, des semaines plus tôt, que la rencontre
+n°1 avait pour état réel "Acceptée par l'organisme dirigeant". Le club a
+fourni le HTML SOURCE réel de `rechercherDerogation.fbi` (jamais accessible
+depuis cet environnement, réseau bloqué), qui a révélé deux choses :
+
+1. **Le `<label>` "Etat de la dérogation" est un FRÈRE du `<select>`,
+   jamais son parent** : `<select
+   name="rechercheDerogationForm.rechercheDerogationBean.etatDerogation">
+   ...</select><label>Etat de la dérogation</label>`. Le sélecteur
+   `page.locator("label", {hasText}).locator("select")` (recherche du
+   `<select>` comme DESCENDANT du `<label>`) ne trouvait donc RIEN contre
+   le vrai DOM (`count() === 0`) — construit et validé UNIQUEMENT contre
+   une fixture synthétique qui, elle, imbriquait le `<select>` dans le
+   `<label>` (jamais confirmée avant ce jour). Le bloc entier de
+   réinitialisation était donc silencieusement ignoré (best effort) sur
+   le vrai site. **Corrigé** : le `<select>` est maintenant trouvé par
+   attribut `select[name*="etat" i]` (même principe que
+   `nonJoueCheckbox`), robuste à l'emplacement du `<label>`. Les vraies
+   valeurs d'option sont aussi maintenant connues (`CREER`/`EC`/`ACCEPT`/
+   `ORGCREACC`/`ORGCREREF`/`TT`, jamais devinées) — le code continue de
+   sélectionner par LIBELLÉ visible et de lire la valeur dynamiquement,
+   jamais en codant ces chaînes en dur.
+2. **La recherche est 100% AJAX, la page ne navigue JAMAIS** : le bouton
+   "RECHERCHER" est `type="button"` (`onClick="rechercherDerogationAjax()"`),
+   qui poste `$("#rechercherDerogation").serialize()` et injecte le
+   résultat dans `#getTableauDerogation` sans changer l'URL — hypothèse
+   fausse de la première version (qui supposait un formulaire GET natif,
+   d'où la vérification par `page.url()` dans les tests, maintenant
+   remplacée par une lecture directe de `select[name*="etat" i]
+   .inputValue()`).
+
+Cette deuxième info a révélé un troisième bug, découvert en réécrivant
+la fixture pour être fidèle au vrai comportement AJAX : `page.goBack()`
+(dans `fetchDerogationDetailForRow`, après avoir consulté le détail
+d'une ligne) ne restaure PAS le tableau injecté par AJAX — un retour en
+arrière recharge la page de recherche VIERGE, jamais son état
+post-recherche. La ligne SUIVANTE d'une recherche groupée
+(`check_all_derogations`) se retrouvait donc introuvable dans le DOM,
+son détail ressortant toujours `null` silencieusement (constaté en test,
+pas seulement supposé). **Corrigé** : `collectAllDerogationsWithDetail`
+relance désormais une recherche complète (+ repagination jusqu'à la page
+courante) via `rebuildDerogationResultsTable` après CHAQUE ligne
+visitée, jamais un simple `goBack()`. Plus lent (une recherche FBI de
+plus par dérogation trouvée), mais fiable quel que soit le comportement
+de cache du navigateur réel — accepté comme compromis (lecture seule,
+job asynchrone, pas de contrainte de temps de réponse).
+
+**Ce qui reste potentiellement à vérifier** (pas confirmé par ce round de
+test) : pourquoi la toute PREMIÈRE recherche de la session (avant tout
+`goBack()`) semblait déjà renvoyer "A Créer" pour tout — le filtre
+`select[name*="etat" i]` corrigé DEVRAIT résoudre ça (il force
+explicitement "TT" au lieu de faire confiance au défaut de page), mais
+seul un nouveau test réel après ce correctif peut le confirmer
+définitivement.
+
 **Ce qui n'est PAS fait (volontairement)** :
 - **Toute écriture sur FBI** : créer une dérogation, cocher
   salle/horaire/date/inversion, soumettre une demande, répondre à une
@@ -2203,19 +2265,15 @@ manquait est UNIQUEMENT sur la page de détail :
 - Les 5 cases à cocher de "Demande de dérogation" (Modifier la
   date/l'horaire/la salle, Inverser la rencontre/les équipes) — voir
   ci-dessus.
-- Scraper JAMAIS exécuté contre le vrai FBI depuis cet environnement
-  (réseau `*.ffbb.com` bloqué) — testé contre des fixtures HTML
-  synthétiques (`browser-client.test.ts`,
-  `__fixtures__/rechercher-derogation.html` et
-  `__fixtures__/afficher-derogation.html`, cette dernière avec des lignes
-  cliquables `onclick` — HYPOTHÈSE DE TEST du comportement liste→détail,
-  jamais confirmée contre le vrai FBI), reproduisant la structure
-  confirmée par capture d'écran, pas contre le vrai site. La fixture de
-  recherche n'a ni `action` ni `method` sur son `<form>` — une soumission
-  y déclenche un GET natif (rechargement complet de page), donc les tests
-  vérifient l'état réellement sélectionné en lisant `page.url()` après la
-  recherche plutôt qu'un marqueur DOM (qui serait de toute façon effacé
-  par ce rechargement).
+- Le scraper de RECHERCHE (`rechercherDerogation.fbi`) est maintenant
+  construit contre le HTML SOURCE réel fourni par le club (fixture
+  `__fixtures__/rechercher-derogation.html` réécrite en conséquence,
+  formulaire AJAX fidèle, vraies valeurs d'option). La page de DÉTAIL
+  (`afficherDerogation.fbi`, `__fixtures__/afficher-derogation.html`)
+  reste construite uniquement à partir de captures d'écran (jamais son
+  HTML source) — le clic ligne→détail (`onclick`/navigation) reste une
+  HYPOTHÈSE DE TEST non confirmée, de même que l'extraction texte de
+  cette page précise.
 
 ### Cron quotidien — vérifications automatiques (2026-09-25)
 

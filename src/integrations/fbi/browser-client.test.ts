@@ -345,17 +345,16 @@ describe("BrowserFbiClient.fetchScheduleRows (rapprochement calendrier FFBB/FBI,
 });
 
 describe("BrowserFbiClient.fetchDerogationForMatch (gestion des dérogations, voir docs/FBI.md)", () => {
-  it("réinitialise 'Etat de la dérogation' sur 'Tous les états (sauf à créer)' PAR LIBELLÉ (jamais la première option — 'A Créer' dans la vraie liste, ce qui masquerait les vraies demandes)", async () => {
+  it("réinitialise 'Etat de la dérogation' sur 'Tous les états (sauf à créer)' PAR ATTRIBUT NAME (jamais en cherchant le <select> comme enfant du <label> — le vrai FBI place le label APRÈS le select, comme frère, pas autour)", async () => {
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
     const session = await client.login({ username: "club1234", password: "secret" });
 
     await client.fetchDerogationForMatch(session, "1");
 
-    // La fixture n'a ni action ni method : la recherche soumet un GET natif vers
-    // l'URL courante avec tous les champs en query string, donc l'état réellement
-    // sélectionné au moment de la recherche se lit dans l'URL post-soumission.
-    expect(session.page.url()).toContain("etat=TOUS_ETATS");
-    expect(session.page.url()).not.toContain("etat=A_CREER");
+    // La recherche est AJAX sur le vrai FBI (jamais de navigation) : l'état
+    // réellement sélectionné au moment de la recherche se lit directement
+    // sur le <select>, pas dans l'URL (qui ne change jamais).
+    expect(await session.page.locator('select[name*="etat" i]').inputValue()).toBe("TT");
     await client.closeSession(session);
   });
 
@@ -413,16 +412,19 @@ describe("BrowserFbiClient.fetchDerogationForMatch (gestion des dérogations, vo
 });
 
 describe("BrowserFbiClient.fetchAllDerogations ('je veux un bouton global qui check toutes les demandes, pas match par match', voir docs/FBI.md)", () => {
-  it("recherche à numéro VIDE et renvoie toutes les dérogations du club en une seule connexion", async () => {
+  it("recherche à numéro VIDE et renvoie toutes les dérogations du club en une seule connexion, en EXCLUANT les rencontres 'A Créer' (régression du bug constaté en production : toutes les lignes ressortaient 'A Créer')", async () => {
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
     const session = await client.login({ username: "club1234", password: "secret" });
 
     const derogations = await client.fetchAllDerogations(session);
 
-    expect(derogations).toHaveLength(2);
+    // La fixture contient 3 rencontres : "1" et "9578" (Acceptée par
+    // l'organisme dirigeant) et "2659" (A Créer) — seules les deux
+    // premières doivent ressortir sous le filtre "Tous les états (sauf à
+    // créer)".
     expect(derogations.map((d) => d.numero).sort()).toEqual(["1", "9578"]);
-    expect(session.page.url()).toContain("etat=TOUS_ETATS");
-    expect(session.page.url()).not.toContain("etat=A_CREER");
+    expect(derogations.every((d) => d.etat !== "A Créer")).toBe(true);
+    expect(await session.page.locator('select[name*="etat" i]').inputValue()).toBe("TT");
 
     await client.closeSession(session);
   });

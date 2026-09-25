@@ -1,91 +1,128 @@
 <html>
   <body>
     <h1>Recherche de dérogation</h1>
-    <form>
+    <!--
+      Reproduit fidèlement le HTML RÉEL de rechercherDerogation.fbi, fourni
+      par le club le 2026-09-25 après un premier test en production qui ne
+      renvoyait QUE des lignes "A Créer" (voir docs/FBI.md, §"Bug corrigé
+      le 2026-09-25 (deuxième round)"). Deux points RÉELS confirmés qui
+      manquaient à la version précédente de cette fixture :
+      1. Le `<label>` "Etat de la dérogation" est un FRÈRE du `<select>`,
+         jamais son parent — d'où le sélecteur par attribut `name` côté
+         browser-client.ts, jamais par libellé englobant.
+      2. Les vraies valeurs d'option sont CREER/EC/ACCEPT/ORGCREACC/
+         ORGCREREF/TT (jamais A_CREER/EN_COURS/... inventées avant d'avoir
+         le vrai HTML) — le code ne les code jamais en dur, mais cette
+         fixture doit les reproduire pour que le test soit fidèle.
+      Le bouton RECHERCHER est `type="button"` (soumission AJAX réelle, la
+      page ne navigue JAMAIS — `rechercherDerogationAjax()` injecte le
+      résultat dans #getTableauDerogation) : reproduit ici par un script
+      minimal, jamais un vrai appel réseau.
+    -->
+    <form id="rechercherDerogation">
       <div class="row">
-        <label>Type de demande <select name="derogationSearchForm.derogationSearchBean.typeDemande"><option value="">Choisir...</option></select></label>
-        <!--
-          Options RÉELLES confirmées par capture d'écran du VRAI FBI le
-          2026-09-25 : "A Créer | En Cours | Acceptée par les deux
-          associations sportives | Acceptée par l'organisme dirigeant |
-          Refusée | Tous les états (sauf à créer)" — la dernière étant déjà
-          sélectionnée par défaut sur le vrai site. Préréglé ici sur "A
-          Créer" (valeur DIFFÉRENTE du défaut réel) pour vérifier que
-          fetchDerogationForMatch/fetchAllDerogations sélectionnent bien
-          "Tous les états" par LIBELLÉ plutôt que de faire confiance à
-          l'état déjà en place. Ce formulaire n'a ni action ni method, donc
-          une soumission fait un GET natif vers l'URL courante avec tous les
-          champs en query string — les tests vérifient l'état sélectionné en
-          lisant page.url() après la recherche plutôt qu'un marqueur DOM (qui
-          serait de toute façon effacé par le rechargement complet de page).
-        -->
-        <label>Etat de la dérogation
-          <select name="derogationSearchForm.derogationSearchBean.etat">
-            <option value="A_CREER" selected>A Créer</option>
-            <option value="EN_COURS">En Cours</option>
-            <option value="ACCEPTEE_DEUX_AS">Acceptée par les deux associations sportives</option>
-            <option value="ACCEPTEE_ORGANISME">Acceptée par l'organisme dirigeant</option>
-            <option value="REFUSEE">Refusée</option>
-            <option value="TOUS_ETATS">Tous les états (sauf à créer)</option>
-          </select>
-        </label>
+        <select name="rechercheDerogationForm.rechercheDerogationBean.idTypeDemande" id="listeType">
+          <option value="">Choisir...</option>
+          <option value="1">Modifier la date</option>
+        </select>
+        <label class="active ml-4 mt-2">Type de demande</label>
       </div>
       <div class="row">
-        <label>Numéro de rencontre <input type="text" name="derogationSearchForm.derogationSearchBean.numeroRencontre" /></label>
-        <button type="submit">RECHERCHER</button>
+        <select name="rechercheDerogationForm.rechercheDerogationBean.etatDerogation" id="idEntite">
+          <option value="CREER">A Créer</option>
+          <option value="EC">En Cours</option>
+          <option value="ACCEPT">Acceptée par les deux associations sportives</option>
+          <option value="ORGCREACC">Acceptée par l'organisme dirigeant</option>
+          <option value="ORGCREREF">Refusée</option>
+          <option value="TT" selected="selected">Tous les états (sauf à créer)</option>
+        </select>
+        <label class="active ml-4 mt-2">Etat de la dérogation</label>
+      </div>
+      <div class="row">
+        <input type="text" name="rechercheDerogationForm.rechercheDerogationBean.numeroRencontre" value="" id="rechercheDerogationFormNumeroRencontre" />
+        <label for="rechercheDerogationFormNumeroRencontre" class="textRightLabel">Numéro de rencontre</label>
+      </div>
+      <div class="row">
+        <button id="rechercher" type="button" onclick="rechercherDerogationAjax()">RECHERCHER</button>
       </div>
     </form>
-    <table>
-      <thead>
-        <tr>
-          <th></th>
-          <th>Date de dépôt</th>
-          <th>N° Renc</th>
-          <th>Division</th>
-          <th>Domicile</th>
-          <th>Visiteur</th>
-          <th>Date rencontre</th>
-          <th>Heure</th>
-          <th>Date déro</th>
-          <th>Etat de la dérogation</th>
-        </tr>
-      </thead>
-      <!--
-        Lignes cliquables (onclick, navigation vers afficherDerogation.fbi) :
-        HYPOTHÈSE DE TEST, jamais confirmée contre le vrai FBI (réseau
-        *.ffbb.com bloqué depuis cet environnement) — reproduit le
-        comportement liste→détail attendu (voir fetchDerogationDetailForRow,
-        browser-client.ts). Le serveur de test ne route que par chemin, donc
-        les DEUX lignes renvoient ici la MÊME fixture de détail (limitation
-        acceptée du serveur de test statique, même réserve déjà documentée
-        pour le toggle "non joué").
-      -->
-      <tbody>
-        <tr onclick="location.href='afficherDerogation.fbi?idDerogation=1k%2BJhfgiN4lc&idRencontre=0'">
-          <td></td>
-          <td>19/08/2026 17:42</td>
-          <td>1</td>
-          <td>BU13FN23</td>
-          <td>SPORT CLUB DE SETE BASKET - 1</td>
-          <td>CASTELNAU BASKET - 2</td>
-          <td>26/09/2026</td>
-          <td>15:30</td>
-          <td></td>
-          <td>Acceptée par l'organisme dirigeant</td>
-        </tr>
-        <tr onclick="location.href='afficherDerogation.fbi?idDerogation=FGzH5N295hQh&idRencontre=0'">
-          <td></td>
-          <td>20/08/2026 07:47</td>
-          <td>9578</td>
-          <td>DM2</td>
-          <td>LES LOUPS DU PIC OCCIDENTAL BASKET - 1</td>
-          <td>IE - SPORT CLUB DE SETE BASKET - 2</td>
-          <td>24/04/2027</td>
-          <td>20:30</td>
-          <td></td>
-          <td>Acceptée par l'organisme dirigeant</td>
-        </tr>
-      </tbody>
-    </table>
+
+    <div id="tableauResultats" style="display:none">
+      <table id="getTableauDerogation">
+        <thead>
+          <tr>
+            <th></th>
+            <th>Date de dépôt</th>
+            <th>N° Renc</th>
+            <th>Division</th>
+            <th>Domicile</th>
+            <th>Visiteur</th>
+            <th>Date rencontre</th>
+            <th>Heure</th>
+            <th>Date déro</th>
+            <th>Etat de la dérogation</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <script>
+      // Reproduit rechercherDerogationAjax() : lit le formulaire côté client
+      // (jamais un vrai appel réseau ici), injecte les lignes correspondant
+      // au filtre "Etat de la dérogation" et au "Numéro de rencontre"
+      // ACTUELLEMENT sélectionnés — comme le fait jQuery.serialize() sur le
+      // vrai FBI, ce qui valide que le code de production modifie bien le
+      // <select> AVANT de cliquer, jamais après.
+      const ALL_ROWS = [
+        {
+          numero: "1",
+          etat: "ORGCREACC",
+          etatLabel: "Acceptée par l'organisme dirigeant",
+          cells: ["", "19/08/2026 17:42", "1", "BU13FN23", "SPORT CLUB DE SETE BASKET - 1", "CASTELNAU BASKET - 2", "26/09/2026", "15:30", "", "Acceptée par l'organisme dirigeant"],
+          detailUrl: "afficherDerogation.fbi?idDerogation=1k%2BJhfgiN4lc&idRencontre=0",
+        },
+        {
+          numero: "9578",
+          etat: "ORGCREACC",
+          etatLabel: "Acceptée par l'organisme dirigeant",
+          cells: ["", "20/08/2026 07:47", "9578", "DM2", "LES LOUPS DU PIC OCCIDENTAL BASKET - 1", "IE - SPORT CLUB DE SETE BASKET - 2", "24/04/2027", "20:30", "", "Acceptée par l'organisme dirigeant"],
+          detailUrl: "afficherDerogation.fbi?idDerogation=FGzH5N295hQh&idRencontre=0",
+        },
+        {
+          numero: "2659",
+          etat: "CREER",
+          etatLabel: "A Créer",
+          cells: ["", "", "2659", "PRF", "OUEST MONTPELLIER METROPOLE BASKET - 3", "SPORT CLUB DE SETE BASKET - 1", "07/11/2026", "18:30", "", "A Créer"],
+          detailUrl: "afficherDerogation.fbi?idDerogation=xuFqkhFXKcVOZPHKMXZhbQ&idRencontre=0",
+        },
+      ];
+
+      function rechercherDerogationAjax() {
+        const etat = document.querySelector('select[name*="etat" i]').value;
+        const numero = document.getElementById("rechercheDerogationFormNumeroRencontre").value.trim();
+
+        const rows = ALL_ROWS.filter((row) => {
+          if (etat === "TT" && row.etat === "CREER") return false; // "Tous les états SAUF à créer"
+          if (etat !== "TT" && row.etat !== etat) return false;
+          if (numero && row.numero !== numero) return false;
+          return true;
+        });
+
+        const tbody = document.querySelector("#getTableauDerogation tbody");
+        tbody.innerHTML = "";
+        for (const row of rows) {
+          const tr = document.createElement("tr");
+          tr.setAttribute("onclick", `location.href='${row.detailUrl}'`);
+          for (const cellText of row.cells) {
+            const td = document.createElement("td");
+            td.textContent = cellText;
+            tr.appendChild(td);
+          }
+          tbody.appendChild(tr);
+        }
+        document.getElementById("tableauResultats").style.display = "block";
+      }
+    </script>
   </body>
 </html>
