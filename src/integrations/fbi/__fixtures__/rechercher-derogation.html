@@ -5,18 +5,28 @@
       <div class="row">
         <label>Type de demande <select name="derogationSearchForm.derogationSearchBean.typeDemande"><option value="">Choisir...</option></select></label>
         <!--
-          Confirmé par capture d'écran du VRAI FBI le 2026-09-25 : ce
-          sélecteur peut être positionné sur un état précis ("A Créer") au
-          chargement — reproduit ici pour vérifier que fetchDerogationForMatch
-          le réinitialise bien avant de chercher, sinon une dérogation déjà
-          "En cours"/"Acceptée" resterait invisible pour ce match précis.
+          Options RÉELLES confirmées par capture d'écran du VRAI FBI le
+          2026-09-25 : "A Créer | En Cours | Acceptée par les deux
+          associations sportives | Acceptée par l'organisme dirigeant |
+          Refusée | Tous les états (sauf à créer)" — la dernière étant déjà
+          sélectionnée par défaut sur le vrai site. Préréglé ici sur "A
+          Créer" (valeur DIFFÉRENTE du défaut réel) pour vérifier que
+          fetchDerogationForMatch/fetchAllDerogations sélectionnent bien
+          "Tous les états" par LIBELLÉ plutôt que de faire confiance à
+          l'état déjà en place. Ce formulaire n'a ni action ni method, donc
+          une soumission fait un GET natif vers l'URL courante avec tous les
+          champs en query string — les tests vérifient l'état sélectionné en
+          lisant page.url() après la recherche plutôt qu'un marqueur DOM (qui
+          serait de toute façon effacé par le rechargement complet de page).
         -->
         <label>Etat de la dérogation
           <select name="derogationSearchForm.derogationSearchBean.etat">
-            <option value="">Tous</option>
             <option value="A_CREER" selected>A Créer</option>
-            <option value="EN_COURS">En cours</option>
-            <option value="ACCEPTEE">Acceptée</option>
+            <option value="EN_COURS">En Cours</option>
+            <option value="ACCEPTEE_DEUX_AS">Acceptée par les deux associations sportives</option>
+            <option value="ACCEPTEE_ORGANISME">Acceptée par l'organisme dirigeant</option>
+            <option value="REFUSEE">Refusée</option>
+            <option value="TOUS_ETATS">Tous les états (sauf à créer)</option>
           </select>
         </label>
       </div>
@@ -43,7 +53,7 @@
       <tbody>
         <tr>
           <td></td>
-          <td></td>
+          <td>19/08/2026 17:42</td>
           <td>1</td>
           <td>BU13FN23</td>
           <td>SPORT CLUB DE SETE BASKET - 1</td>
@@ -51,7 +61,19 @@
           <td>26/09/2026</td>
           <td>15:30</td>
           <td></td>
-          <td>A Créer</td>
+          <td>Acceptée par l'organisme dirigeant</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>20/08/2026 07:47</td>
+          <td>9578</td>
+          <td>DM2</td>
+          <td>LES LOUPS DU PIC OCCIDENTAL BASKET - 1</td>
+          <td>IE - SPORT CLUB DE SETE BASKET - 2</td>
+          <td>24/04/2027</td>
+          <td>20:30</td>
+          <td></td>
+          <td>Acceptée par l'organisme dirigeant</td>
         </tr>
       </tbody>
     </table>

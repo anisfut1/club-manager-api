@@ -94,4 +94,14 @@ export interface FbiAutomationClient<TSession> {
    * matchs n'ont aucune dérogation en cours).
    */
   fetchDerogationForMatch(session: TSession, matchNumber: string): Promise<FbiDerogationRow | null>;
+  /**
+   * Récupère TOUTES les dérogations du club en UNE recherche non filtrée
+   * (numéro vide) — "je veux un bouton global qui check toutes les
+   * demandes, pas match par match" (demande du club, 2026-09-25). Une
+   * seule connexion FBI pour tout le club, comme `fetchScheduleRows` —
+   * jamais une boucle de connexions par match (déjà à l'origine d'un
+   * blocage anti-bot par le passé, voir ProcessFbiJobsButton.tsx côté
+   * SCSB). Gère elle-même la pagination.
+   */
+  fetchAllDerogations(session: TSession): Promise<FbiDerogationRow[]>;
 }

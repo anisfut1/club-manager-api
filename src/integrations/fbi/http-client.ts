@@ -333,6 +333,14 @@ export class HttpFbiClient implements FbiAutomationClient<HttpFbiSession> {
     );
   }
 
+  /** NON IMPLÉMENTÉ EN HTTP DIRECT, même raison que `fetchDerogationForMatch`. */
+  async fetchAllDerogations(_session: HttpFbiSession): Promise<FbiDerogationRow[]> {
+    throw new FbiError(
+      "Endpoint de recherche des dérogations FBI non confirmé en HTTP direct. Voir docs/FBI_AUTHENTICATED_SPIKE.md.",
+      "DEROGATION_SEARCH_ENDPOINT_NOT_CONFIRMED",
+    );
+  }
+
   /**
    * Télécharge un document depuis une URL FBI authentifiée. Le mécanisme
    * (GET + cookie de session) est générique et réutilisable dès que

@@ -341,7 +341,21 @@ describe("BrowserFbiClient.fetchScheduleRows (rapprochement calendrier FFBB/FBI,
 });
 
 describe("BrowserFbiClient.fetchDerogationForMatch (gestion des dérogations, voir docs/FBI.md)", () => {
-  it("trouve la dérogation d'un match par numéro de rencontre, malgré le filtre 'Etat de la dérogation' préréglé sur 'A Créer'", async () => {
+  it("réinitialise 'Etat de la dérogation' sur 'Tous les états (sauf à créer)' PAR LIBELLÉ (jamais la première option — 'A Créer' dans la vraie liste, ce qui masquerait les vraies demandes)", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    await client.fetchDerogationForMatch(session, "1");
+
+    // La fixture n'a ni action ni method : la recherche soumet un GET natif vers
+    // l'URL courante avec tous les champs en query string, donc l'état réellement
+    // sélectionné au moment de la recherche se lit dans l'URL post-soumission.
+    expect(session.page.url()).toContain("etat=TOUS_ETATS");
+    expect(session.page.url()).not.toContain("etat=A_CREER");
+    await client.closeSession(session);
+  });
+
+  it("trouve la dérogation d'un match par numéro de rencontre", async () => {
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
     const session = await client.login({ username: "club1234", password: "secret" });
 
@@ -354,7 +368,7 @@ describe("BrowserFbiClient.fetchDerogationForMatch (gestion des dérogations, vo
       visiteur: "CASTELNAU BASKET - 2",
       dateRencontre: "26/09/2026",
       heure: "15:30",
-      etat: "A Créer",
+      etat: "Acceptée par l'organisme dirigeant",
     });
 
     await client.closeSession(session);
@@ -367,6 +381,22 @@ describe("BrowserFbiClient.fetchDerogationForMatch (gestion des dérogations, vo
     const derogation = await client.fetchDerogationForMatch(session, "9999");
 
     expect(derogation).toBeNull();
+    await client.closeSession(session);
+  });
+});
+
+describe("BrowserFbiClient.fetchAllDerogations ('je veux un bouton global qui check toutes les demandes, pas match par match', voir docs/FBI.md)", () => {
+  it("recherche à numéro VIDE et renvoie toutes les dérogations du club en une seule connexion", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    const derogations = await client.fetchAllDerogations(session);
+
+    expect(derogations).toHaveLength(2);
+    expect(derogations.map((d) => d.numero).sort()).toEqual(["1", "9578"]);
+    expect(session.page.url()).toContain("etat=TOUS_ETATS");
+    expect(session.page.url()).not.toContain("etat=A_CREER");
+
     await client.closeSession(session);
   });
 });

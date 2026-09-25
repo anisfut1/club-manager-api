@@ -787,39 +787,12 @@ export class BrowserFbiClient {
    */
   async fetchDerogationForMatch(session: BrowserFbiSession, matchNumber: string): Promise<FbiDerogationRow | null> {
     const { page } = session;
-    const targetUrl = `${this.baseUrl}/rechercherDerogation.fbi`;
-
-    try {
-      await page.goto(targetUrl, { waitUntil: "domcontentloaded" });
-      await this.settle(page);
-    } catch (error) {
-      throw new FbiError(`Écran de recherche des dérogations injoignable : ${targetUrl}`, "NAVIGATION_FAILED", error);
-    }
-
-    /**
-     * Réinitialise "Etat de la dérogation" à son premier `<option>" —
-     * confirmé par capture d'écran (2026-09-25) que ce filtre peut être
-     * positionné sur un état précis ("A Créer") : le laisser tel quel
-     * risquerait de cacher une dérogation déjà en cours/acceptée pour CE
-     * match précis. Recherché par le LIBELLÉ visible "Etat de la
-     * dérogation" (même principe que `seasonSelect`/`nonJoueCheckbox` sur
-     * l'écran de recherche de rencontre) — best effort, jamais bloquant.
-     */
-    try {
-      const etatSelect = page.locator("label", { hasText: /etat de la d[ée]rogation/i }).locator("select").first();
-      if ((await etatSelect.count().catch(() => 0)) > 0) {
-        const firstOption = etatSelect.locator("option").first();
-        const firstValue = await firstOption.getAttribute("value").catch(() => null);
-        await etatSelect.selectOption(firstValue !== null ? { value: firstValue } : { index: 0 }).catch(() => {});
-      }
-    } catch {
-      // Best effort — voir la note ci-dessus.
-    }
+    await this.navigateToDerogationSearchScreen(page);
 
     const numeroInput = await selectors.matchNumberSearchInput(page);
     if (!numeroInput) {
       throw new FbiError(
-        `Champ "Numéro de rencontre" introuvable sur l'écran de recherche des dérogations (${targetUrl}).`,
+        `Champ "Numéro de rencontre" introuvable sur l'écran de recherche des dérogations (${this.baseUrl}/rechercherDerogation.fbi).`,
         "NAVIGATION_FAILED",
       );
     }
@@ -848,6 +821,92 @@ export class BrowserFbiClient {
     // découverte e-Marque : une recherche mal filtrée pourrait renvoyer
     // d'autres rencontres).
     return normalized.find((row) => row.numero === matchNumber) ?? null;
+  }
+
+  /**
+   * "je veux un bouton global qui check toutes les demandes, pas match par
+   * match" (demande du club, 2026-09-25) — recherche à NUMÉRO VIDE (jamais
+   * rempli, contrairement à `fetchDerogationForMatch`) : renvoie alors
+   * TOUTES les dérogations du club connecté. UNE SEULE connexion FBI pour
+   * tout le club, jamais une boucle de connexions par match (déjà à
+   * l'origine d'un blocage anti-bot par le passé pour `discover_emarque`,
+   * voir ProcessFbiJobsButton.tsx côté SCSB). Parcourt toutes les pages via
+   * `collectAllResultPages` — même mécanisme que `fetchScheduleRows`.
+   */
+  async fetchAllDerogations(session: BrowserFbiSession): Promise<FbiDerogationRow[]> {
+    const { page } = session;
+    await this.navigateToDerogationSearchScreen(page);
+
+    try {
+      const submit = selectors.searchSubmitControl(page).first();
+      if ((await submit.count().catch(() => 0)) > 0) await submit.click();
+      await this.settle(page);
+      await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+    } catch (error) {
+      throw new FbiError(
+        `Recherche de toutes les dérogations du club échouée : ${error instanceof Error ? error.message : String(error)}`,
+        "NAVIGATION_FAILED",
+        error,
+      );
+    }
+
+    const rawRows = await this.collectAllResultPages(page);
+    return rawRows.map(normalizeDerogationRow);
+  }
+
+  /**
+   * Rejoint l'écran de recherche des dérogations et réinitialise "Etat de
+   * la dérogation" à son premier `<option>` — confirmé par capture d'écran
+   * (2026-09-25) que ce filtre peut être positionné sur un état précis
+   * ("A Créer") au chargement : le laisser tel quel risquerait de cacher
+   * une dérogation déjà en cours/acceptée. Recherché par le LIBELLÉ visible
+   * "Etat de la dérogation" (même principe que
+   * `seasonSelect`/`nonJoueCheckbox` sur l'écran de recherche de
+   * rencontre) — best effort, jamais bloquant. Partagé par
+   * `fetchDerogationForMatch` et `fetchAllDerogations`.
+   */
+  private async navigateToDerogationSearchScreen(page: Page): Promise<void> {
+    const targetUrl = `${this.baseUrl}/rechercherDerogation.fbi`;
+
+    try {
+      await page.goto(targetUrl, { waitUntil: "domcontentloaded" });
+      await this.settle(page);
+    } catch (error) {
+      throw new FbiError(`Écran de recherche des dérogations injoignable : ${targetUrl}`, "NAVIGATION_FAILED", error);
+    }
+
+    /**
+     * Sélectionne "Tous les états (sauf à créer)" — confirmé par capture
+     * d'écran du VRAI FBI le 2026-09-25 : les 6 options réelles sont "A
+     * Créer | En Cours | Acceptée par les deux associations sportives |
+     * Acceptée par l'organisme dirigeant | Refusée | Tous les états (sauf
+     * à créer)", cette dernière étant celle déjà sélectionnée par défaut.
+     * Recherché par le LIBELLÉ ("tous les états"), jamais par position —
+     * un précédent correctif sélectionnait à tort le PREMIER `<option>`
+     * ("A Créer" dans la vraie liste), ce qui aurait restreint chaque
+     * recherche à cet unique état au lieu de toutes les VRAIES demandes en
+     * cours ("A Créer" désigne une rencontre sans dérogation active, pas
+     * une demande — l'exclure est le comportement voulu pour "vérifier
+     * toutes les demandes", jamais un oubli).
+     */
+    try {
+      const etatSelect = page.locator("label", { hasText: /etat de la d[ée]rogation/i }).locator("select").first();
+      if ((await etatSelect.count().catch(() => 0)) > 0) {
+        const options = etatSelect.locator("option");
+        const optionCount = await options.count().catch(() => 0);
+
+        for (let i = 0; i < optionCount; i += 1) {
+          const label = ((await options.nth(i).textContent().catch(() => "")) ?? "").trim();
+          if (!/tous les [ée]tats/i.test(label)) continue;
+
+          const value = await options.nth(i).getAttribute("value").catch(() => null);
+          await etatSelect.selectOption(value !== null ? { value } : { label }).catch(() => {});
+          break;
+        }
+      }
+    } catch {
+      // Best effort — voir la note ci-dessus.
+    }
   }
 
   /**

@@ -23,3 +23,18 @@ export const DerogationStatusDtoSchema = z
   .openapi("DerogationStatusDto");
 
 export type DerogationStatusDto = z.infer<typeof DerogationStatusDtoSchema>;
+
+/**
+ * Une ligne de `GET /v1/clubs/:clubId/derogations` — TOUTES les
+ * dérogations connues du club en une fois (demande du club : "je veux un
+ * bouton global qui check toutes les demandes, pas match par match"),
+ * `DerogationStatusDto` enrichi du match FFBB correspondant pour pouvoir
+ * lier vers sa fiche.
+ */
+export const DerogationListItemDtoSchema = DerogationStatusDtoSchema.extend({
+  matchId: z.string().uuid(),
+  opponentName: z.string().nullable(),
+  matchDatetime: z.string().nullable(),
+}).openapi("DerogationListItemDto");
+
+export type DerogationListItemDto = z.infer<typeof DerogationListItemDtoSchema>;
