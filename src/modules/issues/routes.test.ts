@@ -161,6 +161,105 @@ describe("GET /:clubId/issues", () => {
     });
   });
 
+  it("exclut les anomalies e-Marque d'une saison déjà terminée (demande du club : 'on s'en fout de 2025')", async () => {
+    state.matches = [
+      {
+        id: "match-old",
+        club_id: CLUB_A.id,
+        numero: "561",
+        journee: null,
+        match_datetime: "2025-05-18T10:00:00.000Z",
+        is_home: true,
+        opponent_name: "Vieux match",
+        venue_raw_label: null,
+        score_home: null,
+        score_away: null,
+        status: "played",
+        emarque_status: "error",
+        team_id: null,
+      },
+      {
+        id: "match-current-season",
+        club_id: CLUB_A.id,
+        numero: "10",
+        journee: null,
+        match_datetime: "2026-09-20T10:00:00.000Z",
+        is_home: true,
+        opponent_name: "Match récent",
+        venue_raw_label: null,
+        score_home: null,
+        score_away: null,
+        status: "played",
+        emarque_status: "error",
+        team_id: null,
+      },
+    ];
+
+    const res = await request(`/${CLUB_A.id}/issues`);
+    const body = await res.json();
+
+    expect(body.issues).toHaveLength(1);
+    expect(body.issues[0].matchId).toBe("match-current-season");
+  });
+
+  it("détecte un conflit horaire/lieu entre deux rencontres à domicile (demande du club : '2 équipes qui jouent le dimanche à 11h à Clavel')", async () => {
+    state.matches = [
+      {
+        id: "match-u9",
+        club_id: CLUB_A.id,
+        numero: "1",
+        journee: null,
+        match_datetime: "2026-10-11T09:00:00.000Z",
+        is_home: true,
+        opponent_name: "U9 adversaire",
+        venue_raw_label: "GYMNASE CLAVEL",
+        score_home: null,
+        score_away: null,
+        status: "scheduled",
+        emarque_status: "not_applicable",
+        team_id: null,
+      },
+      {
+        id: "match-u11",
+        club_id: CLUB_A.id,
+        numero: "2",
+        journee: null,
+        match_datetime: "2026-10-11T09:00:00.000Z",
+        is_home: true,
+        opponent_name: "U11 adversaire",
+        venue_raw_label: "GYMNASE CLAVEL",
+        score_home: null,
+        score_away: null,
+        status: "scheduled",
+        emarque_status: "not_applicable",
+        team_id: null,
+      },
+      {
+        id: "match-away",
+        club_id: CLUB_A.id,
+        numero: "3",
+        journee: null,
+        match_datetime: "2026-10-11T09:00:00.000Z",
+        is_home: false,
+        opponent_name: "Extérieur, même horaire mais jamais un conflit",
+        venue_raw_label: "GYMNASE CLAVEL",
+        score_home: null,
+        score_away: null,
+        status: "scheduled",
+        emarque_status: "not_applicable",
+        team_id: null,
+      },
+    ];
+
+    const res = await request(`/${CLUB_A.id}/issues`);
+    const body = await res.json();
+
+    const conflicts = body.issues.filter((i: { integration: string }) => i.integration === "scheduling");
+    expect(conflicts).toHaveLength(2);
+    expect(conflicts.map((c: { matchId: string }) => c.matchId).sort()).toEqual(["match-u11", "match-u9"]);
+    expect(conflicts[0]).toMatchObject({ type: "venue_time_conflict", severity: "error", technicalCode: "VENUE_TIME_CONFLICT" });
+  });
+
   it("n'inclut jamais une anomalie déjà résolue (resolved_at renseigné)", async () => {
     state.fbiScheduleDiscrepancies = [
       {

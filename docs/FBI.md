@@ -1949,16 +1949,59 @@ permettre le rapprochement.
   `"fbi_schedule"`, `matchId` devenu nullable pour `missing_in_ffbb`) —
   même page /admin/issues côté SCSB, aucune nouvelle UI dédiée nécessaire.
 
+**CONFIRMÉ en production le 2026-09-25** : le club a lancé le bouton
+"Vérifier le calendrier" contre son vrai compte FBI (club SC Sète Basket) —
+le scraper (deux passes, pagination) a bien fonctionné, et le rapprochement
+a produit des anomalies réelles cohérentes avec son calendrier FFBB
+(écarts de date/heure sur des rencontres de septembre/octobre 2026,
+rencontres FFBB introuvables dans le listing FBI). Statut de
+`BrowserFbiClient.fetchScheduleRows` donc mis à jour : CONFIRMÉ, pas
+seulement PREPARED — contrairement au reste de `BrowserFbiClient`
+(login, découverte de documents e-Marque), qui reste PREPARED (jamais
+exécuté contre le vrai FBI depuis CET environnement, réseau `*.ffbb.com`
+bloqué, mais confirmé indépendamment par le club pour `fetchScheduleRows`).
+
 **Ce qui n'est PAS fait** :
-- Scraper JAMAIS exécuté contre le vrai FBI depuis cet environnement
-  (réseau `*.ffbb.com` bloqué) — statut PREPARED comme le reste de
-  `BrowserFbiClient`, testé contre des fixtures HTML synthétiques
-  (`browser-client.test.ts`), pas contre le vrai site.
 - Comparaison score/forfait/salle (voir ci-dessus).
 - Planification automatique (cron quotidien/hebdomadaire) — pour l'instant
-  déclenché uniquement à la demande via le bouton admin. À ajouter une fois
-  le scraper confirmé contre un vrai compte FBI.
+  déclenché uniquement à la demande via le bouton admin.
 - Résolution manuelle d'une anomalie individuelle côté API (`POST
   .../issues/:matchId/resolve` ne cible que les anomalies e-Marque) — une
   anomalie FBI se résout uniquement en corrigeant la donnée FFBB source,
   automatiquement constatée au rapprochement suivant.
+
+## Filtre saison + détection de doubles réservations (page Anomalies)
+
+Retour du club le 2026-09-25, après le premier test réel du rapprochement
+calendrier ci-dessus, sur la page /admin/issues :
+
+1. **"ceux qui sont en error on s'en fou de 2025 faut pas, ça doit
+   impacter que les matchs à venir pour ensuite agir dessus."** — la
+   liste mélangeait des erreurs e-Marque de la saison 2024-2025 (terminée,
+   plus aucune action possible) avec les nouvelles anomalies de
+   rapprochement calendrier de la saison en cours. `GET
+   /v1/clubs/:clubId/issues` filtre désormais TOUTES les anomalies liées à
+   un match (`emarque_import_error`/`emarque_needs_review`,
+   `fbi_schedule_mismatch`/`fbi_schedule_missing_in_fbi`) à `match_datetime
+   >= currentSeasonStart()` (`src/season.ts`, même formule que SCSB —
+   1er août). `fbi_schedule_missing_in_ffbb` (pas de `matchId`, donc pas de
+   date connue côté FFBB) reste toujours affichée : elle reflète l'état
+   ACTUEL du scrape FBI, jamais une donnée historique.
+
+2. **"faut voir si ya pas des matchs prévus à la même heure au même
+   endroit, genre 2 équipes qui jouent le dimanche à 11h à Clavel."** —
+   nouvelle détection, indépendante de FBI : `modules/issues/venue-conflicts.ts`
+   (fonction PURE) compare toutes les rencontres À DOMICILE du club (celles
+   qui occupent une salle DU CLUB) de la saison en cours, groupées par
+   (date/heure EXACTE, salle — `venue_id` résolu par la synchro FFBB en
+   priorité, sinon `venue_raw_label` normalisé). Un groupe de 2+ rencontres
+   est un conflit matériel (le club ne peut pas faire jouer deux équipes en
+   même temps au même endroit) : une anomalie `integration: "scheduling"`,
+   `type: "venue_time_conflict"`, sévérité `error`, est émise PAR
+   rencontre impliquée (chacune mentionne l'autre/les autres dans son
+   message). Dérivé uniquement de `matches` (déjà synchronisé FFBB) — ne
+   dépend jamais de FBI, fonctionne pour tous les clubs.
+
+`IssueDtoSchema.integration`/`.type` étendus en conséquence
+(`"scheduling"`/`"venue_time_conflict"`). Testé (`venue-conflicts.test.ts`,
+`season.test.ts`, cas ajoutés à `modules/issues/routes.test.ts`).

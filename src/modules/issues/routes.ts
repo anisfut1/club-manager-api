@@ -4,6 +4,8 @@ import { requireAuth, requireClubMembership, requireClubRole } from "../../auth/
 import { badRequest, notFound } from "../../api-error.js";
 import type { IssueDto } from "../../contracts/issues.js";
 import type { QualityWarningDto } from "../../contracts/emarque.js";
+import { currentSeasonStart } from "../../season.js";
+import { detectVenueConflicts } from "./venue-conflicts.js";
 
 export const issuesRouter = new Hono<AppEnv>();
 
@@ -76,11 +78,21 @@ issuesRouter.get("/", async (c) => {
   const { club } = c.get("club");
   const supabase = c.get("supabase");
 
+  /**
+   * Filtre saison en cours (demande du club, 2026-09-25 : "on s'en fout de
+   * 2025, ça doit impacter que les matchs à venir pour ensuite agir
+   * dessus") — un import e-Marque en erreur pour un match d'une saison déjà
+   * terminée n'est plus actionnable, il ne doit plus polluer cette liste.
+   * Même formule que SCSB (`src/lib/season.ts#currentSeasonStart`, 1er août).
+   */
+  const seasonStartIso = currentSeasonStart().toISOString();
+
   const { data: matches, error } = await supabase
     .from("matches")
     .select("id, numero, opponent_name, match_datetime, emarque_status")
     .eq("club_id", club.id)
     .in("emarque_status", ["error", "needs_review"])
+    .gte("match_datetime", seasonStartIso)
     .order("match_datetime", { ascending: false });
 
   if (error) throw new Error(`Lecture des anomalies échouée : ${error.message}`);
@@ -147,28 +159,82 @@ issuesRouter.get("/", async (c) => {
     : { data: [] };
   const matchInfoById = new Map((scheduleMatches ?? []).map((m) => [m.id, m]));
 
-  const fbiScheduleIssues: IssueDto[] = (scheduleDiscrepancies ?? []).map((d) => {
-    const meta = describeFbiScheduleDiscrepancy(d);
-    const matchInfo = d.match_id ? matchInfoById.get(d.match_id) : undefined;
+  const fbiScheduleIssues: IssueDto[] = (scheduleDiscrepancies ?? [])
+    // Filtre saison en cours (même raison que ci-dessus) : `missing_in_ffbb`
+    // n'a pas de date connue côté FFBB (matchId null) — toujours conservée,
+    // elle reflète l'état ACTUEL du scrape FBI, jamais une donnée historique.
+    .filter((d) => {
+      if (!d.match_id) return true;
+      const matchDatetime = matchInfoById.get(d.match_id)?.match_datetime;
+      return !matchDatetime || matchDatetime >= seasonStartIso;
+    })
+    .map((d) => {
+      const meta = describeFbiScheduleDiscrepancy(d);
+      const matchInfo = d.match_id ? matchInfoById.get(d.match_id) : undefined;
+
+      return {
+        matchId: d.match_id,
+        numero: d.numero,
+        opponentName: matchInfo?.opponent_name ?? d.fbi_opponent_name,
+        matchDatetime: matchInfo?.match_datetime ?? null,
+        integration: "fbi_schedule",
+        type: meta.type,
+        severity: meta.severity,
+        status: "open",
+        message: meta.message,
+        technicalCode: meta.technicalCode,
+        qualityWarnings: [],
+        createdAt: d.detected_at,
+        resolvedAt: null,
+      };
+    });
+
+  /**
+   * Conflits horaire/lieu (demande du club, 2026-09-25 : "faut voir si ya
+   * pas des matchs prévus à la même heure au même endroit, genre 2 équipes
+   * qui jouent le dimanche à 11h à Clavel") — dérivé UNIQUEMENT des
+   * rencontres À DOMICILE du club déjà synchronisées FFBB (celles qui
+   * occupent une salle DU CLUB), saison en cours. Aucune dépendance à FBI.
+   */
+  const { data: homeMatches, error: homeMatchesError } = await supabase
+    .from("matches")
+    .select("id, numero, opponent_name, match_datetime, venue_id, venue_raw_label, is_home, status")
+    .eq("club_id", club.id)
+    .eq("is_home", true)
+    .neq("status", "cancelled")
+    .gte("match_datetime", seasonStartIso);
+
+  if (homeMatchesError) throw new Error(`Lecture des rencontres à domicile échouée : ${homeMatchesError.message}`);
+
+  const venueConflicts = detectVenueConflicts(
+    (homeMatches ?? [])
+      .filter((m): m is typeof m & { match_datetime: string } => Boolean(m.match_datetime))
+      .map((m) => ({ id: m.id, numero: m.numero, opponentName: m.opponent_name, matchDatetime: m.match_datetime, venueId: m.venue_id, venueRawLabel: m.venue_raw_label })),
+  );
+
+  const homeMatchById = new Map((homeMatches ?? []).map((m) => [m.id, m]));
+
+  const venueConflictIssues: IssueDto[] = venueConflicts.map((conflict) => {
+    const match = homeMatchById.get(conflict.matchId);
 
     return {
-      matchId: d.match_id,
-      numero: d.numero,
-      opponentName: matchInfo?.opponent_name ?? d.fbi_opponent_name,
-      matchDatetime: matchInfo?.match_datetime ?? null,
-      integration: "fbi_schedule",
-      type: meta.type,
-      severity: meta.severity,
+      matchId: conflict.matchId,
+      numero: match?.numero ?? null,
+      opponentName: match?.opponent_name ?? null,
+      matchDatetime: match?.match_datetime ?? null,
+      integration: "scheduling",
+      type: "venue_time_conflict",
+      severity: "error",
       status: "open",
-      message: meta.message,
-      technicalCode: meta.technicalCode,
+      message: `Cette rencontre est programmée à la même date/heure et au même lieu qu'une autre rencontre du club : ${conflict.conflictingLabel}.`,
+      technicalCode: "VENUE_TIME_CONFLICT",
       qualityWarnings: [],
-      createdAt: d.detected_at,
+      createdAt: null,
       resolvedAt: null,
     };
   });
 
-  return c.json({ issues: [...emarqueIssues, ...fbiScheduleIssues] });
+  return c.json({ issues: [...emarqueIssues, ...fbiScheduleIssues, ...venueConflictIssues] });
 });
 
 /**

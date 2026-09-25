@@ -195,6 +195,10 @@ function queryable<T extends object>(rows: T[]) {
       filtered = filtered.filter((r) => field(r, col) === value);
       return api;
     },
+    neq(col: string, value: unknown) {
+      filtered = filtered.filter((r) => field(r, col) !== value);
+      return api;
+    },
     in(col: string, values: unknown[]) {
       filtered = filtered.filter((r) => values.includes(field(r, col)));
       return api;
