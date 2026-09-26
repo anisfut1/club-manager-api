@@ -3016,3 +3016,60 @@ toutes les dérogations", puis lire `fbi_derogation_checks` — `demandeur`/
 limite du budget de 220s), et `fbi_jobs.result.passDiagnostics[0]`
 devrait montrer `pageCount: 1` (ou très bas) avec `rawRowCount ===
 keptRowCount` (plus de doublons dus à la pagination instable).
+
+### Toujours 51 après le round treize/quatorze — diagnostic du contrôle de longueur ajouté plutôt qu'un quinzième correctif à l'aveugle (2026-09-27)
+
+Le club confirme que le détail (demandeur/motif/dates) est bien revenu
+(quatorzième round), **mais reste toujours bloqué à 51 dérogations**,
+malgré `tryMaximizeResultsPageLength` censé ramener tout en une seule
+page. L'exécution la plus récente en base (job `0e65ae27`, ~14 minutes
+après le déploiement du treizième/quatorzième round — largement assez de
+marge pour un redéploiement Vercel, donc bien contre le NOUVEAU code) donne
+`{ pageCount: 2, rawRowCount: 46, keptRowCount: 34 }` : NI `pageCount: 1`
+(la maximisation aurait dû tout ramener en une page) NI la valeur stable
+attendue — un résultat encore plus bas que les 51 déjà connus, et
+incohérent d'une exécution à l'autre (2, 5 pages... jamais 1). Signe fort
+que `tryMaximizeResultsPageLength` échoue silencieusement sur le VRAI
+FBI (best effort — une erreur n'y bloque jamais la recherche) et que
+`collectAllDerogationPages` retombe systématiquement sur la pagination
+"Suivant", CONNUE instable (doublons/pertes constatés au round douze).
+
+**Cause probable, jamais confirmée par du HTML réel** : contrairement à
+`nextPageControl` (corrigé au dixième round sur la foi d'un VRAI
+`outerHTML` fourni par le club), l'EXISTENCE même d'un `<select
+id="..._length">` ("Afficher X entrées") sur CETTE page FBI précise n'a
+JAMAIS été confirmée — seulement déduite par analogie avec la convention
+DataTables (`<idTable>_next` confirmé ⇒ `<idTable>_length` "très
+probablement" présent). Beaucoup d'intégrations DataTables désactivent
+explicitement ce contrôle (`lengthChange: false`) tout en gardant la
+pagination "Suivant" — auquel cas `resultsLengthSelect(page).count()`
+vaut `0` sur le vrai FBI, `tryMaximizeResultsPageLength` ne fait
+STRICTEMENT rien (return anticipé), et tout retombe sur "Suivant".
+
+**Pas de quinzième correctif à l'aveugle** — même discipline que le
+douzième round ("diagnostic de pages ajouté" plutôt que deviner) :
+`tryMaximizeResultsPageLength` renvoie désormais un `LengthSelectDiagnostic`
+(`found`/`selectId`/`optionValues`/`appliedValue`), persisté dans
+`passDiagnostics[0].lengthSelect` (consultable directement en base, sans
+dépendre des logs Vercel). La PROCHAINE exécution dira, sans deviner :
+- `found: false` ⇒ ce contrôle n'existe simplement pas sur cette page —
+  il faut soit demander au club une capture/le HTML autour du tableau de
+  résultats (comme pour `nextPageControl` au dixième round) pour trouver
+  le VRAI mécanisme (peut-être un `<select>` sans le suffixe `_length`,
+  ou un contrôle non-DataTables), soit accepter la pagination "Suivant"
+  et s'attaquer plutôt à SA cause d'instabilité (tri non déterministe
+  côté serveur — hors de portée d'un simple sélecteur).
+- `found: true` mais `appliedValue` différent de ce qui était attendu (ex :
+  une valeur "20" au lieu de "-1"/"Tous" faute d'option "Tous" réelle) ⇒
+  le contrôle existe mais sa VRAIE liste d'options (`optionValues`) diffère
+  de la fixture — ajuster le choix de la meilleure valeur en conséquence,
+  sur preuve cette fois.
+- `found: true` ET `appliedValue` correct mais `pageCount` reste > 1 ⇒ la
+  sélection s'applique mais ne suffit pas à afficher tout en une page
+  (ex : un maximum serveur inférieur au total réel) — chercher alors une
+  vraie limite haute plutôt que "-1".
+
+Testé contre la fixture (qui, elle, a bien ce contrôle) : nouveau
+sous-test confirmant `lengthSelect: { found: true, selectId:
+"getTableauDerogation_length", appliedValue: "-1" }`. 26/26 tests FBI
+passants, suite complète (417 tests) inchangée par ailleurs.

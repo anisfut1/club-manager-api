@@ -448,6 +448,12 @@ describe("BrowserFbiClient.fetchAllDerogations ('je veux un bouton global qui ch
     // pageCount: 1 — une seule lecture, jamais besoin de cliquer "Suivant"
     // (l'option "-1"/"Tous" a été sélectionnée automatiquement).
     expect(diagnostics[0]).toMatchObject({ pass: "tousLesEtats", rawRowCount: 4, keptRowCount: 4, pageCount: 1 });
+    // Diagnostic dédié (§ "Toujours 51 après le round treize/quatorze",
+    // docs/FBI.md) : confirme, depuis la fixture, que le contrôle "Afficher
+    // X entrées" a bien été TROUVÉ et que "-1"/"Tous" a bien été appliqué —
+    // c'est ce même diagnostic qui, en production, doit dire si le vrai
+    // FBI a réellement ce contrôle (jamais confirmé par du HTML réel).
+    expect(diagnostics[0].lengthSelect).toMatchObject({ found: true, selectId: "getTableauDerogation_length", appliedValue: "-1" });
 
     await client.closeSession(session);
   });

@@ -96,6 +96,29 @@ export interface BrowserFbiClientOptions {
   derogationDetailBudgetMs?: number;
 }
 
+/**
+ * Résultat de `tryMaximizeResultsPageLength` — jamais deviné au-delà de ce
+ * que Playwright a RÉELLEMENT observé sur la page courante. Persisté dans
+ * `DerogationPassDiagnostic` pour confirmer, depuis la base, si le
+ * contrôle "Afficher X entrées" existe VRAIMENT sur le vrai FBI (jamais
+ * confirmé par du HTML réel, contrairement à `nextPageControl` — voir
+ * docs/FBI.md, "Toujours 51 après le round treize/quatorze") : si
+ * `found: false` en production, la maximisation de page n'a jamais pu
+ * s'appliquer, et `collectAllDerogationPages` retombe systématiquement
+ * sur la pagination "Suivant" (connue instable, doublons/pertes de
+ * lignes) — jamais un problème d'état/de timing dans ce cas.
+ */
+export interface LengthSelectDiagnostic {
+  /** Un `<select>` dont le `name`/`id` finit par `_length` a été trouvé sur la page. */
+  found: boolean;
+  /** `id` RÉEL de ce `<select>`, tel que lu sur la page — jamais supposé. `null` si `found` est `false`. */
+  selectId: string | null;
+  /** Valeurs RÉELLES de ses `<option>`, dans l'ordre du DOM — permet de vérifier si "-1"/"Tous" existe vraiment, ou si la plus grande valeur numérique reste insuffisante. */
+  optionValues: string[];
+  /** Valeur EFFECTIVEMENT sélectionnée (celle choisie comme "la plus grande") — `null` si `found` est `false` ou si la sélection a échoué. */
+  appliedValue: string | null;
+}
+
 export interface DerogationPassDiagnostic {
   pass: DerogationEtatPass;
   /** Valeur RÉELLEMENT active sur le `<select>` "Etat de la dérogation" juste avant le clic sur RECHERCHER — jamais supposée, toujours relue après la tentative de sélection. */
@@ -106,6 +129,8 @@ export interface DerogationPassDiagnostic {
   keptRowCount: number;
   /** Nombre de pages RÉELLEMENT parcourues (itérations de `collectAllResultPages` avant l'arrêt) — confirme si la pagination avance vraiment ou relit la même page. */
   pageCount: number;
+  /** Voir `LengthSelectDiagnostic` — confirme si `tryMaximizeResultsPageLength` a pu s'appliquer, ou si `collectAllDerogationPages` est systématiquement retombé sur la pagination "Suivant" instable. */
+  lengthSelect: LengthSelectDiagnostic;
 }
 
 export class BrowserFbiClient {
@@ -863,10 +888,15 @@ export class BrowserFbiClient {
    * instabilité — plutôt qu'un onzième correctif sur la mécanique de clic
    * "Suivant" elle-même.
    */
-  private async tryMaximizeResultsPageLength(page: Page): Promise<void> {
+  private async tryMaximizeResultsPageLength(page: Page): Promise<LengthSelectDiagnostic> {
+    const diagnostic: LengthSelectDiagnostic = { found: false, selectId: null, optionValues: [], appliedValue: null };
+
     try {
       const lengthSelect = selectors.resultsLengthSelect(page);
-      if ((await lengthSelect.count().catch(() => 0)) === 0) return;
+      if ((await lengthSelect.count().catch(() => 0)) === 0) return diagnostic;
+
+      diagnostic.found = true;
+      diagnostic.selectId = await lengthSelect.getAttribute("id").catch(() => null);
 
       const options = lengthSelect.locator("option");
       const optionCount = await options.count().catch(() => 0);
@@ -876,6 +906,7 @@ export class BrowserFbiClient {
       for (let i = 0; i < optionCount; i += 1) {
         const value = await options.nth(i).getAttribute("value").catch(() => null);
         if (value === null) continue;
+        diagnostic.optionValues.push(value);
         const numeric = Number(value);
         // -1 est la convention DataTables pour "Tous" — toujours le plus grand.
         const rank = numeric === -1 ? Number.POSITIVE_INFINITY : numeric;
@@ -891,10 +922,13 @@ export class BrowserFbiClient {
         await this.settle(page);
         await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
         await this.waitForStableDerogationTable(page);
+        diagnostic.appliedValue = bestValue;
       }
     } catch {
       // Best effort — voir la note ci-dessus.
     }
+
+    return diagnostic;
   }
 
   /**
@@ -990,8 +1024,11 @@ export class BrowserFbiClient {
    * ("Aucune donnée disponible...") ET les lignes "A Créer" comptent
    * quand même dans l'index DOM de la page courante.
    */
-  private async collectAllDerogationPages(page: Page, detailDeadlineAt: number): Promise<{ rows: FbiDerogationRow[]; pageCount: number; rawRowCount: number }> {
-    await this.tryMaximizeResultsPageLength(page);
+  private async collectAllDerogationPages(
+    page: Page,
+    detailDeadlineAt: number,
+  ): Promise<{ rows: FbiDerogationRow[]; pageCount: number; rawRowCount: number; lengthSelect: LengthSelectDiagnostic }> {
+    const lengthSelect = await this.tryMaximizeResultsPageLength(page);
 
     const MAX_PAGES = 50;
     const collected: FbiDerogationRow[] = [];
@@ -1035,7 +1072,7 @@ export class BrowserFbiClient {
       }
     }
 
-    return { rows: collected, pageCount, rawRowCount };
+    return { rows: collected, pageCount, rawRowCount, lengthSelect };
   }
 
   /**
@@ -1172,7 +1209,7 @@ export class BrowserFbiClient {
     }
 
     const detailDeadlineAt = Date.now() + this.derogationDetailBudgetMs;
-    const { rows: normalized, pageCount, rawRowCount } = await this.collectAllDerogationPages(page, detailDeadlineAt);
+    const { rows: normalized, pageCount, rawRowCount, lengthSelect } = await this.collectAllDerogationPages(page, detailDeadlineAt);
     // `collectAllDerogationPages` filtre déjà la ligne fantôme DataTables
     // ("Aucune donnée disponible dans le tableau", voir docs/FBI.md) —
     // une VRAIE dérogation a toujours un numéro de rencontre, jamais `null`.
@@ -1203,6 +1240,7 @@ export class BrowserFbiClient {
       rawRowCount,
       keptRowCount: result.length,
       pageCount,
+      lengthSelect,
     });
 
     return result;
