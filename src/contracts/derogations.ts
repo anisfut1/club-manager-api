@@ -67,6 +67,14 @@ export const DerogationListItemDtoSchema = DerogationStatusDtoSchema.extend({
    * interne pour désambiguïser les numéros de rencontre.
    */
   categoryLabel: z.string().nullable(),
+  /**
+   * Nom de L'ÉQUIPE DU CLUB engagée sur ce match (`teams.name`, ex.
+   * "Seniors 1 M", "Seniors 2", "U13 1") — demande du club, 2026-09-26 :
+   * "faut préciser quelle équipe, seniors ya 4 equipes SM1 SM2 SM3 SF,
+   * pareil sur dautres catégories" : `categoryLabel` seul ("Seniors") ne
+   * distingue pas les 4 équipes seniors du club entre elles, `teamName` si.
+   */
+  teamName: z.string().nullable(),
 }).openapi("DerogationListItemDto");
 
 export type DerogationListItemDto = z.infer<typeof DerogationListItemDtoSchema>;

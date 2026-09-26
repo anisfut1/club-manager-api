@@ -11,8 +11,8 @@ derogationsRouter.use("*", requireClubMembership);
 /**
  * GET /v1/clubs/:clubId/derogations — TOUTES les dérogations connues du
  * club (dernier état par match), enrichies du numéro/adversaire/date/
- * catégorie du match FFBB correspondant — pour la page "Vérifier toutes les
- * dérogations" (demande du club, voir docs/FBI.md : "je veux un bouton
+ * catégorie/équipe du club du match FFBB correspondant — pour la page
+ * "Vérifier toutes les dérogations" (demande du club, voir docs/FBI.md : "je veux un bouton
  * global qui check toutes les demandes, pas match par match"). Silencieux
  * (liste vide) pour un club sans FBI configuré, ou n'ayant jamais lancé de
  * vérification — jamais une erreur.
@@ -41,7 +41,7 @@ derogationsRouter.get("/", requireClubRole("club_admin"), async (c) => {
 
   const matchIds = (checks ?? []).map((row) => row.match_id);
   const { data: matches } = matchIds.length
-    ? await supabase.from("matches").select("id, numero, opponent_name, match_datetime, competition_id").in("id", matchIds)
+    ? await supabase.from("matches").select("id, numero, opponent_name, match_datetime, competition_id, team_id").in("id", matchIds)
     : { data: [] };
   const matchById = new Map((matches ?? []).map((m) => [m.id, m]));
 
@@ -50,6 +50,15 @@ derogationsRouter.get("/", requireClubRole("club_admin"), async (c) => {
     ? await supabase.from("competitions").select("id, category_label").in("id", competitionIds)
     : { data: [] };
   const categoryLabelByCompetitionId = new Map((competitions ?? []).map((c) => [c.id, c.category_label]));
+
+  // Le club a PLUSIEURS équipes dans une même catégorie (demande du club,
+  // 2026-09-26 : "faut préciser quelle équipe, seniors ya 4 equipes SM1
+  // SM2 SM3 SF, pareil sur dautres catégories") — `category_label` seul
+  // ("Seniors") ne les distingue pas, `teams.name` ("Seniors 1 M",
+  // "Seniors 2"...) si.
+  const teamIds = [...new Set((matches ?? []).map((m) => m.team_id).filter((id): id is string => id !== null))];
+  const { data: teams } = teamIds.length ? await supabase.from("teams").select("id, name").in("id", teamIds) : { data: [] };
+  const teamNameById = new Map((teams ?? []).map((t) => [t.id, t.name]));
 
   const derogations: DerogationListItemDto[] = (checks ?? []).map((row) => {
     const match = matchById.get(row.match_id);
@@ -60,6 +69,7 @@ derogationsRouter.get("/", requireClubRole("club_admin"), async (c) => {
       opponentName: match?.opponent_name ?? null,
       matchDatetime: match?.match_datetime ?? null,
       categoryLabel: match?.competition_id ? categoryLabelByCompetitionId.get(match.competition_id) ?? null : null,
+      teamName: match?.team_id ? teamNameById.get(match.team_id) ?? null : null,
       etat: row.etat,
       dateDepot: row.date_depot,
       dateDerogation: row.date_derogation,
