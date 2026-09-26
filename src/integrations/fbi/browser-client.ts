@@ -1100,7 +1100,7 @@ export class BrowserFbiClient {
         break;
       }
 
-      const advanced = await this.waitForDerogationPageAdvance(page, currentSignature);
+      const advanced = await this.waitForDerogationTableRefresh(page, currentSignature);
       if (advanced === null) break; // Dernière page RÉELLEMENT atteinte — voir sa doc.
       currentRows = advanced;
       currentSignature = JSON.stringify(advanced);
@@ -1110,36 +1110,46 @@ export class BrowserFbiClient {
   }
 
   /**
-   * Attend que le tableau change RÉELLEMENT de contenu après un clic
-   * "Suivant" — jamais juste "cette lecture diffère de la lecture d'AVANT
-   * le clic", qui confond deux causes très différentes : une VRAIE
-   * dernière page (rien de plus à charger) et un AJAX simplement LENT côté
-   * vrai FBI (le tableau affiche encore la page PRÉCÉDENTE au moment de la
-   * lecture, pas encore rafraîchi).
+   * Attend que le tableau change RÉELLEMENT de contenu après une action
+   * (clic "Suivant" OU soumission d'une recherche) — jamais juste "cette
+   * lecture diffère de la lecture d'AVANT l'action", qui confond deux
+   * causes très différentes : un résultat VRAIMENT inchangé (dernière
+   * page, ou — jamais rencontré en pratique, une vraie recherche vide
+   * inclut toujours la ligne fantôme "Aucune donnée disponible", donc
+   * TOUJOURS un contenu différent de l'écran pré-recherche) et un AJAX
+   * simplement LENT côté vrai FBI (le tableau affiche encore l'ANCIEN
+   * état au moment de la lecture, pas encore rafraîchi).
    *
    * Constaté en production le 2026-09-27 (§ "Toujours 51...", docs/FBI.md) :
    * `passDiagnostics[0].pageCount` variait de 1 à 5 D'UNE EXÉCUTION À
-   * L'AUTRE pour EXACTEMENT le même club/jeu de dérogations réel — signe
-   * que l'ancienne détection de fin de pagination (`collectAllDerogationPages`
+   * L'AUTRE pour EXACTEMENT le même club/jeu de dérogations réel après un
+   * clic "Suivant" — signe que l'ancienne détection (`collectAllDerogationPages`
    * lisait une fois, comparait à la lecture de l'itération PRÉCÉDENTE,
    * s'arrêtait dès qu'elles étaient égales) s'arrêtait parfois AVANT que
-   * l'AJAX du clic ait fini de rafraîchir le tableau — la lecture "trop
-   * tôt" retombait alors sur le contenu de la page qu'on vient de QUITTER,
-   * indistinguable d'une "vraie" dernière page pour cette comparaison.
-   * `lengthSelect.found: false` confirmé par le round précédent (le
-   * contrôle "Afficher X entrées" n'existe pas sur cette page réelle) —
-   * la pagination "Suivant" reste donc le SEUL mécanisme disponible, elle
-   * doit être fiable.
+   * l'AJAX ait fini de rafraîchir le tableau.
+   *
+   * **Même bug retrouvé à la soumission INITIALE** (§ "Rencontre 23
+   * uniquement, round suivant", docs/FBI.md, 2026-09-27) : une fois le
+   * champ "Numéro de rencontre" vidé explicitement (round précédent), la
+   * recherche "tous les numéros" est nécessairement plus LENTE côté
+   * serveur qu'une recherche filtrée sur UN SEUL numéro (davantage de
+   * lignes à préparer) — `waitForStableDerogationTable` (comparaison
+   * naïve, sans référence à l'état PRÉ-soumission) a alors pu se
+   * "stabiliser" sur l'écran encore VIDE (avant tout résultat), donnant
+   * `rawRowCount: 0` alors que la recherche était censée tout ramener.
+   * Utilisée maintenant aussi pour la soumission initiale
+   * (`fetchAllDerogations`/`fetchDerogationForMatch`), pas seulement la
+   * pagination.
    *
    * Repolle jusqu'à `maxAttempts` fois une lecture qui diffère de
-   * `previousSignature` (la page qu'on vient de quitter) ET qui se
-   * STABILISE (deux lectures consécutives identiques, même principe que
-   * `waitForStableDerogationTable`) — renvoie ces nouvelles lignes dès
+   * `previousSignature` (l'état d'AVANT l'action) ET qui se STABILISE
+   * (deux lectures consécutives identiques) — renvoie ces lignes dès
    * qu'elles le sont. `null` uniquement si le contenu n'a JAMAIS changé
-   * après `maxAttempts` tentatives — alors, et seulement alors, la
-   * dernière page est considérée réellement atteinte.
+   * après `maxAttempts` tentatives (dernière page réellement atteinte, ou
+   * AJAX qui n'a jamais répondu) — l'appelant reste libre de continuer
+   * avec l'état lu par ailleurs plutôt que de planter, best effort.
    */
-  private async waitForDerogationPageAdvance(page: Page, previousSignature: string | null, maxAttempts = 15, intervalMs = this.navigationSettleMs): Promise<Record<string, string>[] | null> {
+  private async waitForDerogationTableRefresh(page: Page, previousSignature: string | null, maxAttempts = 15, intervalMs = this.navigationSettleMs): Promise<Record<string, string>[] | null> {
     let lastSignature: string | null = null;
 
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
@@ -1205,6 +1215,8 @@ export class BrowserFbiClient {
         );
       }
 
+      const preSubmitSignature = JSON.stringify(await selectors.resultsTableGenericRows(page).catch(() => null));
+
       try {
         await numeroInput.fill(matchNumber);
         const submit = selectors.searchSubmitControl(page).first();
@@ -1212,7 +1224,7 @@ export class BrowserFbiClient {
         else await numeroInput.press("Enter");
         await this.settle(page);
         await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
-        await this.waitForStableDerogationTable(page);
+        await this.waitForDerogationTableRefresh(page, preSubmitSignature);
       } catch (error) {
         throw new FbiError(
           `Recherche de dérogation échouée pour la rencontre ${matchNumber} (état ${pass}) : ${error instanceof Error ? error.message : String(error)}`,
@@ -1318,12 +1330,19 @@ export class BrowserFbiClient {
     const numeroValueBeforeClear = numeroInput ? await numeroInput.inputValue().catch(() => null) : null;
     if (numeroInput) await numeroInput.fill("").catch(() => {});
 
+    // État du tableau AVANT la soumission — voir `waitForDerogationTableRefresh` :
+    // une recherche "tous les numéros" est nécessairement plus LENTE côté
+    // serveur qu'une recherche filtrée sur un seul numéro, la comparaison
+    // doit donc attendre un changement RÉEL, jamais juste une stabilisation
+    // qui pourrait se figer sur cet état PRÉ-soumission.
+    const preSubmitSignature = JSON.stringify(await selectors.resultsTableGenericRows(page).catch(() => null));
+
     try {
       const submit = selectors.searchSubmitControl(page).first();
       if ((await submit.count().catch(() => 0)) > 0) await submit.click();
       await this.settle(page);
       await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
-      await this.waitForStableDerogationTable(page);
+      await this.waitForDerogationTableRefresh(page, preSubmitSignature);
     } catch (error) {
       throw new FbiError(
         `Recherche de toutes les dérogations du club échouée : ${error instanceof Error ? error.message : String(error)}`,

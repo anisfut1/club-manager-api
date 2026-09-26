@@ -3297,3 +3297,39 @@ couvrir la diversité de rencontres attendue (pas uniquement "23"), et
 `passDiagnostics[0].numeroValueBeforeClear` confirmera si ce risque était
 bien la cause (une valeur non-vide) ou si le champ était déjà vide cette
 fois (cause différente à chercher).
+
+### Confirmé, puis zéro résultat — le même bug de lecture prématurée touchait aussi la soumission INITIALE (dix-neuvième round, 2026-09-27)
+
+Le club relance : `numeroValueBeforeClear: "23"` confirme noir sur blanc
+que le champ n'était PAS vide (la théorie du round précédent était
+correcte) — mais le résultat est `rawRowCount: 0, keptRowCount: 0` cette
+fois, ZÉRO ligne, pas même la ligne fantôme "Aucune donnée disponible".
+Le club le vit très mal ("ya un gros pb lol"), à raison : trois rounds
+d'affilée sans amélioration visible.
+
+**La cause est la MÊME que celle du seizième round (pagination
+"Suivant")**, jamais appliquée à la soumission INITIALE jusqu'ici :
+`waitForStableDerogationTable` (utilisé après le clic RECHERCHER) compare
+deux lectures CONSÉCUTIVES entre elles, jamais à l'état d'AVANT la
+soumission — si l'AJAX est lent, il peut se "stabiliser" sur l'écran
+encore VIDE (avant tout résultat) et jamais attendre le VRAI résultat.
+Vider le champ "Numéro de rencontre" (round précédent) a changé la
+recherche RÉELLE de "un seul numéro" (rapide) à "tous les numéros"
+(nécessairement plus lente côté serveur, davantage de lignes à préparer)
+— exposant ce bug latent qui n'avait jamais posé de problème quand la
+recherche restait filtrée sur un numéro par accident.
+
+**Fix** : `waitForDerogationPageAdvance` (créé au seizième round pour la
+pagination) est généralisé en `waitForDerogationTableRefresh` et utilisé
+aussi pour la soumission INITIALE de `fetchAllDerogations` ET
+`fetchDerogationForMatch` — capture l'état du tableau AVANT le clic
+RECHERCHER, attend un changement RÉEL par rapport à CET état (jamais
+juste une stabilisation), avant de continuer. `collectAllDerogationPages`
+(pagination "Suivant") réutilise la même méthode générale.
+
+29/29 tests FBI passants, suite complète (423 tests) inchangée par
+ailleurs. **Prochaine vérification en production** : re-déclencher
+"Vérifier toutes les dérogations" — `rawRowCount` devrait cette fois
+refléter la RÉELLE ampleur de la recherche "tous les numéros" (plusieurs
+dizaines de lignes, pas 0), avec `numeroValueBeforeClear` confirmant que
+le champ est bien vidé avant chaque soumission désormais.
