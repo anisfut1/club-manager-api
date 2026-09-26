@@ -368,10 +368,11 @@ describe("GET /:clubId/derogations (voir docs/FBI.md)", () => {
         score_away: null,
         status: "scheduled",
         emarque_status: "not_applicable",
-        team_id: null,
+        team_id: "team-seniors-2",
         competition_id: null,
       },
     ];
+    state.teams = [{ id: "team-seniors-2", club_id: CLUB_A.id, name: "Seniors 2" }];
     state.fbiDerogationChecks = [
       {
         id: "check-1",
@@ -396,7 +397,9 @@ describe("GET /:clubId/derogations (voir docs/FBI.md)", () => {
     const body = await res.json();
 
     expect(body.derogations[0]).toMatchObject({
-      scheduleConflict: { matchId: "match-2", numero: "23", opponentName: "FO PISCENOIS - 2", matchDatetime: "2026-10-10T13:00:00.000Z" },
+      // `teamName` du match EN CONFLIT (demande du club, 2026-09-27 :
+      // "faut dire aussi c le match de quelle equipe en conflit").
+      scheduleConflict: { matchId: "match-2", numero: "23", opponentName: "FO PISCENOIS - 2", matchDatetime: "2026-10-10T13:00:00.000Z", teamName: "Seniors 2" },
     });
   });
 

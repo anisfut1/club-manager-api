@@ -55,15 +55,6 @@ derogationsRouter.get("/", requireClubRole("club_admin"), async (c) => {
     : { data: [] };
   const categoryLabelByCompetitionId = new Map((competitions ?? []).map((c) => [c.id, c.category_label]));
 
-  // Le club a PLUSIEURS équipes dans une même catégorie (demande du club,
-  // 2026-09-26 : "faut préciser quelle équipe, seniors ya 4 equipes SM1
-  // SM2 SM3 SF, pareil sur dautres catégories") — `category_label` seul
-  // ("Seniors") ne les distingue pas, `teams.name` ("Seniors 1 M",
-  // "Seniors 2"...) si.
-  const teamIds = [...new Set((matches ?? []).map((m) => m.team_id).filter((id): id is string => id !== null))];
-  const { data: teams } = teamIds.length ? await supabase.from("teams").select("id, name").in("id", teamIds) : { data: [] };
-  const teamNameById = new Map((teams ?? []).map((t) => [t.id, t.name]));
-
   // TOUS les matchs À DOMICILE déjà programmés du club (pas seulement ceux
   // ayant une dérogation) — nécessaire pour détecter si la date/heure
   // DEMANDÉE par une dérogation chevauche le créneau (2h) d'un AUTRE match
@@ -77,13 +68,34 @@ derogationsRouter.get("/", requireClubRole("club_admin"), async (c) => {
   // que `venue-conflicts.ts` pour la page Anomalies).
   const { data: scheduledMatches } = await supabase
     .from("matches")
-    .select("id, numero, opponent_name, match_datetime, is_home")
+    .select("id, numero, opponent_name, match_datetime, is_home, team_id")
     .eq("club_id", club.id)
     .eq("is_home", true)
     .neq("status", "cancelled");
+
+  // Le club a PLUSIEURS équipes dans une même catégorie (demande du club,
+  // 2026-09-26 : "faut préciser quelle équipe, seniors ya 4 equipes SM1
+  // SM2 SM3 SF, pareil sur dautres catégories") — `category_label` seul
+  // ("Seniors") ne les distingue pas, `teams.name` ("Seniors 1 M",
+  // "Seniors 2"...) si. Même besoin pour le bandeau de conflit de créneau
+  // (demande du club, 2026-09-27 : "faut dire aussi c le match de quelle
+  // equipe en conflit") — équipes des matchs AYANT une dérogation ET des
+  // matchs candidats au conflit rassemblées en une seule requête.
+  const teamIds = [
+    ...new Set([...(matches ?? []).map((m) => m.team_id), ...(scheduledMatches ?? []).map((m) => m.team_id)].filter((id): id is string => id !== null)),
+  ];
+  const { data: teams } = teamIds.length ? await supabase.from("teams").select("id, name").in("id", teamIds) : { data: [] };
+  const teamNameById = new Map((teams ?? []).map((t) => [t.id, t.name]));
+
   const otherMatchSlots: OtherMatchSlot[] = (scheduledMatches ?? [])
     .filter((m): m is typeof m & { match_datetime: string } => m.match_datetime !== null)
-    .map((m) => ({ id: m.id, numero: m.numero, opponentName: m.opponent_name, matchDatetime: m.match_datetime }));
+    .map((m) => ({
+      id: m.id,
+      numero: m.numero,
+      opponentName: m.opponent_name,
+      matchDatetime: m.match_datetime,
+      teamName: m.team_id ? (teamNameById.get(m.team_id) ?? null) : null,
+    }));
 
   const derogations: DerogationListItemDto[] = (checks ?? []).map((row) => {
     const match = matchById.get(row.match_id);

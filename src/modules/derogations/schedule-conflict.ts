@@ -20,6 +20,13 @@ export interface OtherMatchSlot {
   opponentName: string | null;
   /** ISO, jamais `null` — un match sans date connue ne peut définir aucun créneau. */
   matchDatetime: string;
+  /**
+   * Nom de L'ÉQUIPE DU CLUB engagée sur ce match (`teams.name`) — demande du
+   * club, 2026-09-27 : "sur le bandeau rouge faut dire aussi c le match de
+   * quelle equipe en conflit" (un club a plusieurs équipes, "Rencontre 9608"
+   * seul ne dit pas laquelle).
+   */
+  teamName: string | null;
 }
 
 export interface ScheduleConflict {
@@ -27,6 +34,7 @@ export interface ScheduleConflict {
   numero: string | null;
   opponentName: string | null;
   matchDatetime: string;
+  teamName: string | null;
 }
 
 const SLOT_DURATION_MS = 2 * 60 * 60 * 1000;
@@ -73,7 +81,7 @@ export function findScheduleConflict(
     if (Number.isNaN(matchStart)) continue;
     const matchEnd = matchStart + SLOT_DURATION_MS;
     if (requestedStart < matchEnd && matchStart < requestedEnd) {
-      return { matchId: match.id, numero: match.numero, opponentName: match.opponentName, matchDatetime: match.matchDatetime };
+      return { matchId: match.id, numero: match.numero, opponentName: match.opponentName, matchDatetime: match.matchDatetime, teamName: match.teamName };
     }
   }
   return null;

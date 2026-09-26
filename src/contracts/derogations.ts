@@ -55,6 +55,13 @@ export const ScheduleConflictDtoSchema = z
     numero: z.string().nullable(),
     opponentName: z.string().nullable(),
     matchDatetime: z.string(),
+    /**
+     * Nom de L'ÉQUIPE DU CLUB engagée sur le match EN CONFLIT (`teams.name`)
+     * — demande du club, 2026-09-27 : "sur le bandeau rouge faut dire aussi
+     * c le match de quelle equipe en conflit" (le club a plusieurs équipes,
+     * un numéro de rencontre seul ne dit pas laquelle).
+     */
+    teamName: z.string().nullable(),
   })
   .openapi("ScheduleConflictDto");
 

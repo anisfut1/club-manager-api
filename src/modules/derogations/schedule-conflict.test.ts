@@ -8,6 +8,7 @@ function otherMatch(overrides: Partial<OtherMatchSlot> = {}): OtherMatchSlot {
     opponentName: "FO PISCENOIS - 2",
     // 2026-10-10T15:00 heure de Paris (CEST, UTC+2) -> 13:00 UTC.
     matchDatetime: "2026-10-10T13:00:00.000Z",
+    teamName: "Seniors 2",
     ...overrides,
   };
 }
@@ -21,6 +22,7 @@ describe("findScheduleConflict (§ demande du club : 'un créneau de match est d
       numero: "1",
       opponentName: "FO PISCENOIS - 2",
       matchDatetime: "2026-10-10T13:00:00.000Z",
+      teamName: "Seniors 2",
     });
   });
 
