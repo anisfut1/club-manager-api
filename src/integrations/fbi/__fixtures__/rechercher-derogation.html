@@ -178,6 +178,25 @@
           cells: ["23/09/2026 12:44", "16", "BU11FN23", "SPORT CLUB DE SETE BASKET - 1", "ST GELY BASKETBALL - 1", "03/10/2026", "15:00", "", "Acceptée par les deux associations sportives"],
           detailUrl: "afficherDerogation.fbi?idDerogation=zC%2BwT8kJqRr9&idRencontre=0",
         },
+        /**
+         * MÊME numéro "1" que la 1ère ligne, mais DIVISION et
+         * `idDerogation` DIFFÉRENTS — preuve directe fournie par le club le
+         * 2026-09-27 (export Excel du vrai FBI, 82 lignes réelles pour
+         * seulement 51 numéros uniques ; capture d'écran confirmant que le
+         * numéro "23" existe à la fois en BU11FN23 et en BU11MN2) : le
+         * numéro de rencontre n'est PAS unique au club, et une rencontre
+         * peut avoir plusieurs dérogations distinctes. `fetchAllDerogations`
+         * doit ramener les DEUX lignes (jamais dédoublonnées par numéro),
+         * `fetchDerogationForMatch(session, "1", division)` doit ramener
+         * CELLE dont la division correspond, jamais l'autre.
+         */
+        {
+          numero: "1",
+          etat: "ORGCREREF",
+          etatLabel: "Refusée",
+          cells: ["21/09/2026 09:10", "1", "BU13MN2", "SPORT CLUB DE SETE BASKET - 2", "PALAVAS BASKET CLUB - 1", "28/09/2026", "18:00", "", "Refusée"],
+          detailUrl: "afficherDerogation.fbi?idDerogation=aUtreDivision99&idRencontre=0",
+        },
       ];
 
       // Taille de page FIXE à 2 — force artificiellement plusieurs pages

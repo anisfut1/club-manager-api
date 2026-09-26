@@ -34,10 +34,11 @@ async function recordLoginOutcome(supabase: DbClient, clubId: string, success: b
  * pas match par match", demande du club, 2026-09-25), récupère TOUTES les
  * dérogations FBI en une recherche non filtrée
  * (`BrowserFbiClient.fetchAllDerogations`), les rapproche des rencontres du
- * club déjà synchronisées FFBB par numéro (`competitions`/`matches.numero`
- * ne suffit pas ici, la clé FBI est le numéro SEUL — voir docs/FBI.md),
- * écrit/supprime les lignes `fbi_derogation_checks` correspondantes.
- * LECTURE SEULE, jamais d'écriture sur FBI (voir docs/FBI.md).
+ * club déjà synchronisées FFBB par (numéro, division), écrit les lignes
+ * `fbi_derogation_checks` correspondantes (plusieurs par rencontre
+ * possibles depuis le round "82 vs 51", voir migration
+ * `fbi_derogation_multiple_per_match`). LECTURE SEULE, jamais d'écriture
+ * sur FBI (voir docs/FBI.md).
  */
 export async function processCheckAllDerogationsJob(supabase: DbClient, job: FbiJobRow): Promise<boolean> {
   const credentials = await getFbiCredentials(supabase, job.club_id);
@@ -80,17 +81,36 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
     // l'historique d'un club : constaté en production le 2026-09-25, une
     // dérogation de septembre 2026 s'est vue associée à un match de mai
     // 2026 (saison précédente) partageant le même numéro de rencontre,
-    // faussant complètement la date/l'adversaire affichés. Sans scoping,
-    // `matchIdByNumero` garde arbitrairement le DERNIER match rencontré
-    // pour un numéro donné, jamais forcément celui de la bonne saison.
+    // faussant complètement la date/l'adversaire affichés.
     const { data: matches, error: matchesError } = await supabase
       .from("matches")
-      .select("id, numero")
+      .select("id, numero, competition_id")
       .eq("club_id", job.club_id)
       .gte("match_datetime", currentSeasonStart().toISOString());
     if (matchesError) throw new Error(`Lecture des rencontres du club échouée : ${matchesError.message}`);
 
-    const matchIdByNumero = new Map((matches ?? []).filter((m) => m.numero).map((m) => [m.numero as string, m.id]));
+    /**
+     * `numero` n'est PAS unique au club (§ "82 vs 51", docs/FBI.md,
+     * 2026-09-27, capture d'écran du club) : le même numéro de rencontre
+     * existe dans PLUSIEURS divisions distinctes (ex: "23" en BU11FN23 ET
+     * en BU11MN2). Le rapprochement se fait donc par (numéro, division) —
+     * `division` côté FBI correspond à `competitions.code` côté FFBB, lu
+     * séparément (2 requêtes simples plutôt qu'un embedded select, jamais
+     * éprouvé dans ce module) et croisé en mémoire.
+     */
+    const competitionIds = Array.from(new Set((matches ?? []).map((m) => m.competition_id).filter((id): id is string => Boolean(id))));
+    const { data: competitions, error: competitionsError } = competitionIds.length
+      ? await supabase.from("competitions").select("id, code").in("id", competitionIds)
+      : { data: [], error: null };
+    if (competitionsError) throw new Error(`Lecture des compétitions du club échouée : ${competitionsError.message}`);
+    const competitionCodeById = new Map((competitions ?? []).map((c) => [c.id, c.code]));
+
+    const matchIdByKey = new Map<string, string>();
+    for (const match of matches ?? []) {
+      if (!match.numero) continue;
+      const division = match.competition_id ? competitionCodeById.get(match.competition_id) ?? null : null;
+      matchIdByKey.set(`${match.numero}@${division}`, match.id);
+    }
 
     /**
      * Détail déjà connu d'une exécution précédente (`processCheckDerogationJob`,
@@ -105,36 +125,47 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
      * 2026-09-27 ("on récupère plus le demandeur le motif...", après le
      * round précédent qui avait retiré tout détail par ligne DU LOT et
      * l'écrasait donc systématiquement à `null`, y compris pour des
-     * lignes dont le détail avait été lu par ailleurs).
+     * lignes dont le détail avait été lu par ailleurs). Clé désormais
+     * `fbi_row_key` (une VRAIE dérogation), jamais `match_id` (plusieurs
+     * lignes possibles par rencontre depuis le round "82 vs 51").
      */
     const { data: existingChecks, error: existingChecksError } = await supabase
       .from("fbi_derogation_checks")
-      .select("match_id, demandeur, motif, date_rencontre_demandee, heure_demandee, adversaire, date_reponse, acceptation, motif_refus")
+      .select("fbi_row_key, demandeur, motif, date_rencontre_demandee, heure_demandee, adversaire, date_reponse, acceptation, motif_refus")
       .eq("club_id", job.club_id);
     if (existingChecksError) throw new Error(`Lecture du détail de dérogation déjà connu échouée : ${existingChecksError.message}`);
-    const existingByMatchId = new Map((existingChecks ?? []).map((c) => [c.match_id, c]));
+    const existingByRowKey = new Map((existingChecks ?? []).map((c) => [c.fbi_row_key, c]));
 
     const now = new Date().toISOString();
     let matched = 0;
     let unmatched = 0;
 
     for (const derogation of derogations) {
-      const matchId = derogation.numero ? matchIdByNumero.get(derogation.numero) : undefined;
+      const matchId = derogation.numero ? matchIdByKey.get(`${derogation.numero}@${derogation.division}`) : undefined;
       if (!matchId) {
         // Dérogation FBI sans rencontre FFBB correspondante trouvée (pas
-        // encore synchronisée, ou numéro non reconnu) — ignorée : cette
-        // table est scopée par match_id (contrainte NOT NULL), jamais de
-        // ligne orpheline créée.
+        // encore synchronisée, ou (numéro, division) non reconnu) —
+        // ignorée : cette table est scopée par match_id (contrainte NOT
+        // NULL), jamais de ligne orpheline créée.
         unmatched += 1;
         continue;
       }
 
-      const existing = existingByMatchId.get(matchId);
+      /**
+       * Clé d'upsert d'UNE VRAIE dérogation FBI — `idDerogation` (jeton du
+       * lien de détail, voir `FbiDerogationRow`) en priorité ; repli
+       * composite si jamais absent (lien introuvable, best effort) —
+       * jamais `match_id` seul, qui écraserait à tort les AUTRES
+       * dérogations de la même rencontre (§ "82 vs 51", docs/FBI.md).
+       */
+      const fbiRowKey = derogation.idDerogation ?? `${matchId}:${derogation.numero}:${derogation.dateDepot}`;
+      const existing = existingByRowKey.get(fbiRowKey);
 
       const { error: upsertError } = await supabase.from("fbi_derogation_checks").upsert(
         {
           club_id: job.club_id,
           match_id: matchId,
+          fbi_row_key: fbiRowKey,
           numero: derogation.numero,
           etat: derogation.etat,
           date_depot: derogation.dateDepot,
@@ -147,7 +178,7 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
           // connus de façon fiable depuis le tableau de résultats) : garde la
           // valeur déjà connue en base si CETTE exécution n'a pas pu lire le
           // détail de cette ligne (budget de temps dépassé, voir la note
-          // au-dessus de `existingByMatchId`).
+          // au-dessus de `existingByRowKey`).
           demandeur: derogation.demandeur ?? existing?.demandeur ?? null,
           motif: derogation.motif ?? existing?.motif ?? null,
           date_rencontre_demandee: derogation.dateRencontreDemandee ?? existing?.date_rencontre_demandee ?? null,
@@ -159,7 +190,7 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
           checked_at: now,
           updated_at: now,
         },
-        { onConflict: "club_id,match_id" },
+        { onConflict: "club_id,fbi_row_key" },
       );
       if (upsertError) throw new Error(`Écriture du résultat de dérogation échouée : ${upsertError.message}`);
       matched += 1;
@@ -207,8 +238,8 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
       derogationsFound: derogations.length,
       matched,
       unmatched,
-      foundNumeros: derogations.map((d) => d.numero).sort(),
-      matchNumerosDisponibles: Array.from(matchIdByNumero.keys()).sort(),
+      foundNumeros: derogations.map((d) => `${d.numero}@${d.division}`).sort(),
+      matchKeysDisponibles: Array.from(matchIdByKey.keys()).sort(),
       passDiagnostics,
     };
     await supabase.from("fbi_jobs").update({ status: "succeeded", finished_at: now, result }).eq("id", job.id);

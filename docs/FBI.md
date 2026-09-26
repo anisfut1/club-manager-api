@@ -3180,3 +3180,75 @@ déclenchements rapprochés cette après-midi (7 en moins de 3 heures)
 pourrait lui-même contribuer à une dégradation côté FBI, hypothèse à
 confirmer ou écarter avec `pageTitleAtFirstRead`/`rawRowSample` sur la
 prochaine exécution plutôt que supposée.
+
+### La vraie cause de "82 vs 51" — une rencontre peut avoir PLUSIEURS dérogations, et un numéro n'est pas unique au club (dix-septième round, 2026-09-27)
+
+Le club fournit enfin la preuve qui manquait depuis le début : un export
+Excel du VRAI FBI (`rechercherDerogation.xlsx`, capture d'écran de son
+écran "Compétitions > Dérogations", "voici un excel de tt celles qui
+doivent figurer"). Lu directement (zip/XML brut, sans dépendance
+manquante) : **82 lignes réelles, mais seulement 51 numéros de rencontre
+UNIQUES.** 21 numéros ont PLUSIEURS lignes — jusqu'à **8** pour la seule
+rencontre n°23, avec des "Date de dépôt" différentes (parfois une heure
+proposée différente). Le club confirme ensuite, capture d'écran à
+l'appui : ces 8 lignes du n°23 correspondent en réalité à **deux
+rencontres distinctes** (divisions `BU11FN23` et `BU11MN2`) qui partagent
+COÏNCIDEMMENT le même numéro.
+
+Ce n'était donc JAMAIS un bug de pagination/lecture (les treize rounds
+précédents avaient bien progressé sur ce terrain, à raison) : **51 EST le
+nombre exact de rencontres uniques**, et le code faisait exactement ce
+qu'il devait faire AVEC UNE HYPOTHÈSE FAUSSE — dédoublonner par `numero`,
+en supposant (jamais vérifié) qu'une rencontre n'a qu'une seule
+dérogation et qu'un numéro identifie une rencontre unique au club. Les
+DEUX hypothèses sont fausses :
+1. Une rencontre peut avoir plusieurs dérogations FBI distinctes
+   (resoumissions, propositions d'horaires différentes...).
+2. Le numéro de rencontre n'est PAS unique au club — deux rencontres de
+   divisions différentes peuvent partager le même numéro.
+
+**Décision du club** (AskUserQuestion) : afficher les 82, une carte par
+dérogation — jamais dédupliquées par rencontre.
+
+**Fix, en plusieurs parties** :
+- `FbiDerogationRow.idDerogation` (nouveau champ) : le jeton `idDerogation`
+  du lien de détail de CHAQUE ligne (`afficherDerogation.fbi?idDerogation=...`)
+  — LA clé stable d'une VRAIE dérogation FBI, extrait une seule fois par
+  ligne (`derogationRowDetailHref`/`parseIdDerogation`, browser-client.ts)
+  et réutilisé à la fois pour l'identité de la ligne ET pour son détail
+  (plus de double requête DOM).
+- `fetchAllDerogations` dédoublonne désormais par `idDerogation` (absorbe
+  les VRAIS doublons de lecture, une page relue deux fois) — JAMAIS plus
+  par `numero`, qui écrasait à tort de vraies dérogations distinctes.
+- `fetchDerogationForMatch` accepte un `division` optionnel pour
+  désambiguïser un numéro partagé entre compétitions ; si plusieurs
+  dérogations matchent malgré tout (même rencontre, plusieurs demandes),
+  garde la plus RÉCENTE (`compareDerogationDateDepot`, derogation-row.ts).
+- `processCheckAllDerogationsJob`/`processCheckDerogationJob` rapprochent
+  désormais dérogation → match par `(numero, division)` — `division` FBI
+  ≙ `competitions.code` FFBB, lu via une requête séparée (jamais un
+  embedded select, jamais éprouvé dans ce module) et croisé en mémoire.
+- Migration `fbi_derogation_multiple_per_match` : la contrainte
+  `unique (club_id, match_id)` (au plus UNE dérogation par rencontre)
+  est remplacée par `unique (club_id, fbi_row_key)` — `fbi_row_key` dérivé
+  d'`idDerogation` (repli composite si absent). `match_id` reste
+  obligatoire mais n'est plus unique : une rencontre peut désormais avoir
+  plusieurs lignes `fbi_derogation_checks`.
+- API/SCSB : `DerogationListItemDto` gagne un champ `id` (la ligne
+  `fbi_derogation_checks`, jamais `matchId` comme clé — une rencontre peut
+  en avoir plusieurs). `DerogationsList.tsx` clé désormais ses cartes par
+  `id` et affiche la "Date de dépôt" pour les distinguer visuellement
+  quand plusieurs cartes partagent la même rencontre.
+
+**Tests** : nouvelle rencontre n°1 dans la fixture (même numéro, division
+`BU13MN2` différente de la 1ère "1"/BU13FN23, `idDerogation` différent) —
+`fetchAllDerogations` doit ramener les DEUX ; `fetchDerogationForMatch`
+sans division garde la plus récente, avec la bonne division trouve
+l'AUTRE. 28/28 tests FBI passants, suite complète (422 tests) inchangée
+par ailleurs.
+
+**Prochaine vérification en production** : re-déclencher "Vérifier toutes
+les dérogations" — `fbi_derogation_checks` devrait désormais compter ~82
+lignes (dans la limite de ce que la pagination/le budget de détail
+ramènent réellement), plusieurs par rencontre pour les 21 numéros
+concernés.

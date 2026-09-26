@@ -3,7 +3,7 @@ import type { Browser, BrowserContext, Page } from "playwright-core";
 import { FbiError } from "./errors.js";
 import * as selectors from "./selectors.js";
 import { normalizeScheduleRow } from "./schedule-row.js";
-import { normalizeDerogationRow } from "./derogation-row.js";
+import { normalizeDerogationRow, compareDerogationDateDepot } from "./derogation-row.js";
 import type { FbiDerogationDetailFields, FbiDerogationRow, FbiScheduleRow } from "./types.js";
 import { logInfo } from "../../logger.js";
 
@@ -1073,8 +1073,15 @@ export class BrowserFbiClient {
           // tableau") — jamais de détail à aller chercher pour elle.
           if (normalizedRow.numero === null) continue;
 
-          const detail = Date.now() < detailDeadlineAt ? await this.fetchDerogationDetailForRow(page, domIndex).catch(() => null) : null;
-          collected.push(detail ? { ...normalizedRow, ...detail } : normalizedRow);
+          // `href` lu UNE SEULE fois, réutilisé pour `idDerogation` (clé
+          // stable de la ligne, § "82 vs 51" docs/FBI.md) ET pour le détail
+          // — jamais deux requêtes DOM séparées pour la même information.
+          const href = await this.derogationRowDetailHref(page, domIndex);
+          const idDerogation = href ? this.parseIdDerogation(href, page.url()) : null;
+          const rowWithId: FbiDerogationRow = { ...normalizedRow, idDerogation };
+
+          const detail = href && Date.now() < detailDeadlineAt ? await this.fetchDerogationDetailByHref(page, href).catch(() => null) : null;
+          collected.push(detail ? { ...rowWithId, ...detail } : rowWithId);
         }
       }
 
@@ -1158,18 +1165,31 @@ export class BrowserFbiClient {
    *
    * "faudra utiliser la recherche par numéro de rencontre, car on l'a déjà
    * et c'est bcp + simple" (demande du club) — recherche donc DIRECTEMENT
-   * par numéro, jamais par division/date. LECTURE SEULE : cette méthode ne
-   * fait QUE consulter (jamais soumettre/modifier une dérogation) — mais
-   * clique désormais dans le détail de la ligne trouvée pour en ramener le
-   * motif, la date/heure demandées et la réponse de l'adversaire (demande
-   * du club, 2026-09-25 : "il me faut du détail sur le motif... les dates
+   * par numéro. LECTURE SEULE : cette méthode ne fait QUE consulter
+   * (jamais soumettre/modifier une dérogation) — mais clique désormais
+   * dans le détail de la ligne trouvée pour en ramener le motif, la
+   * date/heure demandées et la réponse de l'adversaire (demande du club,
+   * 2026-09-25 : "il me faut du détail sur le motif... les dates
    * initiales et demandées... comme sur fbi", voir `fetchDerogationDetailForRow`).
+   *
+   * `division` (§ "82 vs 51", docs/FBI.md, 2026-09-27, capture d'écran du
+   * club) désambiguïse un numéro de rencontre qui n'est PAS unique au
+   * club : le même numéro peut exister dans PLUSIEURS divisions
+   * distinctes (ex: "23" en BU11FN23 ET en BU11MN2). `null`/omis : compare
+   * seulement le numéro, comme avant (repli best-effort si la division du
+   * match appelant est inconnue) — risque alors une rencontre confondue
+   * avec une autre division partageant le même numéro, jamais un plantage.
+   *
+   * Une même rencontre (numéro + division) peut ELLE-MÊME avoir plusieurs
+   * dérogations distinctes (dates de dépôt différentes, jusqu'à 8 pour une
+   * seule rencontre côté club) — garde alors la plus RÉCENTE
+   * (`compareDerogationDateDepot`), jamais une ligne arbitraire.
    *
    * Boucle sur `DEROGATION_ETAT_PASSES` (une seule passe "TT" depuis le
    * retour à une seule passe, voir sa doc) — la structure en boucle est
    * conservée pour rester symétrique avec `fetchAllDerogations`.
    */
-  async fetchDerogationForMatch(session: BrowserFbiSession, matchNumber: string): Promise<FbiDerogationRow | null> {
+  async fetchDerogationForMatch(session: BrowserFbiSession, matchNumber: string, division: string | null = null): Promise<FbiDerogationRow | null> {
     const { page } = session;
 
     for (const pass of DEROGATION_ETAT_PASSES) {
@@ -1203,15 +1223,23 @@ export class BrowserFbiClient {
       if (!rows || rows.length === 0) continue;
 
       const normalized = rows.map(normalizeDerogationRow);
-      // Comparaison EXACTE du numéro — jamais la première ligne supposée
-      // correcte (même prudence que `matchNumberInResultsTable` côté
-      // découverte e-Marque : une recherche mal filtrée pourrait renvoyer
-      // d'autres rencontres).
-      const matchIndex = normalized.findIndex((row) => row.numero === matchNumber);
-      if (matchIndex === -1) continue;
+      // Comparaison EXACTE du numéro (ET de la division si connue) —
+      // jamais la première ligne supposée correcte (même prudence que
+      // `matchNumberInResultsTable` côté découverte e-Marque : une
+      // recherche mal filtrée pourrait renvoyer d'autres rencontres).
+      const matchIndices = normalized.reduce<number[]>((acc, row, index) => {
+        if (row.numero === matchNumber && (division === null || row.division === division)) acc.push(index);
+        return acc;
+      }, []);
+      if (matchIndices.length === 0) continue;
 
-      const detail = await this.fetchDerogationDetailForRow(page, matchIndex);
-      return detail ? { ...normalized[matchIndex], ...detail } : normalized[matchIndex];
+      const bestIndex = matchIndices.reduce((best, current) => (compareDerogationDateDepot(normalized[current].dateDepot, normalized[best].dateDepot) >= 0 ? current : best));
+
+      const href = await this.derogationRowDetailHref(page, bestIndex);
+      const idDerogation = href ? this.parseIdDerogation(href, page.url()) : null;
+      const rowWithId: FbiDerogationRow = { ...normalized[bestIndex], idDerogation };
+      const detail = href ? await this.fetchDerogationDetailByHref(page, href).catch(() => null) : null;
+      return detail ? { ...rowWithId, ...detail } : rowWithId;
     }
 
     return null;
@@ -1288,24 +1316,36 @@ export class BrowserFbiClient {
     // une VRAIE dérogation a toujours un numéro de rencontre, jamais `null`.
 
     /**
-     * Constaté en production le 2026-09-27 : le même numéro apparaît
-     * PLUSIEURS FOIS dans `normalized` (ex : "9820" deux fois) — signe
-     * qu'au moins une page a été lue deux fois (probablement une
-     * comparaison de signature qui distingue à tort deux lectures de LA
-     * MÊME page comme deux pages différentes, voir `pageCount` ci-dessous
-     * pour confirmer combien de pages ont RÉELLEMENT été parcourues).
-     * Dédoublonné par numéro — jamais deux lignes pour la même rencontre.
-     * Si deux lectures du même numéro n'ont pas le même détail (l'une
-     * ayant dépassé `detailDeadlineAt`, l'autre non), garde celle AVEC
-     * détail plutôt que la dernière lue arbitrairement.
+     * Dédoublonnage — CINQUIÈME correction de cette clé (§ "82 vs 51",
+     * docs/FBI.md, 2026-09-27, preuve directe par export Excel du club) :
+     * `numero` n'identifie NI une dérogation unique (une même rencontre
+     * peut légitimement en avoir plusieurs — jusqu'à 8 pour la rencontre
+     * n°23 côté club, dates de dépôt différentes) NI même une rencontre
+     * unique au club (le même numéro existe dans plusieurs divisions
+     * distinctes, ex: "23" en BU11FN23 ET en BU11MN2). Dédoublonner par
+     * `numero` écrasait donc à tort de VRAIES dérogations différentes —
+     * cause racine du blocage à 51 alors que le club en attend 82.
+     *
+     * `idDerogation` (jeton du lien de détail, voir son type) est LA clé
+     * stable d'une VRAIE dérogation FBI — ne sert plus qu'à absorber les
+     * VRAIS doublons de lecture (une page relue deux fois, voir `pageCount`
+     * ci-dessous), jamais des dérogations réellement distinctes. Une ligne
+     * sans `idDerogation` (lien introuvable, best effort) n'est JAMAIS
+     * déduite avec une autre — gardée telle quelle plutôt que risquer de
+     * perdre une VRAIE dérogation sous une clé de repli approximative.
      */
     const deduped = new Map<string, FbiDerogationRow>();
+    const kept: FbiDerogationRow[] = [];
     for (const row of normalized) {
-      if (!row.numero) continue;
-      const existing = deduped.get(row.numero);
-      if (!existing || (!existing.demandeur && row.demandeur)) deduped.set(row.numero, row);
+      if (!row.idDerogation) {
+        kept.push(row);
+        continue;
+      }
+      const existing = deduped.get(row.idDerogation);
+      if (!existing || (!existing.demandeur && row.demandeur)) deduped.set(row.idDerogation, row);
     }
-    const result = Array.from(deduped.values());
+    kept.push(...deduped.values());
+    const result = kept;
 
     this.lastDerogationPassDiagnostics.push({
       pass: "tousLesEtats",
@@ -1322,18 +1362,20 @@ export class BrowserFbiClient {
   }
 
   /**
-   * Détail d'UNE ligne du tableau de résultats, par extraction directe de
-   * `href` (voir `collectAllDerogationsWithDetail`) — jamais un clic sur la
-   * ligne. Best effort intégral : si la ligne n'a pas de lien, ou que
-   * l'onglet ouvert n'a pas la forme attendue, renvoie `null` SANS lever
-   * d'erreur — une ligne dont le détail échoue à s'ouvrir ne doit jamais
-   * interrompre tout le lot (le tableau de résultats reste la source de
-   * vérité minimale). Utilisée aussi par `fetchDerogationForMatch`.
+   * Extrait le jeton `idDerogation` du `href` de détail d'une ligne — voir
+   * `FbiDerogationRow.idDerogation` (types.ts). `href` est souvent
+   * RELATIF (`afficherDerogation.fbi?idDerogation=...`), d'où `baseUrl`
+   * (toujours `page.url()` chez les appelants) pour le résoudre en URL
+   * absolue avant de lire ses paramètres — jamais un `split("=")` fragile
+   * sur la chaîne brute (le jeton peut lui-même contenir des caractères
+   * encodés, ex: `%2B`).
    */
-  private async fetchDerogationDetailForRow(page: Page, rowIndex: number): Promise<FbiDerogationDetailFields | null> {
-    const href = await this.derogationRowDetailHref(page, rowIndex);
-    if (!href) return null;
-    return await this.fetchDerogationDetailByHref(page, href);
+  private parseIdDerogation(href: string, baseUrl: string): string | null {
+    try {
+      return new URL(href, baseUrl).searchParams.get("idDerogation");
+    } catch {
+      return null;
+    }
   }
 
   /**

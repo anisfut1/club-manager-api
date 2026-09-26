@@ -86,6 +86,19 @@ export interface FbiDerogationRow extends FbiDerogationDetailFields {
   dateDepot: string | null;
   dateDerogation: string | null;
   etat: string | null;
+  /**
+   * Jeton `idDerogation` porté par le lien de détail de CETTE ligne
+   * (`afficherDerogation.fbi?idDerogation=<jeton>&idRencontre=0`) — LA clé
+   * stable d'une VRAIE dérogation FBI, jamais `numero` (§ "82 vs 51",
+   * docs/FBI.md, 2026-09-27) : le numéro de rencontre n'identifie ni une
+   * dérogation UNIQUE (une même rencontre peut en avoir plusieurs, dates de
+   * dépôt différentes) ni même une rencontre unique au club (le même
+   * numéro existe dans plusieurs divisions distinctes, capture d'écran du
+   * club). `null` uniquement si le lien de la ligne n'a pas pu être lu
+   * (best effort, voir `collectAllDerogationPages`) — ne doit jamais
+   * arriver sur le vrai FBI (CHAQUE cellule de donnée porte ce lien).
+   */
+  idDerogation: string | null;
   raw: Record<string, string>;
 }
 
@@ -119,8 +132,13 @@ export interface FbiAutomationClient<TSession> {
    * simple" (demande du club). `null` quand aucune dérogation n'existe
    * pour ce match — jamais une erreur (cas normal, la majorité des
    * matchs n'ont aucune dérogation en cours).
+   *
+   * `division` (§ "82 vs 51", docs/FBI.md, 2026-09-27) désambiguïse un
+   * numéro de rencontre qui n'est PAS unique au club (le même numéro peut
+   * exister dans plusieurs divisions distinctes) — `null`/omis reste un
+   * repli best-effort (numéro seul), jamais une erreur.
    */
-  fetchDerogationForMatch(session: TSession, matchNumber: string): Promise<FbiDerogationRow | null>;
+  fetchDerogationForMatch(session: TSession, matchNumber: string, division?: string | null): Promise<FbiDerogationRow | null>;
   /**
    * Récupère TOUTES les dérogations du club en UNE recherche non filtrée
    * (numéro vide) — "je veux un bouton global qui check toutes les

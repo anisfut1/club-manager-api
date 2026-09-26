@@ -326,7 +326,7 @@ export class HttpFbiClient implements FbiAutomationClient<HttpFbiSession> {
    * être observée depuis cet environnement. `BrowserFbiClient` est la
    * stratégie fonctionnelle (voir docs/FBI.md).
    */
-  async fetchDerogationForMatch(_session: HttpFbiSession, matchNumber: string): Promise<FbiDerogationRow | null> {
+  async fetchDerogationForMatch(_session: HttpFbiSession, matchNumber: string, _division?: string | null): Promise<FbiDerogationRow | null> {
     throw new FbiError(
       `Endpoint de recherche des dérogations FBI non confirmé en HTTP direct pour la rencontre ${matchNumber}. Voir docs/FBI_AUTHENTICATED_SPIKE.md.`,
       "DEROGATION_SEARCH_ENDPOINT_NOT_CONFIRMED",

@@ -49,6 +49,13 @@ export type DerogationStatusDto = z.infer<typeof DerogationStatusDtoSchema>;
  * lier vers sa fiche.
  */
 export const DerogationListItemDtoSchema = DerogationStatusDtoSchema.extend({
+  /**
+   * Identifiant de CETTE ligne `fbi_derogation_checks` — jamais `matchId`
+   * comme clé (§ "82 vs 51", docs/FBI.md, 2026-09-27) : une rencontre peut
+   * légitimement avoir PLUSIEURS dérogations distinctes, `matchId` seul ne
+   * les distingue pas.
+   */
+  id: z.string().uuid(),
   matchId: z.string().uuid(),
   opponentName: z.string().nullable(),
   matchDatetime: z.string().nullable(),

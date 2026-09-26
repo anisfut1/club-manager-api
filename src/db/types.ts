@@ -596,6 +596,7 @@ export interface Database {
           id: string;
           club_id: string;
           match_id: string;
+          fbi_row_key: string;
           numero: string | null;
           etat: string | null;
           date_depot: string | null;
@@ -620,6 +621,7 @@ export interface Database {
           id?: string;
           club_id: string;
           match_id: string;
+          fbi_row_key: string;
           numero?: string | null;
           etat?: string | null;
           date_depot?: string | null;

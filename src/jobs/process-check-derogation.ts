@@ -42,11 +42,21 @@ export async function processCheckDerogationJob(supabase: DbClient, job: FbiJobR
     return false;
   }
 
-  const { data: match, error: matchError } = await supabase.from("matches").select("id, club_id, numero").eq("id", job.match_id).maybeSingle();
+  const { data: match, error: matchError } = await supabase.from("matches").select("id, club_id, numero, competition_id").eq("id", job.match_id).maybeSingle();
 
   if (matchError || !match || !match.numero) {
     await failJob(supabase, job, `Match introuvable ou sans numéro de rencontre : ${matchError?.message ?? "numero manquant"}`);
     return false;
+  }
+
+  // `division` (§ "82 vs 51", docs/FBI.md, 2026-09-27) désambiguïse un
+  // numéro de rencontre qui n'est PAS unique au club — voir
+  // `BrowserFbiClient.fetchDerogationForMatch`. `null` (compétition
+  // inconnue) reste un repli best-effort, jamais un échec du job.
+  let division: string | null = null;
+  if (match.competition_id) {
+    const { data: competition } = await supabase.from("competitions").select("code").eq("id", match.competition_id).maybeSingle();
+    division = competition?.code ?? null;
   }
 
   const credentials = await getFbiCredentials(supabase, job.club_id);
@@ -81,14 +91,21 @@ export async function processCheckDerogationJob(supabase: DbClient, job: FbiJobR
   }
 
   try {
-    const derogation = await client.fetchDerogationForMatch(session, match.numero);
+    const derogation = await client.fetchDerogationForMatch(session, match.numero, division);
     const now = new Date().toISOString();
 
     if (derogation) {
+      // Clé d'upsert d'UNE VRAIE dérogation FBI — même principe que
+      // `processCheckAllDerogationsJob` (voir sa doc) : `idDerogation` en
+      // priorité, jamais `match_id` seul (une rencontre peut avoir
+      // plusieurs dérogations, voir migration `fbi_derogation_multiple_per_match`).
+      const fbiRowKey = derogation.idDerogation ?? `${job.match_id}:${derogation.numero}:${derogation.dateDepot}`;
+
       const { error: upsertError } = await supabase.from("fbi_derogation_checks").upsert(
         {
           club_id: job.club_id,
           match_id: job.match_id,
+          fbi_row_key: fbiRowKey,
           numero: derogation.numero,
           etat: derogation.etat,
           date_depot: derogation.dateDepot,
@@ -108,7 +125,7 @@ export async function processCheckDerogationJob(supabase: DbClient, job: FbiJobR
           checked_at: now,
           updated_at: now,
         },
-        { onConflict: "club_id,match_id" },
+        { onConflict: "club_id,fbi_row_key" },
       );
       if (upsertError) throw new Error(`Écriture du résultat de dérogation échouée : ${upsertError.message}`);
     } else {

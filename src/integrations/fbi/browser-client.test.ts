@@ -358,11 +358,11 @@ describe("BrowserFbiClient.fetchDerogationForMatch (gestion des dérogations, vo
     await client.closeSession(session);
   });
 
-  it("trouve la dérogation d'un match par numéro de rencontre", async () => {
+  it("trouve la dérogation d'un match par numéro de rencontre ET division — le numéro seul n'est PAS unique au club (§ '82 vs 51', docs/FBI.md, 2026-09-27) : la fixture a deux rencontres n°1 (BU13FN23 et BU13MN2), désambiguïsées par division", async () => {
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
     const session = await client.login({ username: "club1234", password: "secret" });
 
-    const derogation = await client.fetchDerogationForMatch(session, "1");
+    const derogation = await client.fetchDerogationForMatch(session, "1", "BU13FN23");
 
     expect(derogation).toMatchObject({
       numero: "1",
@@ -372,6 +372,37 @@ describe("BrowserFbiClient.fetchDerogationForMatch (gestion des dérogations, vo
       dateRencontre: "26/09/2026",
       heure: "15:30",
       etat: "Acceptée par l'organisme dirigeant",
+    });
+
+    await client.closeSession(session);
+  });
+
+  it("sans division connue, garde la dérogation la plus RÉCENTE (date de dépôt) parmi celles qui partagent le même numéro — jamais une ligne arbitraire", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    // Pas de division passée : les DEUX rencontres n°1 (BU13FN23, dépôt
+    // 19/08 ; BU13MN2, dépôt 21/09) matchent — la plus récente (BU13MN2)
+    // doit être retenue.
+    const derogation = await client.fetchDerogationForMatch(session, "1");
+
+    expect(derogation).toMatchObject({ numero: "1", division: "BU13MN2", etat: "Refusée" });
+
+    await client.closeSession(session);
+  });
+
+  it("avec la division BU13MN2, trouve l'AUTRE rencontre n°1 (jamais celle de BU13FN23)", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    const derogation = await client.fetchDerogationForMatch(session, "1", "BU13MN2");
+
+    expect(derogation).toMatchObject({
+      numero: "1",
+      division: "BU13MN2",
+      domicile: "SPORT CLUB DE SETE BASKET - 2",
+      visiteur: "PALAVAS BASKET CLUB - 1",
+      etat: "Refusée",
     });
 
     await client.closeSession(session);
@@ -425,7 +456,7 @@ describe("BrowserFbiClient.fetchAllDerogations ('je veux un bouton global qui ch
     // l'organisme dirigeant), "9820" (En Cours), "16" (Acceptée par les
     // deux associations sportives) et "2659" (A Créer) — les quatre
     // premières doivent ressortir sous "Tous les états", jamais "2659".
-    expect(derogations.map((d) => d.numero).sort()).toEqual(["1", "16", "9578", "9820"]);
+    expect(derogations.map((d) => d.numero).sort()).toEqual(["1", "1", "16", "9578", "9820"]);
     expect(derogations.every((d) => d.etat !== "A Créer")).toBe(true);
     expect(await session.page.locator('select[name*="etat" i]').inputValue()).toBe("TT");
 
@@ -438,18 +469,18 @@ describe("BrowserFbiClient.fetchAllDerogations ('je veux un bouton global qui ch
 
     const derogations = await client.fetchAllDerogations(session);
 
-    // Les 4 rencontres non-"A Créer" doivent toutes ressortir, y compris
-    // "9820" et "16" — sur la 2ᵉ page (PAGE_SIZE=2, voir la fixture), qui
-    // n'est atteinte qu'après un délai artificiel de 150ms simulant un
-    // vrai AJAX FBI lent.
-    expect(derogations.map((d) => d.numero).sort()).toEqual(["1", "16", "9578", "9820"]);
+    // Les 5 rencontres non-"A Créer" doivent toutes ressortir (dont les
+    // DEUX rencontres n°1, division différente) — réparties sur les 3
+    // pages (PAGE_SIZE=2, voir la fixture), chacune atteinte après un
+    // délai artificiel de 150ms simulant un vrai AJAX FBI lent.
+    expect(derogations.map((d) => d.numero).sort()).toEqual(["1", "1", "16", "9578", "9820"]);
 
     const diagnostics = client.getLastDerogationPassDiagnostics();
     expect(diagnostics).toHaveLength(1);
-    // pageCount: 2 — la pagination "Suivant" traverse RÉELLEMENT les 2
+    // pageCount: 3 — la pagination "Suivant" traverse RÉELLEMENT les 3
     // pages, malgré le délai artificiel, sans doublon ni ligne perdue
     // (rawRowCount === keptRowCount).
-    expect(diagnostics[0]).toMatchObject({ pass: "tousLesEtats", rawRowCount: 4, keptRowCount: 4, pageCount: 2 });
+    expect(diagnostics[0]).toMatchObject({ pass: "tousLesEtats", rawRowCount: 5, keptRowCount: 5, pageCount: 3 });
     // Diagnostic dédié (§ "Toujours 51 après le round treize/quatorze",
     // docs/FBI.md) : confirme qu'AUCUN contrôle "Afficher X entrées"
     // n'existe sur cette page — fidèle à ce que le vrai FBI a confirmé en
@@ -466,7 +497,7 @@ describe("BrowserFbiClient.fetchAllDerogations ('je veux un bouton global qui ch
 
     const derogations = await client.fetchAllDerogations(session);
 
-    expect(derogations).toHaveLength(4);
+    expect(derogations).toHaveLength(5);
     for (const derogation of derogations) {
       // Le serveur de test route par CHEMIN seul (query string ignorée,
       // voir setRoute plus haut) — chaque ligne ramène donc le MÊME détail
@@ -494,7 +525,7 @@ describe("BrowserFbiClient.fetchAllDerogations ('je veux un bouton global qui ch
 
     const derogations = await client.fetchAllDerogations(session);
 
-    expect(derogations.map((d) => d.numero).sort()).toEqual(["1", "16", "9578", "9820"]);
+    expect(derogations.map((d) => d.numero).sort()).toEqual(["1", "1", "16", "9578", "9820"]);
     for (const derogation of derogations) {
       expect(derogation.motif).toBeNull();
       expect(derogation.demandeur).toBeNull();

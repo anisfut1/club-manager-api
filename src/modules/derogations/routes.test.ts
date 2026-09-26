@@ -98,6 +98,7 @@ describe("GET /:clubId/derogations (voir docs/FBI.md)", () => {
 
     expect(body.derogations).toHaveLength(1);
     expect(body.derogations[0]).toMatchObject({
+      id: "check-1",
       matchId: "match-1",
       opponentName: "Castelnau Basket - 2",
       matchDatetime: "2026-09-26T13:30:00.000Z",

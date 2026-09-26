@@ -32,7 +32,7 @@ derogationsRouter.get("/", requireClubRole("club_admin"), async (c) => {
   const { data: checks, error } = await supabase
     .from("fbi_derogation_checks")
     .select(
-      "match_id, numero, etat, date_depot, date_derogation, date_rencontre, heure, domicile, visiteur, demandeur, motif, date_rencontre_demandee, heure_demandee, adversaire, date_reponse, acceptation, motif_refus, checked_at",
+      "id, match_id, numero, etat, date_depot, date_derogation, date_rencontre, heure, domicile, visiteur, demandeur, motif, date_rencontre_demandee, heure_demandee, adversaire, date_reponse, acceptation, motif_refus, checked_at",
     )
     .eq("club_id", club.id)
     .order("checked_at", { ascending: false });
@@ -48,6 +48,7 @@ derogationsRouter.get("/", requireClubRole("club_admin"), async (c) => {
   const derogations: DerogationListItemDto[] = (checks ?? []).map((row) => {
     const match = matchById.get(row.match_id);
     return {
+      id: row.id,
       matchId: row.match_id,
       numero: row.numero,
       opponentName: match?.opponent_name ?? null,

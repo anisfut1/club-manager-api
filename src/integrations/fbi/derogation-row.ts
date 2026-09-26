@@ -10,7 +10,7 @@ import type { FbiDerogationDetailFields, FbiDerogationRow } from "./types.js";
  * jamais, ils viennent uniquement de la page de détail (voir
  * `normalizeDerogationRow`).
  */
-const HEADER_ALIASES: Record<Exclude<keyof FbiDerogationRow, "raw" | keyof FbiDerogationDetailFields>, string[]> = {
+const HEADER_ALIASES: Record<Exclude<keyof FbiDerogationRow, "raw" | "idDerogation" | keyof FbiDerogationDetailFields>, string[]> = {
   numero: ["N° Renc", "N°", "N° Rencontre", "Numéro"],
   division: ["Division"],
   domicile: ["Domicile"],
@@ -54,6 +54,10 @@ export function normalizeDerogationRow(raw: Record<string, string>): FbiDerogati
     dateDepot: lookupHeader(raw, HEADER_ALIASES.dateDepot),
     dateDerogation: lookupHeader(raw, HEADER_ALIASES.dateDerogation),
     etat: lookupHeader(raw, HEADER_ALIASES.etat),
+    // `idDerogation` vient du lien de détail de la ligne DOM, jamais de ce
+    // dictionnaire en-tête→cellule — voir `collectAllDerogationPages`, qui
+    // le fusionne après coup (même principe que les champs de détail).
+    idDerogation: null,
     demandeur: null,
     motif: null,
     dateRencontreDemandee: null,
@@ -64,4 +68,30 @@ export function normalizeDerogationRow(raw: Record<string, string>): FbiDerogati
     motifRefus: null,
     raw,
   };
+}
+
+/**
+ * Compare deux "Date de dépôt" (format brut FBI `"DD/MM/YYYY HH:mm"`,
+ * confirmé par capture d'écran du club) — utilisé pour choisir la
+ * dérogation la plus RÉCENTE quand une rencontre en a plusieurs (§ "82 vs
+ * 51", docs/FBI.md, 2026-09-27 : une rencontre peut légitimement avoir
+ * plusieurs dérogations distinctes, jamais une seule supposée). `null`/un
+ * format illisible est traité comme le plus ANCIEN possible — jamais
+ * préféré à une date connue, mais ne fait jamais planter la comparaison.
+ * Fonction PURE, testable sans Playwright ni FBI réel.
+ */
+export function compareDerogationDateDepot(a: string | null, b: string | null): number {
+  // `Number.MIN_SAFE_INTEGER`, jamais `-Infinity` : deux valeurs illisibles
+  // comparées entre elles (`Infinity - Infinity`) donneraient `NaN`, un
+  // résultat de comparateur invalide (`Array.prototype.sort` ne garantit
+  // rien avec `NaN`) — jamais rencontré avant l'ajout du test dédié.
+  const parse = (value: string | null): number => {
+    if (!value) return Number.MIN_SAFE_INTEGER;
+    const match = /^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})$/.exec(value.trim());
+    if (!match) return Number.MIN_SAFE_INTEGER;
+    const [, day, month, year, hour, minute] = match;
+    return new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute)).getTime();
+  };
+
+  return parse(a) - parse(b);
 }
