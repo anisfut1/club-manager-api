@@ -2597,20 +2597,45 @@ déploiement, si la passe "En Cours" tourne bien et ce qu'elle trouve
 RÉELLEMENT (0 lignes réelles ± la fantôme désormais filtrée, ou enfin de
 vraies lignes "En Cours").
 
-**Hypothèse retenue, à confirmer par le club plutôt que deviner un
-huitième correctif à l'aveugle** : la dérogation n°9820 (celle dont le
-club a fourni le HTML source montrant "En Cours"/acceptation "NC") ressort
-désormais, sur les deux dernières exécutions, à l'état "Acceptée par
-l'organisme dirigeant" sous la passe "TT" — un état FINAL, différent de
-"En Cours". La capture HTML du club datait d'avant ces exécutions : le
-plus probable est que cette dérogation a simplement été RÉSOLUE entre les
-deux (l'adversaire/l'organisme a répondu), ce qui est le fonctionnement
-normal d'une dérogation "en cours" — pas un bug de cette recherche. Si le
-club constate, EN REGARDANT LE VRAI FBI AU MOMENT DU TEST (pas une capture
-plus ancienne), qu'une dérogation reste "En Cours" alors que
-`check_all_derogations` ne la trouve pas, la prochaine étape est de
-confirmer son numéro de rencontre précis pour vérifier directement dans
-`fbi_jobs.result.foundDerogations` (filtré sur `pass: "enCours"`) si la
-passe "En Cours" l'a bien vue et pourquoi elle n'apparaît pas côté
-SCSB — plutôt que de re-deviner le mécanisme de sélection d'état une
-troisième fois sans preuve nouvelle.
+**Hypothèse "résolue entre-temps" INVALIDÉE par preuve directe** : le club
+a fourni la capture COMPLÈTE et actuelle de "Rechercher une dérogation"
+filtrée sur "En Cours" — **9 dérogations réellement en cours** à cet
+instant (numéros 9820, 9860, 5, 9538, 13, 16, 9608, 5009, 15, toutes avec
+"Affichage de 1 à 9 sur 9 entrées", une seule page). La dérogation n°9820
+elle-même y figure encore "En Cours" — contredisant directement le constat
+précédent (elle ressortait "Acceptée par l'organisme dirigeant" sous la
+passe "TT" de nos propres exécutions). Ce n'est donc PAS un cas résolu
+entre-temps : la passe "EC" de `fetchAllDerogations` ne trouve
+véritablement AUCUNE de ces 9 dérogations, alors qu'elles existent
+bel et bien sous ce filtre sur le vrai FBI. Un bug réel, pas une preuve
+insuffisante — mais sa NATURE précise (sélection d'état qui échoue
+silencieusement ? recherche soumise mais résultat vide pour une autre
+raison ?) reste à confirmer sur preuve, pas à deviner un troisième
+correctif à l'aveugle.
+
+**Diagnostic ajouté (pas encore de fix comportemental)** : `BrowserFbiClient`
+expose désormais `getLastDerogationPassDiagnostics()`, lu par
+`processCheckAllDerogationsJob` et persisté dans `fbi_jobs.result.passDiagnostics`
+— un tableau `{ pass, selectedEtatValueAtSubmit, rawRowCount, keptRowCount }`
+par passe (`tousLesEtats`/`enCours`) :
+- `selectedEtatValueAtSubmit` : relit la valeur RÉELLE du `<select>` juste
+  avant le clic sur RECHERCHER (jamais supposée) — si elle affiche autre
+  chose que `"EC"` pour la passe `enCours`, la sélection par libellé
+  échoue silencieusement (bootstrap-select non synchronisé, option
+  introuvable...). Si elle affiche bien `"EC"` mais `rawRowCount` reste à
+  0, le problème est ailleurs (soumission, rendu du tableau, timing AJAX).
+- `rawRowCount` : nombre de lignes lues AVANT le filtrage de la ligne
+  fantôme DataTables (voir round précédent) — distingue "recherche vide"
+  (0) de "recherche a trouvé des lignes mais toutes fantômes" (impossible
+  en pratique, mais vérifiable) de "a trouvé les 9 vraies lignes"
+  (`rawRowCount` ≈ 9, `keptRowCount` ≈ 9).
+
+Prochaine étape, sur la base de CE diagnostic (relancer "Vérifier toutes
+les dérogations" puis lire `fbi_jobs.result.passDiagnostics` directement
+en base) : si `selectedEtatValueAtSubmit` pour `enCours` n'est PAS `"EC"`,
+corriger la sélection d'état (probablement une histoire de timing avec
+bootstrap-select, ou une différence entre l'option visible et l'option
+native). Si c'est bien `"EC"` mais `rawRowCount: 0`, chercher côté
+soumission/rendu (peut-être une case complémentaire du formulaire, comme
+la case "non joué" pour l'écran de rencontres, qui filtre aussi les
+dérogations sans qu'on l'ait identifiée).

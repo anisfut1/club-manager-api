@@ -78,15 +78,43 @@ export interface BrowserFbiClientOptions {
   navigationSettleMs?: number;
 }
 
+export interface DerogationPassDiagnostic {
+  pass: DerogationEtatPass;
+  /** Valeur RÉELLEMENT active sur le `<select>` "Etat de la dérogation" juste avant le clic sur RECHERCHER — jamais supposée, toujours relue après la tentative de sélection. */
+  selectedEtatValueAtSubmit: string | null;
+  /** Nombre de lignes brutes lues dans le tableau (AVANT filtrage de la ligne fantôme DataTables), toutes pages confondues. */
+  rawRowCount: number;
+  /** Nombre de lignes conservées après filtrage (voir `collectAllDerogationsWithDetail`). */
+  keptRowCount: number;
+}
+
 export class BrowserFbiClient {
   private readonly baseUrl: string;
   private readonly browser: Browser;
   private readonly navigationSettleMs: number;
 
+  /**
+   * Diagnostic de la DERNIÈRE `fetchAllDerogations` — jamais fait partie
+   * du contrat `FbiAutomationClient` (§ "ya le statut en cours qui est pas
+   * pris en compte", docs/FBI.md, 2026-09-26/27) : le club fournit la
+   * preuve directe de 9 dérogations RÉELLEMENT "En Cours" sur le vrai FBI,
+   * alors que la passe "EC" n'en ramène AUCUNE — ce champ confirme, sans
+   * deviner un troisième correctif, si l'option "En Cours" est
+   * RÉELLEMENT sélectionnée au moment du clic sur RECHERCHER et combien de
+   * lignes brutes cette recherche a effectivement trouvées. Lu par
+   * `processCheckAllDerogationsJob` juste après `fetchAllDerogations`,
+   * jamais par un appelant `FbiAutomationClient` générique.
+   */
+  private lastDerogationPassDiagnostics: DerogationPassDiagnostic[] = [];
+
   constructor(options: BrowserFbiClientOptions) {
     this.baseUrl = options.baseUrl;
     this.browser = options.browser;
     this.navigationSettleMs = options.navigationSettleMs ?? 500;
+  }
+
+  getLastDerogationPassDiagnostics(): readonly DerogationPassDiagnostic[] {
+    return this.lastDerogationPassDiagnostics;
   }
 
   private async settle(page: Page): Promise<void> {
@@ -892,9 +920,27 @@ export class BrowserFbiClient {
   async fetchAllDerogations(session: BrowserFbiSession): Promise<FbiDerogationRow[]> {
     const { page } = session;
     const collected = new Map<string, FbiDerogationRow>();
+    this.lastDerogationPassDiagnostics = [];
 
     for (const pass of DEROGATION_ETAT_PASSES) {
       await this.navigateToDerogationSearchScreen(page, pass);
+
+      /**
+       * Relu APRÈS la tentative de sélection dans `navigateToDerogationSearchScreen`
+       * (jamais supposé) — § "ya le statut en cours qui est pas pris en
+       * compte", docs/FBI.md : le club a fourni la preuve directe de 9
+       * dérogations RÉELLEMENT "En Cours" sur le vrai FBI, alors que la
+       * passe "EC" n'en a ramené AUCUNE lors des deux dernières exécutions.
+       * Avant de deviner un troisième correctif, ce diagnostic confirme si
+       * "En Cours" est VRAIMENT sélectionné au moment du clic sur
+       * RECHERCHER, ou si la sélection échoue silencieusement (best effort
+       * intégral dans `navigateToDerogationSearchScreen`).
+       */
+      const selectedEtatValueAtSubmit = await page
+        .locator('select[name*="etat" i]')
+        .first()
+        .inputValue()
+        .catch(() => null);
 
       try {
         const submit = selectors.searchSubmitControl(page).first();
@@ -909,7 +955,9 @@ export class BrowserFbiClient {
         );
       }
 
-      const rowsForPass = await this.collectAllDerogationsWithDetail(page);
+      const { rows: rowsForPass, rawRowCount } = await this.collectAllDerogationsWithDetail(page);
+      this.lastDerogationPassDiagnostics.push({ pass, selectedEtatValueAtSubmit, rawRowCount, keptRowCount: rowsForPass.length });
+
       for (const row of rowsForPass) {
         // Marqueur de diagnostic UNIQUEMENT (jamais persisté — voir
         // process-check-all-derogations.ts, qui ne lit `raw` que pour ça) :
@@ -948,9 +996,10 @@ export class BrowserFbiClient {
    * de résultats et sa pagination restent intacts pendant tout le
    * parcours, contrairement aux deux tentatives précédentes.
    */
-  private async collectAllDerogationsWithDetail(page: Page): Promise<FbiDerogationRow[]> {
+  private async collectAllDerogationsWithDetail(page: Page): Promise<{ rows: FbiDerogationRow[]; rawRowCount: number }> {
     const MAX_PAGES = 50;
     const collected: FbiDerogationRow[] = [];
+    let rawRowCount = 0;
     let previousSignature: string | null = null;
 
     for (let i = 0; i < MAX_PAGES; i += 1) {
@@ -960,6 +1009,7 @@ export class BrowserFbiClient {
       previousSignature = signature;
 
       if (rows) {
+        rawRowCount += rows.length;
         for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
           const normalized = normalizeDerogationRow(rows[rowIndex]);
 
@@ -1000,7 +1050,7 @@ export class BrowserFbiClient {
       }
     }
 
-    return collected;
+    return { rows: collected, rawRowCount };
   }
 
   /**

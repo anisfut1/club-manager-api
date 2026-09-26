@@ -73,6 +73,7 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
 
   try {
     const derogations = await client.fetchAllDerogations(session);
+    const passDiagnostics = client.getLastDerogationPassDiagnostics();
 
     // Scopé à la saison EN COURS (même convention que `currentSeasonStart`
     // côté /v1/clubs/:clubId/issues) — `numero` n'est PAS unique sur toute
@@ -173,6 +174,7 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
       unmatched,
       foundDerogations: derogations.map((d) => ({ numero: d.numero, etat: d.etat, motifLu: d.motif !== null, pass: d.raw.__etatPass ?? null })),
       matchNumerosDisponibles: Array.from(matchIdByNumero.keys()).sort(),
+      passDiagnostics,
     };
     await supabase.from("fbi_jobs").update({ status: "succeeded", finished_at: now, result }).eq("id", job.id);
 
