@@ -90,17 +90,20 @@
         <tbody></tbody>
       </table>
       <!--
-        Pagination DataTables réelle (jquery.datatable.min.js, confirmé par
-        les <script> du HTML source réel) — VRAIMENT cliquable ici (voir le
-        script plus bas), pas juste un marqueur statique : reproduit le "5
-        pages à prendre en compte" constaté par le club le 2026-09-27.
+        Pagination DataTables RÉELLE — outerHTML du bouton "Suivant" fourni
+        par le club le 2026-09-27, reproduit ici EXACTEMENT :
+        <a class="paginate_button next" aria-controls="rechercherDerogationAjax"
+           data-dt-idx="6" tabindex="0" id="rechercherDerogationAjax_next">Suivant</a>
+        AUCUN `href` — un `<a>` sans `href` n'a aucun rôle ARIA "link"
+        implicite, d'où le bug corrigé côté selectors.ts
+        (`nextPageControl`) : `getByRole("link", ...)` ne pouvait jamais le
+        trouver. Cherché maintenant par classe `paginate_button` (confirmée
+        réelle), jamais par rôle seul.
       -->
       <div class="dataTables_paginate">
-        <ul class="pagination">
-          <li class="paginate_button previous" id="paginatePrevious"><a href="#" onclick="return changerPage(-1);">Précédent</a></li>
-          <li class="paginate_button active"><a href="#" id="paginateCurrentPage">1</a></li>
-          <li class="paginate_button next" id="paginateNext"><a href="#" onclick="return changerPage(1);">Suivant</a></li>
-        </ul>
+        <a class="paginate_button previous" tabindex="0" id="rechercherDerogationAjax_previous" onclick="return changerPage(-1);">Précédent</a>
+        <span><a class="paginate_button current" tabindex="0" id="paginateCurrentPage">1</a></span>
+        <a class="paginate_button next" aria-controls="rechercherDerogationAjax" data-dt-idx="6" tabindex="0" id="rechercherDerogationAjax_next" onclick="return changerPage(1);">Suivant</a>
       </div>
     </div>
 

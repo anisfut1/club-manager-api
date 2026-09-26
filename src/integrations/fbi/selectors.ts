@@ -461,15 +461,39 @@ export async function resultsTableGenericRows(page: Page): Promise<Record<string
  * Contrôle "page suivante" de la pagination du tableau de résultats —
  * confirmé en production le 2026-09-25 (capture d'écran du VRAI FBI,
  * fournie par le club) : liens numérotés "Précédent 1 2 3 … Suivant" en
- * pied de tableau. Cherché par TEXTE visible ("Suivant"), jamais une classe
- * CSS devinée. `null` quand absent (dernière page, ou page sans
- * pagination — un seul écran de résultats) ou désactivé (dernière page —
- * un lien/bouton "Suivant" grisé n'a généralement plus de `href`/n'est
- * plus cliquable, voir l'appelant qui vérifie `isEnabled()` avant de
+ * pied de tableau.
+ *
+ * **Bug corrigé le 2026-09-27 (dixième round dérogations, HTML source réel
+ * du bouton fourni par le club après un rapport "il y a + de 80
+ * dérogations" alors que la recherche n'en ramenait jamais que ~20-23,
+ * TOUJOURS la même quantité peu importe la date/l'heure — signe d'un
+ * problème structurel, pas d'un aléa de timing)** : le VRAI bouton est
+ * `<a class="paginate_button next" ...>Suivant</a>` — SANS attribut
+ * `href`. Un `<a>` sans `href` n'a AUCUN rôle ARIA "link" implicite (règle
+ * HTML/ARIA : le rôle "link" d'un `<a>` dépend de la présence de `href`) —
+ * `page.getByRole("link", ...)` ne pouvait donc JAMAIS le trouver
+ * (`count() === 0`), quelle que soit la page. Le rôle "button" ne
+ * matchait pas non plus (pas de `role="button"` ni de `<button>` réel).
+ * `collectAllDerogationsWithDetail`/`collectAllResultPages`
+ * s'arrêtaient alors systématiquement après la 1ère page, croyant qu'il
+ * n'y en avait qu'une — jamais un problème de lecture prématurée du
+ * tableau (déjà traité par ailleurs), un problème de SÉLECTEUR pur.
+ *
+ * Cherché maintenant PAR CLASSE CSS `paginate_button` (convention
+ * DataTables CONFIRMÉE par ce HTML réel, jamais devinée par analogie
+ * cette fois) EN PRIORITÉ, avec un repli par texte visible ("Suivant")
+ * au cas où une autre page FBI utiliserait un vrai lien/bouton
+ * accessible. `null`/absent quand pas de pagination (un seul écran de
+ * résultats) ; désactivé sur la dernière page via la classe `disabled`
+ * sur CE MÊME élément (jamais un `<li>` ancêtre deviné — voir l'appelant,
+ * qui vérifie `isEnabled()` ET l'absence de cette classe avant de
  * cliquer).
  */
 export function nextPageControl(page: Page): Locator {
-  return page.getByRole("link", { name: /^suivant$/i }).or(page.getByRole("button", { name: /^suivant$/i }));
+  return page
+    .locator('a.paginate_button.next, button.paginate_button.next, a.paginate_button.next, [class*="paginate_button"][class*="next" i]')
+    .or(page.getByRole("link", { name: /^suivant$/i }))
+    .or(page.getByRole("button", { name: /^suivant$/i }));
 }
 
 /**

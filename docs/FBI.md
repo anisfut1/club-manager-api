@@ -2755,3 +2755,55 @@ réelle de FBI) avec `rawRowCount === keptRowCount` pour la passe unique
 demander au club le nombre exact affiché ("Affichage de X à Y sur Z
 entrées") pour comparer directement à `derogationsFound`, plutôt que de
 deviner un dixième correctif.
+
+### La vraie cause : `<a>` sans `href` n'a aucun rôle "link" (dixième round, 2026-09-27)
+
+Le round précédent (`waitForStableDerogationTable` après chaque clic
+"Suivant") n'a RIEN changé : `rawRowCount` reste bloqué à 23 (`TT`),
+exactement comme sur TOUTES les exécutions précédentes, alors que le club
+signale "il y a + de 80 dérogations" en regardant le vrai FBI. Un nombre
+IDENTIQUE à chaque exécution, peu importe l'heure, élimine l'hypothèse du
+timing/de la charge serveur (round précédent) : c'est un problème
+STRUCTUREL — la pagination ne lit tout simplement JAMAIS une 2ᵉ page.
+
+Le club fournit enfin l'`outerHTML` réel du bouton "Suivant" :
+```html
+<a class="paginate_button next" aria-controls="rechercherDerogationAjax" data-dt-idx="6" tabindex="0" id="rechercherDerogationAjax_next">Suivant</a>
+```
+**Aucun attribut `href`.** Règle HTML/ARIA : le rôle implicite "link" d'un
+`<a>` dépend de la présence de `href` — sans lui, l'élément n'a AUCUN
+rôle ARIA. `selectors.nextPageControl` cherchait `page.getByRole("link",
+{ name: /^suivant$/i })` — ne pouvait donc JAMAIS matcher ce bouton précis
+(`count() === 0`), sur AUCUNE des pages FBI utilisant cette même
+convention DataTables (`paginate_button`), depuis le tout premier round
+qui a introduit cette fonction. La pagination des dérogations s'arrêtait
+donc systématiquement après la 1ère page (~20-23 lignes) — jamais un
+problème de timing, jamais un problème d'état, un problème de SÉLECTEUR
+pur, non détecté jusqu'ici car jamais vu le vrai HTML de ce bouton précis.
+
+**Fix** : `nextPageControl` (selectors.ts) cherche maintenant PAR CLASSE
+CSS `paginate_button` (`a.paginate_button.next, button.paginate_button.next,
+[class*="paginate_button"][class*="next" i]`) EN PRIORITÉ — la convention
+DataTables CONFIRMÉE par ce HTML réel, jamais une classe devinée par
+analogie comme la tentative avortée du round 8 — avec un repli par rôle
+ARIA + texte pour toute page FBI qui utiliserait un vrai lien accessible.
+
+**Effet de bord potentiellement bénéfique** : `nextPageControl` est
+PARTAGÉE par `collectAllResultPages` (`fetchScheduleRows`, rapprochement
+calendrier FFBB/FBI, `reconcile_schedule`) — si l'écran
+`rechercherRencontreSaisieResultat.fbi` utilise la MÊME convention
+DataTables (probable, mêmes `<script>` `dataTableFFBBNew.min.js`/
+`jquery.datatable.min.js` inclus sur les deux pages, jamais confirmé
+directement pour CETTE page précise), ce correctif corrige aussi
+silencieusement une pagination incomplète jamais signalée là-bas — à
+surveiller sur les prochaines synchronisations calendrier plutôt qu'à
+supposer réglé sans preuve.
+
+**Fixture mise à jour pour reproduire fidèlement CE bug** :
+`rechercher-derogation.html` reproduit maintenant l'outerHTML RÉEL exact
+du bouton (`class="paginate_button next"`, aucun `href`) — sans cette
+mise à jour, le test de pagination à 2 pages ajouté au round précédent
+aurait continué à passer avec l'ANCIEN sélecteur cassé, puisque le
+`href="#"` deviné à tort le faisait matcher par rôle "link" alors que le
+vrai bouton ne l'est jamais. 25/25 tests passants, suite complète
+(416 tests) inchangée par ailleurs.
