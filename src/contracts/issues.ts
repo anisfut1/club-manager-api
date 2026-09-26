@@ -34,8 +34,14 @@ export const IssueDtoSchema = z
       "venue_time_conflict",
     ]),
     severity: z.enum(["warning", "error"]),
-    /** Toujours "open" pour l'instant : cette liste n'expose que les anomalies non résolues (voir POST .../resolve). Champ conservé pour absorber sans rupture une future liste incluant les anomalies résolues. */
-    status: z.literal("open"),
+    /**
+     * "open" : anomalie non résolue. "auto_corrected" : UNIQUEMENT pour un
+     * `fbi_schedule_mismatch` que `processReconcileScheduleJob` vient de
+     * corriger automatiquement dans `matches` (FBI l'emporte sur FFBB,
+     * demande du club, 2026-09-27) — affichée quelques jours pour la
+     * transparence ("qu'est-ce qui a changé"), jamais indéfiniment.
+     */
+    status: z.enum(["open", "auto_corrected"]),
     message: z.string(),
     technicalCode: z.string(),
     qualityWarnings: z.array(QualityWarningDtoSchema),

@@ -400,6 +400,130 @@ describe("GET /:clubId/derogations (voir docs/FBI.md)", () => {
     });
   });
 
+  it("jamais de conflit entre un match à DOMICILE et un match à l'EXTÉRIEUR même créneau (demande du club, 2026-09-27 : \"palavas sete c un match a lextérieur... si ya 1 match domicile 1 extérieur meme heure c pas un soucis\") — seul un match à domicile occupe une salle du club", async () => {
+    state.matches = [
+      {
+        // Dérogation à domicile demandant 10/10/2026 16:00 (créneau 16h-18h).
+        id: "match-1",
+        club_id: CLUB_A.id,
+        numero: "1",
+        journee: null,
+        match_datetime: "2026-10-03T13:00:00.000Z",
+        is_home: true,
+        opponent_name: "Castelnau Basket - 2",
+        venue_raw_label: null,
+        score_home: null,
+        score_away: null,
+        status: "scheduled",
+        emarque_status: "not_applicable",
+        team_id: null,
+        competition_id: null,
+      },
+      {
+        // Match à L'EXTÉRIEUR au même créneau (10/10/2026 15h-17h) — chez
+        // l'adversaire, jamais dans une salle du club : aucun conflit possible.
+        id: "match-2-away",
+        club_id: CLUB_A.id,
+        numero: "23",
+        journee: null,
+        match_datetime: "2026-10-10T13:00:00.000Z",
+        is_home: false,
+        opponent_name: "PALAVAS BASKET CLUB - 1",
+        venue_raw_label: null,
+        score_home: null,
+        score_away: null,
+        status: "scheduled",
+        emarque_status: "not_applicable",
+        team_id: null,
+        competition_id: null,
+      },
+    ];
+    state.fbiDerogationChecks = [
+      {
+        id: "check-1",
+        club_id: CLUB_A.id,
+        match_id: "match-1",
+        numero: "1",
+        etat: "En Cours",
+        date_depot: "19/08/2026 17:42",
+        date_derogation: null,
+        date_rencontre: "26/09/2026",
+        heure: "15:30",
+        domicile: "SPORT CLUB DE SETE BASKET - 1",
+        visiteur: "CASTELNAU BASKET - 2",
+        date_rencontre_demandee: "10/10/2026",
+        heure_demandee: "16:00",
+        checked_at: "2026-09-26T16:00:00.000Z",
+      },
+    ];
+
+    const res = await request(`/${CLUB_A.id}/derogations`);
+    const body = await res.json();
+
+    expect(body.derogations[0]).toMatchObject({ scheduleConflict: null });
+  });
+
+  it("jamais de conflit signalé pour la dérogation d'un match À L'EXTÉRIEUR, même si sa nouvelle heure chevauche un match à domicile (déplacer un match extérieur n'affecte jamais une salle du club)", async () => {
+    state.matches = [
+      {
+        // Dérogation sur un match à l'EXTÉRIEUR.
+        id: "match-away",
+        club_id: CLUB_A.id,
+        numero: "1",
+        journee: null,
+        match_datetime: "2026-10-03T13:00:00.000Z",
+        is_home: false,
+        opponent_name: "Castelnau Basket - 2",
+        venue_raw_label: null,
+        score_home: null,
+        score_away: null,
+        status: "scheduled",
+        emarque_status: "not_applicable",
+        team_id: null,
+        competition_id: null,
+      },
+      {
+        id: "match-home",
+        club_id: CLUB_A.id,
+        numero: "23",
+        journee: null,
+        match_datetime: "2026-10-10T13:00:00.000Z",
+        is_home: true,
+        opponent_name: "FO PISCENOIS - 2",
+        venue_raw_label: null,
+        score_home: null,
+        score_away: null,
+        status: "scheduled",
+        emarque_status: "not_applicable",
+        team_id: null,
+        competition_id: null,
+      },
+    ];
+    state.fbiDerogationChecks = [
+      {
+        id: "check-1",
+        club_id: CLUB_A.id,
+        match_id: "match-away",
+        numero: "1",
+        etat: "En Cours",
+        date_depot: "19/08/2026 17:42",
+        date_derogation: null,
+        date_rencontre: "26/09/2026",
+        heure: "15:30",
+        domicile: "CASTELNAU BASKET - 2",
+        visiteur: "SPORT CLUB DE SETE BASKET - 1",
+        date_rencontre_demandee: "10/10/2026",
+        heure_demandee: "16:00",
+        checked_at: "2026-09-26T16:00:00.000Z",
+      },
+    ];
+
+    const res = await request(`/${CLUB_A.id}/derogations`);
+    const body = await res.json();
+
+    expect(body.derogations[0]).toMatchObject({ scheduleConflict: null });
+  });
+
   it("jamais d'alerte de conflit pour une dérogation Refusée (la date demandée n'a jamais pris effet)", async () => {
     state.matches = [
       {

@@ -147,6 +147,7 @@ export interface FakeFbiScheduleDiscrepancyRow {
   fbi_opponent_name: string | null;
   detected_at: string;
   resolved_at: string | null;
+  auto_corrected_at?: string | null;
 }
 
 export interface FakeFbiDerogationCheckRow {

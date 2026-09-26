@@ -161,6 +161,76 @@ describe("GET /:clubId/issues", () => {
     });
   });
 
+  it("affiche une anomalie mismatch récemment corrigée automatiquement (FBI l'emporte sur FFBB, demande du club 2026-09-27), au passé et status auto_corrected", async () => {
+    state.matches = [
+      {
+        id: "match-1",
+        club_id: CLUB_A.id,
+        numero: "3",
+        journee: null,
+        // Déjà corrigée avec la valeur FBI par processReconcileScheduleJob.
+        match_datetime: "2026-09-27T13:00:00.000Z",
+        is_home: true,
+        opponent_name: "Frontignan",
+        venue_raw_label: null,
+        score_home: null,
+        score_away: null,
+        status: "scheduled",
+        emarque_status: "not_applicable",
+        team_id: null,
+      },
+    ];
+    state.fbiScheduleDiscrepancies = [
+      {
+        id: "disc-1",
+        club_id: CLUB_A.id,
+        match_id: "match-1",
+        division_code: "BU13MN23",
+        numero: "3",
+        kind: "mismatch",
+        field_name: "match_datetime",
+        ffbb_value: "26/09/2026 13:30",
+        fbi_value: "27/09/2026 15:00",
+        fbi_opponent_name: "Frontignan",
+        detected_at: "2026-09-25T10:00:00.000Z",
+        resolved_at: "2026-09-27T08:00:00.000Z",
+        auto_corrected_at: "2026-09-27T08:00:00.000Z",
+      },
+    ];
+
+    const res = await request(`/${CLUB_A.id}/issues`);
+    const body = await res.json();
+
+    expect(body.issues).toHaveLength(1);
+    expect(body.issues[0]).toMatchObject({ status: "auto_corrected", resolvedAt: "2026-09-27T08:00:00.000Z" });
+    expect(body.issues[0].message).toContain("corrigé automatiquement");
+  });
+
+  it("n'affiche plus une anomalie auto-corrigée après la fenêtre de transparence (7 jours)", async () => {
+    state.fbiScheduleDiscrepancies = [
+      {
+        id: "disc-1",
+        club_id: CLUB_A.id,
+        match_id: null,
+        division_code: "BU13MN23",
+        numero: "3",
+        kind: "mismatch",
+        field_name: "match_datetime",
+        ffbb_value: "26/09/2026 13:30",
+        fbi_value: "27/09/2026 15:00",
+        fbi_opponent_name: "Frontignan",
+        detected_at: "2026-09-01T10:00:00.000Z",
+        resolved_at: "2026-09-02T08:00:00.000Z",
+        auto_corrected_at: "2026-09-02T08:00:00.000Z",
+      },
+    ];
+
+    const res = await request(`/${CLUB_A.id}/issues`);
+    const body = await res.json();
+
+    expect(body.issues).toEqual([]);
+  });
+
   it("exclut les anomalies e-Marque d'une saison déjà terminée (demande du club : 'on s'en fout de 2025')", async () => {
     state.matches = [
       {

@@ -39,17 +39,29 @@ function describeFbiScheduleDiscrepancy(row: {
   ffbb_value: string | null;
   fbi_value: string | null;
   fbi_opponent_name: string | null;
+  auto_corrected_at: string | null;
 }): { type: IssueDto["type"]; message: string; technicalCode: string; severity: "warning" | "error" } {
   const label = `${row.division_code ?? "?"} n°${row.numero ?? "?"}`;
 
   switch (row.kind) {
     case "mismatch":
-      return {
-        type: "fbi_schedule_mismatch",
-        technicalCode: "FBI_SCHEDULE_MISMATCH",
-        severity: "warning",
-        message: `Écart détecté entre FFBB et FBI pour la rencontre ${label} : FFBB indique "${row.ffbb_value ?? "?"}", FBI indique "${row.fbi_value ?? "?"}".`,
-      };
+      // FBI l'emporte désormais sur FFBB pour un mismatch (demande du club,
+      // 2026-09-27) : `auto_corrected_at` renseigné = déjà corrigé dans
+      // matches, message au passé pour ne pas laisser croire qu'une action
+      // reste à faire.
+      return row.auto_corrected_at
+        ? {
+            type: "fbi_schedule_mismatch",
+            technicalCode: "FBI_SCHEDULE_MISMATCH",
+            severity: "warning",
+            message: `Écart corrigé automatiquement pour la rencontre ${label} : FFBB indiquait "${row.ffbb_value ?? "?"}", remplacé par la valeur FBI "${row.fbi_value ?? "?"}".`,
+          }
+        : {
+            type: "fbi_schedule_mismatch",
+            technicalCode: "FBI_SCHEDULE_MISMATCH",
+            severity: "warning",
+            message: `Écart détecté entre FFBB et FBI pour la rencontre ${label} : FFBB indique "${row.ffbb_value ?? "?"}", FBI indique "${row.fbi_value ?? "?"}".`,
+          };
     case "missing_in_ffbb":
       return {
         type: "fbi_schedule_missing_in_ffbb",
@@ -137,29 +149,39 @@ issuesRouter.get("/", async (c) => {
   });
 
   /**
-   * Anomalies de rapprochement calendrier FFBB/FBI (voir docs/FBI.md) —
-   * uniquement des lignes OUVERTES (`resolved_at is null`, résolues
-   * automatiquement par le job `reconcile_schedule` dès qu'un rapprochement
-   * ultérieur ne les revoit plus, voir process-reconcile-schedule.ts).
-   * Silencieusement vide pour un club sans FBI configuré (aucune ligne n'a
-   * jamais été écrite) — jamais une erreur.
+   * Anomalies de rapprochement calendrier FFBB/FBI (voir docs/FBI.md) — les
+   * lignes OUVERTES (`resolved_at is null`, résolues automatiquement par le
+   * job `reconcile_schedule` dès qu'un rapprochement ultérieur ne les revoit
+   * plus), PLUS celles corrigées automatiquement récemment (`auto_corrected_at`,
+   * demande du club, 2026-09-27 : "FBI doit emporter sur FFBB" — encore
+   * affichées quelques jours pour la transparence, "qu'est-ce qui a changé",
+   * jamais indéfiniment). Filtré en mémoire (jamais un `.or()` Supabase ici)
+   * pour rester exploitable par le même fake de test que le reste de cette
+   * route. Silencieusement vide pour un club sans FBI configuré (aucune
+   * ligne n'a jamais été écrite) — jamais une erreur.
    */
-  const { data: scheduleDiscrepancies, error: scheduleError } = await supabase
+  const AUTO_CORRECTED_VISIBILITY_DAYS = 7;
+  const autoCorrectedCutoffIso = new Date(Date.now() - AUTO_CORRECTED_VISIBILITY_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
+  const { data: allScheduleDiscrepancies, error: scheduleError } = await supabase
     .from("fbi_schedule_discrepancies")
-    .select("match_id, division_code, numero, kind, ffbb_value, fbi_value, fbi_opponent_name, detected_at")
+    .select("match_id, division_code, numero, kind, ffbb_value, fbi_value, fbi_opponent_name, detected_at, resolved_at, auto_corrected_at")
     .eq("club_id", club.id)
-    .is("resolved_at", null)
     .order("detected_at", { ascending: false });
 
   if (scheduleError) throw new Error(`Lecture des anomalies de calendrier FBI échouée : ${scheduleError.message}`);
 
-  const scheduleMatchIds = (scheduleDiscrepancies ?? []).map((d) => d.match_id).filter((id): id is string => Boolean(id));
+  const scheduleDiscrepancies = (allScheduleDiscrepancies ?? []).filter(
+    (d) => d.resolved_at === null || (d.auto_corrected_at !== null && d.auto_corrected_at >= autoCorrectedCutoffIso),
+  );
+
+  const scheduleMatchIds = scheduleDiscrepancies.map((d) => d.match_id).filter((id): id is string => Boolean(id));
   const { data: scheduleMatches } = scheduleMatchIds.length
     ? await supabase.from("matches").select("id, opponent_name, match_datetime").in("id", scheduleMatchIds)
     : { data: [] };
   const matchInfoById = new Map((scheduleMatches ?? []).map((m) => [m.id, m]));
 
-  const fbiScheduleIssues: IssueDto[] = (scheduleDiscrepancies ?? [])
+  const fbiScheduleIssues: IssueDto[] = scheduleDiscrepancies
     // Filtre saison en cours (même raison que ci-dessus) : `missing_in_ffbb`
     // n'a pas de date connue côté FFBB (matchId null) — toujours conservée,
     // elle reflète l'état ACTUEL du scrape FBI, jamais une donnée historique.
@@ -180,12 +202,12 @@ issuesRouter.get("/", async (c) => {
         integration: "fbi_schedule",
         type: meta.type,
         severity: meta.severity,
-        status: "open",
+        status: d.auto_corrected_at ? "auto_corrected" : "open",
         message: meta.message,
         technicalCode: meta.technicalCode,
         qualityWarnings: [],
         createdAt: d.detected_at,
-        resolvedAt: null,
+        resolvedAt: d.auto_corrected_at,
       };
     });
 

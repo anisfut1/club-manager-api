@@ -571,6 +571,7 @@ export interface Database {
           detected_at: string;
           last_seen_at: string;
           resolved_at: string | null;
+          auto_corrected_at: string | null;
           created_at: string;
         },
         {
@@ -587,6 +588,7 @@ export interface Database {
           detected_at?: string;
           last_seen_at?: string;
           resolved_at?: string | null;
+          auto_corrected_at?: string | null;
           created_at?: string;
         }
       >;

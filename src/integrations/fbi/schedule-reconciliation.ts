@@ -1,14 +1,24 @@
 import type { FbiScheduleDiscrepancyKind, MatchStatus } from "../../db/types.js";
+import { zonedWallTimeToUtc } from "../../util/timezone.js";
 import type { FbiScheduleRow } from "./types.js";
 
 /**
  * Rapprochement calendrier FFBB/FBI (demande du club, voir docs/FBI.md) :
  * "FBI est l'info réelle. si ya une info sur fbi pour la même rencontre
  * différente de ffbb, c'est une anomalie. si un match est sur fbi, et pas
- * sur ffbb, c'est à alerter aussi." FFBB reste la SEULE source écrite dans
- * `matches` (§ le club a explicitement écarté un remplacement, certains
- * clubs n'ont que FFBB) — cette fonction ne fait JAMAIS d'écriture, elle
- * produit une liste d'anomalies à corriger manuellement côté FFBB.
+ * sur ffbb, c'est à alerter aussi."
+ *
+ * Revirement du 2026-09-27 : le club a explicitement demandé que FBI
+ * l'EMPORTE désormais sur FFBB en cas d'écart ("FBI doit emporter sur FFBB
+ * car les vraies infos proviennent de FBI") — pour date/heure ET salle
+ * UNIQUEMENT (les deux seuls champs comparés ici, voir plus bas ; le club
+ * a confirmé cette portée explicitement). Cette fonction reste PURE (aucune
+ * IO) : elle calcule la `correction` à appliquer pour chaque `mismatch`
+ * détecté, mais c'est `process-reconcile-schedule.ts` qui écrit
+ * effectivement dans `matches`. `missing_in_ffbb`/`missing_in_fbi` restent
+ * de simples anomalies à traiter manuellement — FBI n'a pas assez
+ * d'information (logo, équipe, engagement FFBB...) pour créer/compléter un
+ * match tout seul.
  *
  * Portée v1 volontairement limitée à ce qui peut être comparé de façon
  * FIABLE sans avoir pu observer le format réel d'un match déjà joué sur
@@ -18,13 +28,19 @@ import type { FbiScheduleRow } from "./types.js";
  * - date/heure (mismatch) — c'est précisément la valeur ajoutée citée par
  *   le club ("les modifs en avance") : FBI montre un changement de date/
  *   heure AVANT que la resynchro FFBB (qui tourne périodiquement) ne le
- *   reflète.
- * Score/forfait/salle ne sont PAS comparés ici : le format réel d'un
- * "Score 1"/"Forfait 1" FBI pour un match joué n'a jamais été observé
- * (les captures fournies ne montrent que des rencontres à venir, colonnes
- * vides), et la colonne Forfait est une case à cocher (jamais un texte —
- * `selectors.resultsTableGenericRows` ne lit que du texte de cellule,
- * donc toujours vide pour cette colonne pour l'instant).
+ *   reflète ;
+ * - salle (mismatch) — comparaison VOLONTAIREMENT tolérante (voir
+ *   `venuesLikelyMatch`) : le format exact du texte FBI n'a jamais été
+ *   confirmé par une capture d'écran réelle, et `matches.venue_raw_label`
+ *   combine nom ET adresse FFBB (`"Nom — Adresse"`) alors que FBI n'affiche
+ *   vraisemblablement que le nom — une égalité stricte produirait une
+ *   anomalie sur QUASIMENT chaque rencontre.
+ * Score/forfait ne sont PAS comparés ici : le format réel d'un "Score 1"/
+ * "Forfait 1" FBI pour un match joué n'a jamais été observé (les captures
+ * fournies ne montrent que des rencontres à venir, colonnes vides), et la
+ * colonne Forfait est une case à cocher (jamais un texte —
+ * `selectors.resultsTableGenericRows` ne lit que du texte de cellule, donc
+ * toujours vide pour cette colonne pour l'instant).
  */
 
 export interface OurMatchForReconciliation {
@@ -32,8 +48,17 @@ export interface OurMatchForReconciliation {
   competitionCode: string | null;
   numero: string | null;
   matchDatetime: string | null;
+  venueRawLabel: string | null;
   status: MatchStatus;
 }
+
+/**
+ * Valeur à écrire dans `matches` pour appliquer la correction FBI —
+ * UNIQUEMENT pour `kind: "mismatch"` ; toujours `null` pour une anomalie de
+ * présence (`missing_in_ffbb`/`missing_in_fbi`), où FBI seul ne suffit pas
+ * à créer/compléter une ligne `matches`.
+ */
+export type ScheduleDiscrepancyCorrection = { matchDatetime: string } | { venueRawLabel: string } | null;
 
 export interface ScheduleDiscrepancyInput {
   matchId: string | null;
@@ -44,6 +69,7 @@ export interface ScheduleDiscrepancyInput {
   ffbbValue: string | null;
   fbiValue: string | null;
   fbiOpponentName: string | null;
+  correction: ScheduleDiscrepancyCorrection;
 }
 
 /** Clé de rapprochement FFBB/FBI : `competitions.code` + `matches.numero` = "Division" + "N°" FBI (voir docs/FBI.md). */
@@ -69,6 +95,36 @@ function normalizeFbiHeure(heure: string | null): string | null {
   const match = /^(\d{1,2})[:h](\d{2})/.exec(heure.trim());
   if (!match) return null;
   return `${match[1].padStart(2, "0")}:${match[2]}`;
+}
+
+/** "26/09/2026" -> { year: 2026, month: 9, day: 26 }, `null` si le format n'est pas reconnu. */
+function parseFrenchDateParts(value: string): { year: number; month: number; day: number } | null {
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value.trim());
+  if (!match) return null;
+  return { day: Number(match[1]), month: Number(match[2]), year: Number(match[3]) };
+}
+
+/**
+ * Compare deux libellés de salle en tolérant les différences de FORMAT
+ * (jamais de contenu confirmé) : `matches.venue_raw_label` combine nom ET
+ * adresse FFBB (`"Nom — Adresse"`), FBI n'affiche vraisemblablement que le
+ * nom, et la casse peut différer ("GYMNASE X" vs "Gymnase X"). Une
+ * correspondance PARTIELLE (l'un contient l'autre, une fois normalisé)
+ * suffit à considérer que c'est la MÊME salle — seule une salle FBI qui
+ * n'apparaît nulle part dans notre libellé est traitée comme un vrai
+ * changement de salle.
+ */
+function venuesLikelyMatch(ourVenueRawLabel: string, fbiSalle: string): boolean {
+  const normalize = (value: string): string =>
+    value
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .toLowerCase()
+      .trim();
+  const a = normalize(ourVenueRawLabel);
+  const b = normalize(fbiSalle);
+  if (!a || !b) return false;
+  return a.includes(b) || b.includes(a);
 }
 
 /** Date/heure de notre match, dans le même format que les colonnes FBI ("26/09/2026" / "11:00"), en fuseau Europe/Paris — jamais une comparaison UTC brute contre un affichage FBI qui est forcément en heure locale. */
@@ -129,6 +185,7 @@ export function reconcileFbiSchedule(fbiRows: FbiScheduleRow[], ourMatches: OurM
         ffbbValue: null,
         fbiValue: fbiOpponentLabel(fbiRow),
         fbiOpponentName: fbiOpponentLabel(fbiRow),
+        correction: null,
       });
       continue;
     }
@@ -138,6 +195,13 @@ export function reconcileFbiSchedule(fbiRows: FbiScheduleRow[], ourMatches: OurM
     const ourDateTime = ourDateTimeParts(ourMatch.matchDatetime);
 
     if (fbiDate && fbiTime && ourDateTime && (fbiDate !== ourDateTime.date || fbiTime !== ourDateTime.time)) {
+      const dateParts = parseFrenchDateParts(fbiDate);
+      const timeParts = /^(\d{2}):(\d{2})$/.exec(fbiTime);
+      const correction: ScheduleDiscrepancyCorrection =
+        dateParts && timeParts
+          ? { matchDatetime: zonedWallTimeToUtc(dateParts.year, dateParts.month, dateParts.day, Number(timeParts[1]), Number(timeParts[2]), 0, "Europe/Paris").toISOString() }
+          : null;
+
       discrepancies.push({
         matchId: ourMatch.id,
         divisionCode: fbiRow.division,
@@ -147,6 +211,24 @@ export function reconcileFbiSchedule(fbiRows: FbiScheduleRow[], ourMatches: OurM
         ffbbValue: `${ourDateTime.date} ${ourDateTime.time}`,
         fbiValue: `${fbiDate} ${fbiTime}`,
         fbiOpponentName: fbiOpponentLabel(fbiRow),
+        correction,
+      });
+    }
+
+    const fbiSalle = fbiRow.salle?.trim() || null;
+    const ourVenue = ourMatch.venueRawLabel?.trim() || null;
+
+    if (fbiSalle && ourVenue && !venuesLikelyMatch(ourVenue, fbiSalle)) {
+      discrepancies.push({
+        matchId: ourMatch.id,
+        divisionCode: fbiRow.division,
+        numero: fbiRow.numero,
+        kind: "mismatch",
+        fieldName: "venue_raw_label",
+        ffbbValue: ourVenue,
+        fbiValue: fbiSalle,
+        fbiOpponentName: fbiOpponentLabel(fbiRow),
+        correction: { venueRawLabel: fbiSalle },
       });
     }
   }
@@ -166,6 +248,7 @@ export function reconcileFbiSchedule(fbiRows: FbiScheduleRow[], ourMatches: OurM
       ffbbValue: null,
       fbiValue: null,
       fbiOpponentName: null,
+      correction: null,
     });
   }
 

@@ -45,7 +45,7 @@ derogationsRouter.get("/", requireClubRole("club_admin"), async (c) => {
 
   const matchIds = (checks ?? []).map((row) => row.match_id);
   const { data: matches } = matchIds.length
-    ? await supabase.from("matches").select("id, numero, opponent_name, match_datetime, competition_id, team_id").in("id", matchIds)
+    ? await supabase.from("matches").select("id, numero, opponent_name, match_datetime, competition_id, team_id, is_home").in("id", matchIds)
     : { data: [] };
   const matchById = new Map((matches ?? []).map((m) => [m.id, m]));
 
@@ -64,11 +64,23 @@ derogationsRouter.get("/", requireClubRole("club_admin"), async (c) => {
   const { data: teams } = teamIds.length ? await supabase.from("teams").select("id, name").in("id", teamIds) : { data: [] };
   const teamNameById = new Map((teams ?? []).map((t) => [t.id, t.name]));
 
-  // TOUS les matchs déjà programmés du club (pas seulement ceux ayant une
-  // dérogation) — nécessaire pour détecter si la date/heure DEMANDÉE par
-  // une dérogation chevauche le créneau (2h) d'un AUTRE match déjà prévu
-  // (demande du club, 2026-09-26 : "il faut aussi avoir des alertes...").
-  const { data: scheduledMatches } = await supabase.from("matches").select("id, numero, opponent_name, match_datetime").eq("club_id", club.id).neq("status", "cancelled");
+  // TOUS les matchs À DOMICILE déjà programmés du club (pas seulement ceux
+  // ayant une dérogation) — nécessaire pour détecter si la date/heure
+  // DEMANDÉE par une dérogation chevauche le créneau (2h) d'un AUTRE match
+  // déjà prévu (demande du club, 2026-09-26 : "il faut aussi avoir des
+  // alertes..."). UNIQUEMENT les matchs à domicile des deux côtés (demande
+  // du club, 2026-09-27 : "palavas sete c un match a lextérieur. donc il ny
+  // a pas de conflit... si ya 1 match domicile 1 extérieur meme heure c pas
+  // un soucis") — seul un match À DOMICILE occupe une salle DU CLUB, un
+  // match à l'extérieur se joue chez l'adversaire et ne peut jamais entrer
+  // en conflit de créneau avec un autre match du club (même raisonnement
+  // que `venue-conflicts.ts` pour la page Anomalies).
+  const { data: scheduledMatches } = await supabase
+    .from("matches")
+    .select("id, numero, opponent_name, match_datetime, is_home")
+    .eq("club_id", club.id)
+    .eq("is_home", true)
+    .neq("status", "cancelled");
   const otherMatchSlots: OtherMatchSlot[] = (scheduledMatches ?? [])
     .filter((m): m is typeof m & { match_datetime: string } => m.match_datetime !== null)
     .map((m) => ({ id: m.id, numero: m.numero, opponentName: m.opponent_name, matchDatetime: m.match_datetime }));
@@ -76,9 +88,9 @@ derogationsRouter.get("/", requireClubRole("club_admin"), async (c) => {
   const derogations: DerogationListItemDto[] = (checks ?? []).map((row) => {
     const match = matchById.get(row.match_id);
     const scheduleConflict =
-      row.etat && ETATS_SANS_ALERTE_CONFLIT.has(row.etat)
-        ? null
-        : findScheduleConflict(row.date_rencontre_demandee, row.heure_demandee, row.match_id, otherMatchSlots);
+      match?.is_home === true && !(row.etat && ETATS_SANS_ALERTE_CONFLIT.has(row.etat))
+        ? findScheduleConflict(row.date_rencontre_demandee, row.heure_demandee, row.match_id, otherMatchSlots)
+        : null;
     return {
       id: row.id,
       matchId: row.match_id,

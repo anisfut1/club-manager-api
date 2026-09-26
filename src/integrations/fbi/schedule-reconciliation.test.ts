@@ -26,6 +26,10 @@ function ourMatch(overrides: Partial<OurMatchForReconciliation> = {}): OurMatchF
     numero: "3",
     // 2026-09-26T13:30 heure de Paris (CEST, UTC+2) -> 11:30 UTC.
     matchDatetime: "2026-09-26T11:30:00.000Z",
+    // Contient le nom de salle FBI par défaut (`fbiRow().salle`) — voir
+    // `venuesLikelyMatch` : jamais une égalité stricte contre le format
+    // combiné "Nom — Adresse" de `matches.venue_raw_label`.
+    venueRawLabel: "GYMNASE MAURICE C... — 12 rue du Stade, 34200 Sète",
     status: "scheduled",
     ...overrides,
   };
@@ -49,6 +53,7 @@ describe("reconcileFbiSchedule", () => {
         ffbbValue: null,
         fbiValue: "SPORT CLUB DE SETE BASKET - 1 – FRONTIGNAN LA PEYRADE BASKET",
         fbiOpponentName: "SPORT CLUB DE SETE BASKET - 1 – FRONTIGNAN LA PEYRADE BASKET",
+        correction: null,
       },
     ]);
   });
@@ -71,6 +76,7 @@ describe("reconcileFbiSchedule", () => {
         ffbbValue: null,
         fbiValue: null,
         fbiOpponentName: null,
+        correction: null,
       },
     ]);
   });
@@ -80,7 +86,7 @@ describe("reconcileFbiSchedule", () => {
     expect(discrepancies).toEqual([]);
   });
 
-  it("détecte un écart de date/heure entre FBI et FFBB (le cas d'usage central : 'les modifs en avance')", () => {
+  it("détecte un écart de date/heure entre FBI et FFBB (le cas d'usage central : 'les modifs en avance') et calcule la correction FBI à appliquer", () => {
     const discrepancies = reconcileFbiSchedule(
       [fbiRow({ dateRencontre: "27/09/2026", heure: "15:00" })],
       [ourMatch()],
@@ -96,12 +102,52 @@ describe("reconcileFbiSchedule", () => {
         ffbbValue: "26/09/2026 13:30",
         fbiValue: "27/09/2026 15:00",
         fbiOpponentName: "SPORT CLUB DE SETE BASKET - 1 – FRONTIGNAN LA PEYRADE BASKET",
+        // 27/09/2026 15:00 heure de Paris (CEST, UTC+2) -> 13:00 UTC.
+        correction: { matchDatetime: "2026-09-27T13:00:00.000Z" },
       },
     ]);
   });
 
   it("tolère le format d'heure 'HHhMM' de FBI en plus de 'HH:MM'", () => {
     expect(reconcileFbiSchedule([fbiRow({ heure: "13h30" })], [ourMatch()])).toEqual([]);
+  });
+
+  describe("salle (demande du club, 2026-09-27 : 'FBI doit emporter sur FFBB car les vraies infos proviennent de FBI')", () => {
+    it("ne signale rien quand la salle FBI apparaît dans notre libellé combiné 'Nom — Adresse' (jamais une égalité stricte)", () => {
+      expect(reconcileFbiSchedule([fbiRow({ salle: "GYMNASE MAURICE C..." })], [ourMatch()])).toEqual([]);
+    });
+
+    it("tolère la casse et les accents (jamais un faux positif de formatage)", () => {
+      expect(
+        reconcileFbiSchedule(
+          [fbiRow({ salle: "gymnase maurice c..." })],
+          [ourMatch({ venueRawLabel: "Gymnase Maurice C... — 12 rue du Stade" })],
+        ),
+      ).toEqual([]);
+    });
+
+    it("détecte un vrai changement de salle et calcule la correction FBI à appliquer", () => {
+      const discrepancies = reconcileFbiSchedule([fbiRow({ salle: "GYMNASE PIERRE DE COUBERTIN" })], [ourMatch()]);
+
+      expect(discrepancies).toEqual([
+        {
+          matchId: "match-1",
+          divisionCode: "BU13MN23",
+          numero: "3",
+          kind: "mismatch",
+          fieldName: "venue_raw_label",
+          ffbbValue: "GYMNASE MAURICE C... — 12 rue du Stade, 34200 Sète",
+          fbiValue: "GYMNASE PIERRE DE COUBERTIN",
+          fbiOpponentName: "SPORT CLUB DE SETE BASKET - 1 – FRONTIGNAN LA PEYRADE BASKET",
+          correction: { venueRawLabel: "GYMNASE PIERRE DE COUBERTIN" },
+        },
+      ]);
+    });
+
+    it("ne signale jamais rien quand l'un des deux côtés n'a pas de salle connue (FBI seul n'enrichit pas un vide)", () => {
+      expect(reconcileFbiSchedule([fbiRow({ salle: null })], [ourMatch()])).toEqual([]);
+      expect(reconcileFbiSchedule([fbiRow({ salle: "GYMNASE PIERRE DE COUBERTIN" })], [ourMatch({ venueRawLabel: null })])).toEqual([]);
+    });
   });
 
   it("ne compare jamais deux rencontres de divisions différentes portant le même numéro", () => {

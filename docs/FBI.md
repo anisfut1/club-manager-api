@@ -3391,3 +3391,53 @@ les dérogations" — `derogationContainerFound` dira si l'id
 `rechercherDerogationAjax` est confirmé réel ; `rawRowCount` devrait
 enfin refléter la vraie ampleur de la recherche (plusieurs dizaines de
 lignes, jamais 3).
+
+## Revirement du 2026-09-27 : FBI l'emporte désormais sur FFBB (date/heure, salle)
+
+Décision d'origine (20260925120000_fbi_schedule_reconciliation.sql) :
+"FFBB reste la seule source ÉCRITE dans `matches`... jamais une écriture
+automatique sur `matches`" — le rapprochement calendrier FFBB/FBI ne
+faisait que journaliser des anomalies pour correction manuelle côté FFBB.
+
+Le club est revenu explicitement sur cette décision : **"Non, FBI doit
+emporter sur FFBB car les vraies infos proviennent de FBI"**, avec deux
+précisions apportées en clarifiant la demande :
+1. Correction **automatique**, pas un bouton "valider" par anomalie.
+2. Portée : **écart date/heure ET salle** — les deux seuls champs
+   comparés par `reconcileFbiSchedule` (score/forfait restent hors
+   scope, format jamais confirmé). `missing_in_ffbb`/`missing_in_fbi`
+   restent des anomalies MANUELLES — FBI seul n'a pas assez d'info
+   (logo, équipe, engagement FFBB...) pour créer/compléter un match.
+
+**Implémentation** :
+- `schedule-reconciliation.ts` (fonction pure) calcule désormais, pour
+  chaque `mismatch`, une `correction` prête à écrire
+  (`{ matchDatetime }` ou `{ venueRawLabel }`) — jamais pour une anomalie
+  de présence.
+- Salle comparée avec `venuesLikelyMatch` (containment, insensible
+  casse/accents) plutôt qu'une égalité stricte : `matches.venue_raw_label`
+  combine nom ET adresse FFBB (`"Nom — Adresse"`), FBI n'affiche
+  vraisemblablement que le nom (jamais confirmé par une vraie capture) —
+  une égalité stricte aurait fait remonter une anomalie sur quasiment
+  CHAQUE rencontre.
+- `process-reconcile-schedule.ts` applique la correction sur `matches`
+  puis marque la ligne `fbi_schedule_discrepancies` correspondante
+  `resolved_at` + `auto_corrected_at` (nouvelle colonne, migration
+  `20260927010000`) DANS LA MÊME EXÉCUTION — jamais laissée "ouverte"
+  comme si une action restait à faire.
+- Page Anomalies (`GET .../issues`) : affiche en plus des anomalies
+  ouvertes celles auto-corrigées dans les 7 derniers jours (transparence
+  "qu'est-ce qui a changé"), avec un message au passé et
+  `status: "auto_corrected"` (nouvelle valeur, `IssueDtoSchema.status`
+  élargi de `z.literal("open")` — exactement l'extension anticipée par
+  son propre commentaire).
+
+**Bug corrigé au passage** : l'alerte de conflit de créneau (dérogations,
+voir plus bas) comparait TOUS les matchs du club entre eux, y compris
+domicile-vs-extérieur — signalé par le club : "palavas sete c un match a
+lextérieur. donc il ny a pas de conflit... si ya 1 match domicile 1
+extérieur meme heure c pas un soucis". Un match à l'extérieur se joue
+chez l'adversaire, jamais dans une salle du club : `derogations/routes.ts`
+ne compare désormais que les matchs à DOMICILE entre eux (même
+raisonnement que `venue-conflicts.ts`), et ne calcule même plus l'alerte
+pour la dérogation d'un match à l'extérieur.

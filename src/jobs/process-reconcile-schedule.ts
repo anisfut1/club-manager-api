@@ -37,9 +37,15 @@ function discrepancyKey(d: { divisionCode: string | null; numero: string | null;
  * Traite un job `reconcile_schedule` : login FBI (navigateur, voir
  * browser-client.ts), récupère TOUT le calendrier FBI du club, le compare
  * aux rencontres déjà synchronisées FFBB (`reconcileFbiSchedule`, fonction
- * pure), puis journalise les anomalies dans `fbi_schedule_discrepancies` —
- * jamais une écriture sur `matches` (FFBB reste la seule source écrite,
- * voir docs/FBI.md "Rapprochement calendrier FFBB/FBI").
+ * pure), puis journalise les anomalies dans `fbi_schedule_discrepancies`.
+ *
+ * Revirement du 2026-09-27 (demande du club : "FBI doit emporter sur FFBB
+ * car les vraies infos proviennent de FBI") : pour chaque anomalie
+ * `kind: "mismatch"` (date/heure ou salle — les deux seuls champs comparés,
+ * voir schedule-reconciliation.ts), la correction FBI est désormais écrite
+ * directement dans `matches` (jamais pour `missing_in_ffbb`/`missing_in_fbi`,
+ * qui restent des anomalies à traiter manuellement — FBI seul n'a pas assez
+ * d'information pour créer/compléter un match).
  *
  * Un seul job PAR CLUB (jamais par match, contrainte
  * fbi_jobs_unique_pending_reconcile_schedule) — déclenché à la demande
@@ -82,7 +88,7 @@ export async function processReconcileScheduleJob(supabase: DbClient, job: FbiJo
 
     const { data: matches, error: matchesError } = await supabase
       .from("matches")
-      .select("id, numero, match_datetime, status, competition_id")
+      .select("id, numero, match_datetime, venue_raw_label, status, competition_id")
       .eq("club_id", job.club_id);
     if (matchesError) throw new Error(`Lecture des rencontres du club échouée : ${matchesError.message}`);
 
@@ -98,11 +104,28 @@ export async function processReconcileScheduleJob(supabase: DbClient, job: FbiJo
       competitionCode: m.competition_id ? (codeByCompetitionId.get(m.competition_id) ?? null) : null,
       numero: m.numero,
       matchDatetime: m.match_datetime,
+      venueRawLabel: m.venue_raw_label,
       status: m.status,
     }));
 
     const freshDiscrepancies = reconcileFbiSchedule(fbiRows, ourMatches);
     const freshByKey = new Map(freshDiscrepancies.map((d) => [discrepancyKey(d), d]));
+
+    // FBI l'emporte sur FFBB pour un écart date/heure ou salle (demande du
+    // club, 2026-09-27) : applique directement la correction sur `matches`.
+    // Jamais pour missing_in_ffbb/missing_in_fbi (FBI seul n'a pas assez
+    // d'information pour créer/compléter un match) — voir
+    // schedule-reconciliation.ts#ScheduleDiscrepancyCorrection.
+    let matchesCorrected = 0;
+    for (const discrepancy of freshDiscrepancies) {
+      if (discrepancy.kind !== "mismatch" || !discrepancy.matchId || !discrepancy.correction) continue;
+
+      const patch = "matchDatetime" in discrepancy.correction ? { match_datetime: discrepancy.correction.matchDatetime } : { venue_raw_label: discrepancy.correction.venueRawLabel };
+
+      const { error: correctionError } = await supabase.from("matches").update(patch).eq("id", discrepancy.matchId).eq("club_id", job.club_id);
+      if (correctionError) throw new Error(`Correction FBI de la rencontre ${discrepancy.matchId} échouée : ${correctionError.message}`);
+      matchesCorrected += 1;
+    }
 
     const { data: openRows, error: openRowsError } = await supabase
       .from("fbi_schedule_discrepancies")
@@ -121,11 +144,23 @@ export async function processReconcileScheduleJob(supabase: DbClient, job: FbiJo
 
     for (const [key, discrepancy] of freshByKey) {
       const existingId = openByKey.get(key);
+      // Une anomalie "mismatch" vient d'être corrigée automatiquement
+      // ci-dessus (FBI l'emporte) : journalisée puis immédiatement résolue,
+      // jamais laissée "ouverte" comme si elle attendait encore une action
+      // (demande du club, 2026-09-27 — voir `auto_corrected_at`, distingue
+      // ce cas d'une résolution parce que l'anomalie a simplement disparu).
+      const autoCorrected = discrepancy.kind === "mismatch" && discrepancy.correction !== null;
 
       if (existingId) {
         await supabase
           .from("fbi_schedule_discrepancies")
-          .update({ last_seen_at: now, ffbb_value: discrepancy.ffbbValue, fbi_value: discrepancy.fbiValue, fbi_opponent_name: discrepancy.fbiOpponentName })
+          .update({
+            last_seen_at: now,
+            ffbb_value: discrepancy.ffbbValue,
+            fbi_value: discrepancy.fbiValue,
+            fbi_opponent_name: discrepancy.fbiOpponentName,
+            ...(autoCorrected ? { resolved_at: now, auto_corrected_at: now } : {}),
+          })
           .eq("id", existingId);
         updated += 1;
       } else {
@@ -141,6 +176,8 @@ export async function processReconcileScheduleJob(supabase: DbClient, job: FbiJo
           fbi_opponent_name: discrepancy.fbiOpponentName,
           detected_at: now,
           last_seen_at: now,
+          resolved_at: autoCorrected ? now : null,
+          auto_corrected_at: autoCorrected ? now : null,
         });
         created += 1;
       }
@@ -157,7 +194,14 @@ export async function processReconcileScheduleJob(supabase: DbClient, job: FbiJo
       resolved = resolvedIds.length;
     }
 
-    const result = { fbiRowsFound: fbiRows.length, ourMatchesExamined: ourMatches.length, discrepanciesCreated: created, discrepanciesUpdated: updated, discrepanciesResolved: resolved };
+    const result = {
+      fbiRowsFound: fbiRows.length,
+      ourMatchesExamined: ourMatches.length,
+      discrepanciesCreated: created,
+      discrepanciesUpdated: updated,
+      discrepanciesResolved: resolved,
+      matchesCorrected,
+    };
     await supabase.from("fbi_jobs").update({ status: "succeeded", finished_at: new Date().toISOString(), result }).eq("id", job.id);
 
     logInfo("Job reconcile_schedule réussi", { clubId: job.club_id, jobId: job.id, ...result });
