@@ -168,11 +168,17 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
      * état/si le motif a pu être lu) et un échantillon des numéros de
      * `matches` disponibles pour comparaison.
      */
+    // `foundDerogations`/`motifLu`/`pass` par ligne retirés le 2026-09-27
+    // (§ "Timeout Vercel", docs/FBI.md) : `fetchAllDerogations` ne fait
+    // plus qu'une seule passe SANS détail par ligne (voir sa doc), ces
+    // deux champs étaient devenus systématiquement `false`/`null` — le
+    // diagnostic utile (état réellement sélectionné, lignes brutes vs
+    // conservées) reste dans `passDiagnostics`.
     const result = {
       derogationsFound: derogations.length,
       matched,
       unmatched,
-      foundDerogations: derogations.map((d) => ({ numero: d.numero, etat: d.etat, motifLu: d.motif !== null, pass: d.raw.__etatPass ?? null })),
+      foundNumeros: derogations.map((d) => d.numero).sort(),
       matchNumerosDisponibles: Array.from(matchIdByNumero.keys()).sort(),
       passDiagnostics,
     };

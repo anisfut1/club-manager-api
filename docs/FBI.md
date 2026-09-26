@@ -2807,3 +2807,46 @@ aurait continué à passer avec l'ANCIEN sélecteur cassé, puisque le
 `href="#"` deviné à tort le faisait matcher par rôle "link" alors que le
 vrai bouton ne l'est jamais. 25/25 tests passants, suite complète
 (416 tests) inchangée par ailleurs.
+
+### Timeout Vercel — retour à zéro détail dans le bulk (onzième round, 2026-09-27)
+
+`nextPageControl` corrigé, `check_all_derogations` timeout désormais :
+`Vercel Runtime Timeout Error: Task timed out after 300 seconds`. Cause
+évidente une fois la pagination RÉELLEMENT fonctionnelle : le club voit
+80+ dérogations sur 5 pages — `fetchAllDerogations` ouvrait jusqu'ici un
+SECOND ONGLET par ligne pour son détail (`fetchDerogationDetailForRow`,
+round 5) ; 80+ allers-retours séquentiels (nouvel onglet, navigation,
+lecture, fermeture) dépassent largement les 300s d'une Vercel Function,
+là où l'ancienne pagination cassée (~20-23 lignes) restait juste dans les
+temps par accident.
+
+Le club le dit directement : **"Fais le de la meme facon quon a vérifié
+tous les matchs prévus fbi pour comparer a ffbb, ca doit pas bloquer"** —
+`fetchScheduleRows` (rapprochement calendrier FFBB/FBI,
+`reconcile_schedule`) ne fait QUE lire le tableau (`collectAllResultPages`,
+pagination seule, JAMAIS de nouvel onglet) et n'a jamais eu ce problème,
+même sur un calendrier de plusieurs centaines de rencontres.
+
+**Fix** : `fetchAllDerogations` abandonne le détail par ligne, DEUXIÈME
+fois après le round 4 — mais cette fois pour une raison de VOLUME
+(timeout), pas de perte de données. Utilise désormais
+`collectAllResultPages` (générique, déjà partagé avec `fetchScheduleRows`)
+au lieu de `collectAllDerogationsWithDetail` (méthode retirée
+intégralement — plus aucun appelant). Le filtre de la ligne fantôme
+DataTables (numéro `null`) est appliqué directement dans
+`fetchAllDerogations` après normalisation. Le détail par ligne
+(motif/dates demandées/réponse adversaire) reste disponible UNIQUEMENT
+via `fetchDerogationForMatch` (bouton "Vérifier sur FBI", UN SEUL match à
+la fois — jamais un problème de volume, `fetchDerogationDetailForRow`/
+`derogationRowDetailHref`/`fetchDerogationDetailByHref` restent
+utilisées par cette seule méthode). Copie SCSB (page Dérogations, page
+Intégrations FBI) à revérifier : elle affirmait à tort depuis le
+neuvième round que le bulk ramène aussi le détail.
+
+**Test mis à jour** : la fixture force toujours 2 pages (80+ dérogations
+réelles ne sont pas nécessaires en test, la mécanique de pagination est
+déjà couverte) — le test vérifie maintenant que `motif`/
+`dateRencontreDemandee` restent `null` pour toutes les lignes du bulk, et
+qu'AUCUN second onglet n'est ouvert (`session.context.pages()` reste à 1
+tout le parcours). 25/25 tests FBI passants, suite complète (416 tests)
+inchangée par ailleurs.

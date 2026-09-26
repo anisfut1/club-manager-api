@@ -81,7 +81,7 @@ export interface DerogationPassDiagnostic {
   selectedEtatValueAtSubmit: string | null;
   /** Nombre de lignes brutes lues dans le tableau (AVANT filtrage de la ligne fantôme DataTables), toutes pages confondues. */
   rawRowCount: number;
-  /** Nombre de lignes conservées après filtrage (voir `collectAllDerogationsWithDetail`). */
+  /** Nombre de lignes conservées après filtrage de la ligne fantôme DataTables (voir `fetchAllDerogations`). */
   keptRowCount: number;
 }
 
@@ -138,7 +138,7 @@ export class BrowserFbiClient {
    *
    * Best effort : compare deux lectures successives du tableau (même
    * principe que la détection de fin de pagination dans
-   * `collectAllDerogationsWithDetail`) — s'arrête dès que le contenu ne
+   * `collectAllResultPages`) — s'arrête dès que le contenu ne
    * change plus (signe que le rendu est terminé), ou après `maxAttempts`
    * tentatives (recherche réellement vide, ou rendu anormalement lent —
    * ne bloque jamais indéfiniment le job).
@@ -849,6 +849,12 @@ export class BrowserFbiClient {
         await next.first().click();
         await this.settle(page);
         await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+        // Même correctif que `collectAllDerogationsWithDetail` (voir
+        // docs/FBI.md, § "La vraie cause : <a> sans href...") : attend que
+        // le tableau se stabilise après CHAQUE clic "Suivant", jamais un
+        // délai fixe supposé suffisant — cette méthode partage le même
+        // `nextPageControl`/la même mécanique AJAX DataTables.
+        await this.waitForStableDerogationTable(page);
       } catch {
         break;
       }
@@ -935,166 +941,64 @@ export class BrowserFbiClient {
    * l'origine d'un blocage anti-bot par le passé pour `discover_emarque`,
    * voir ProcessFbiJobsButton.tsx côté SCSB).
    *
-   * Ramène aussi le détail (motif/dates demandées/réponse adversaire) de
-   * CHAQUE ligne — troisième tentative, cette fois via `outerHTML` RÉEL
-   * d'une ligne fourni par le club le 2026-09-25 ("ca marche tjr pas les
-   * motifs etc") : voir `collectAllDerogationsWithDetail` pour pourquoi ce
-   * mécanisme (extraction de `href`, nouvel onglet) n'a PAS les défauts des
-   * deux précédents.
-   *
-   * Boucle sur `DEROGATION_ETAT_PASSES` (une seule passe "TT" — voir sa
-   * doc, § "Retour à une seule passe TT" : le club a confirmé que "Tous
-   * les états" couvre bien tous les états réels, la cause des dossiers
-   * manquants était une pagination incomplète, pas le filtre d'état).
-   * Dédoublonnée par numéro dans `collected` (utile si une future preuve
-   * montrait un besoin réel de plusieurs passes, jamais en l'état actuel).
+   * **PAS de détail par ligne ici** (motif/dates demandées/réponse
+   * adversaire) — quatrième revirement (voir docs/FBI.md, "La vraie
+   * pagination" et "Timeout Vercel") : une fois `nextPageControl`
+   * corrigé, la pagination traverse enfin RÉELLEMENT les ~5 pages
+   * (80+ dérogations, confirmées par le club) — mais `collectAllDerogationsWithDetail`
+   * ouvre un second onglet PAR LIGNE pour son détail, et 80+ onglets
+   * séquentiels dépassent largement les 300s de timeout d'une Vercel
+   * Function ("Fais le de la meme facon quon a vérifié tous les matchs
+   * prévus fbi pour comparer a ffbb, ca doit pas bloquer", demande du
+   * club) — `fetchScheduleRows` (rapprochement calendrier FFBB/FBI) ne
+   * fait QUE lire le tableau, jamais de détail par ligne, et n'a jamais eu
+   * ce problème même sur un calendrier de plusieurs centaines de
+   * rencontres. Même principe ici : `collectAllResultPages` (générique,
+   * pagination seule, JAMAIS de nouvel onglet) au lieu de
+   * `collectAllDerogationsWithDetail`. Le détail par ligne reste
+   * disponible via `fetchDerogationForMatch` (un seul match, un seul
+   * aller-retour détail — jamais un problème de volume).
    */
   async fetchAllDerogations(session: BrowserFbiSession): Promise<FbiDerogationRow[]> {
     const { page } = session;
-    const collected = new Map<string, FbiDerogationRow>();
     this.lastDerogationPassDiagnostics = [];
 
-    for (const pass of DEROGATION_ETAT_PASSES) {
-      await this.navigateToDerogationSearchScreen(page);
+    await this.navigateToDerogationSearchScreen(page);
 
-      /**
-       * Relu APRÈS la tentative de sélection dans `navigateToDerogationSearchScreen`
-       * (jamais supposé) — conservé après le retour à une seule passe "TT"
-       * (voir docs/FBI.md, § "Retour à une seule passe TT") : reste utile
-       * pour confirmer, sur preuve, qu'aucune régression future ne fait
-       * échouer silencieusement la sélection d'état (best effort intégral
-       * dans `navigateToDerogationSearchScreen`).
-       */
-      const selectedEtatValueAtSubmit = await page
-        .locator('select[name*="etat" i]')
-        .first()
-        .inputValue()
-        .catch(() => null);
+    const selectedEtatValueAtSubmit = await page
+      .locator('select[name*="etat" i]')
+      .first()
+      .inputValue()
+      .catch(() => null);
 
-      try {
-        const submit = selectors.searchSubmitControl(page).first();
-        if ((await submit.count().catch(() => 0)) > 0) await submit.click();
-        await this.settle(page);
-        await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
-        await this.waitForStableDerogationTable(page);
-      } catch (error) {
-        throw new FbiError(
-          `Recherche de toutes les dérogations du club échouée (état ${pass}) : ${error instanceof Error ? error.message : String(error)}`,
-          "NAVIGATION_FAILED",
-          error,
-        );
-      }
-
-      const { rows: rowsForPass, rawRowCount } = await this.collectAllDerogationsWithDetail(page);
-      this.lastDerogationPassDiagnostics.push({ pass, selectedEtatValueAtSubmit, rawRowCount, keptRowCount: rowsForPass.length });
-
-      for (const row of rowsForPass) {
-        // Marqueur de diagnostic UNIQUEMENT (jamais persisté — voir
-        // process-check-all-derogations.ts, qui ne lit `raw` que pour ça) :
-        // permet de confirmer, sans deviner, que la passe "En Cours" a
-        // RÉELLEMENT tourné et ce qu'elle a trouvé (voir docs/FBI.md,
-        // § "Statut En Cours absent").
-        row.raw.__etatPass = pass;
-        const key = row.numero ?? JSON.stringify(row.raw);
-        collected.set(key, row);
-      }
+    try {
+      const submit = selectors.searchSubmitControl(page).first();
+      if ((await submit.count().catch(() => 0)) > 0) await submit.click();
+      await this.settle(page);
+      await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+      await this.waitForStableDerogationTable(page);
+    } catch (error) {
+      throw new FbiError(
+        `Recherche de toutes les dérogations du club échouée : ${error instanceof Error ? error.message : String(error)}`,
+        "NAVIGATION_FAILED",
+        error,
+      );
     }
 
-    return Array.from(collected.values());
-  }
+    const rawRows = await this.collectAllResultPages(page);
+    // Filtre la ligne fantôme DataTables ("Aucune donnée disponible dans
+    // le tableau", voir docs/FBI.md) — une VRAIE dérogation a toujours un
+    // numéro de rencontre, jamais `null`.
+    const normalized = rawRows.map(normalizeDerogationRow).filter((row) => row.numero !== null);
 
-  /**
-   * Parcourt toutes les pages du tableau de résultats de dérogations
-   * (même pagination que `collectAllResultPages`), et enrichit CHAQUE ligne
-   * avec son détail — troisième tentative après deux échecs (voir
-   * docs/FBI.md, "Incident et revert") :
-   *
-   * 1. Cliquer la ligne + `page.goBack()` : fiable pour UNE ligne
-   *    (`fetchDerogationForMatch`), mais `goBack()` ne restaure pas le
-   *    tableau injecté en AJAX pour une ligne suivante (page vide).
-   * 2. Reconstruire toute la recherche après chaque ligne : a fait tomber un
-   *    lot de ~20 dérogations à 3 trouvées en production (perte de données).
-   *
-   * Le HTML RÉEL d'une ligne de résultat (fourni par le club le 2026-09-25,
-   * outerHTML d'un vrai `<tr>`) montre que CHAQUE cellule de donnée
-   * enveloppe son texte dans un vrai `<a href="afficherDerogation.fbi?
-   * idDerogation=...&idRencontre=0">` — un lien HTML statique, jamais un
-   * `onclick`/gestionnaire JS. Lire cet `href` (`derogationRowDetailHref`)
-   * ne touche JAMAIS la page principale (pas de clic, pas de navigation,
-   * pas d'interception de route) : le détail est ouvert dans un second
-   * onglet séparé (`fetchDerogationDetailByHref`), lu, fermé — le tableau
-   * de résultats et sa pagination restent intacts pendant tout le
-   * parcours, contrairement aux deux tentatives précédentes.
-   */
-  private async collectAllDerogationsWithDetail(page: Page): Promise<{ rows: FbiDerogationRow[]; rawRowCount: number }> {
-    const MAX_PAGES = 50;
-    const collected: FbiDerogationRow[] = [];
-    let rawRowCount = 0;
-    let previousSignature: string | null = null;
+    this.lastDerogationPassDiagnostics.push({
+      pass: "tousLesEtats",
+      selectedEtatValueAtSubmit,
+      rawRowCount: rawRows.length,
+      keptRowCount: normalized.length,
+    });
 
-    for (let i = 0; i < MAX_PAGES; i += 1) {
-      const rows = await selectors.resultsTableGenericRows(page).catch(() => null);
-      const signature = JSON.stringify(rows);
-      if (signature === previousSignature) break;
-      previousSignature = signature;
-
-      if (rows) {
-        rawRowCount += rows.length;
-        for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
-          const normalized = normalizeDerogationRow(rows[rowIndex]);
-
-          /**
-           * Constaté en production le 2026-09-26 (§ "Statut En Cours absent",
-           * docs/FBI.md) : une ligne fantôme (`numero: null, etat: null`,
-           * `raw: {}`) apparaît systématiquement parmi les résultats — la
-           * ligne "Aucune donnée disponible dans le tableau" que DataTables
-           * insère dans `<tbody>` quand une recherche/page ne renvoie AUCUN
-           * résultat (ex : la passe "En Cours" quand aucune dérogation
-           * n'est actuellement en cours) a un unique `<td colspan="N">`, que
-           * `resultsTableGenericRows` (aligné sur l'INDEX de colonne, jamais
-           * son libellé) associe à tort à l'en-tête vide de la 1ère colonne
-           * (checkbox) — ignoré (`if (!header) continue`), d'où un `record`
-           * entièrement vide. Une VRAIE dérogation a TOUJOURS un numéro de
-           * rencontre — jamais `null` — donc jamais confondue avec ce cas.
-           * Sans ce filtre, cette ligne fantôme gonflait `derogationsFound`/
-           * `unmatched` (voir `fbi_jobs.result`) sans jamais correspondre à
-           * une vraie dérogation.
-           */
-          if (normalized.numero === null) continue;
-
-          const detail = await this.fetchDerogationDetailForRow(page, rowIndex);
-          collected.push(detail ? { ...normalized, ...detail } : normalized);
-        }
-      }
-
-      const next = selectors.nextPageControl(page);
-      if ((await next.count().catch(() => 0)) === 0) break;
-      if (!(await next.first().isEnabled().catch(() => false))) break;
-
-      try {
-        await next.first().click();
-        await this.settle(page);
-        await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
-        /**
-         * "si si il prend tout en compte le tous les états, c juste que ya
-         * 5 pages à prendre en compte" (club, 2026-09-27) — le VRAI bug :
-         * `resultsTableGenericRows` était lu juste après ce clic AVANT que
-         * la page suivante ait fini de se (re)dessiner (même mécanique que
-         * la lecture prématurée après la soumission de recherche, voir
-         * `waitForStableDerogationTable`), et la vérification de fin de
-         * pagination (`signature === previousSignature` en haut de la
-         * boucle) pouvait alors comparer un état TRANSITOIRE (encore les
-         * lignes de la page précédente, ou une page partiellement
-         * redessinée) à la page précédente RÉELLE — les jugeant identiques
-         * à tort, arrêtant la pagination bien avant la dernière page.
-         */
-        await this.waitForStableDerogationTable(page);
-      } catch {
-        break;
-      }
-    }
-
-    return { rows: collected, rawRowCount };
+    return normalized;
   }
 
   /**
