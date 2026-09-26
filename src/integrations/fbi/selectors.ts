@@ -497,6 +497,33 @@ export function nextPageControl(page: Page): Locator {
 }
 
 /**
+ * Sélecteur "Afficher X entrées" (contrôle de longueur de page) de
+ * DataTables — l'`id` réel du bouton "Suivant" confirmé par le club le
+ * 2026-09-27 (`id="rechercherDerogationAjax_next"`) suit la convention
+ * DataTables `<idTable>_next`/`<idTable>_previous`/`<idTable>_length`/
+ * `<idTable>_filter`/`<idTable>_info` — CODÉE EN DUR dans la librairie
+ * DataTables elle-même (jamais personnalisée par FBI), donc un `<select
+ * name="rechercherDerogationAjax_length">` existe très probablement à
+ * côté, jamais une supposition par analogie hasardeuse cette fois.
+ *
+ * Constaté en production le 2026-09-27 (§ "Toujours incomplet malgré 5
+ * pages", docs/FBI.md) : `pageCount` confirme bien 5 pages RÉELLEMENT
+ * lues, mais `rawRowCount` (97) très supérieur à `keptRowCount` après
+ * dédoublonnage (51) — signe d'une pagination cliquée "Suivant" côté
+ * serveur qui RE-TRIE/RE-FENÊTRE le jeu de résultats à chaque page
+ * (instabilité classique de la pagination "offset" côté serveur d'un tri
+ * non parfaitement déterministe), faisant apparaître certaines lignes
+ * plusieurs fois et probablement en sauter d'autres. Choisir la plus
+ * grande longueur de page disponible (ou "Tous"/`-1`) affiche TOUT en une
+ * seule page, contournant entièrement l'instabilité de la pagination —
+ * voir `BrowserFbiClient` (browser-client.ts), qui l'essaie en best
+ * effort avant de recourir à `nextPageControl`.
+ */
+export function resultsLengthSelect(page: Page): Locator {
+  return page.locator('select[name$="_length" i], select[id$="_length" i], select[name*="_length" i]').first();
+}
+
+/**
  * Checkbox "non joué" (résultat pas encore saisi) du formulaire de
  * recherche — confirmé en production le 2026-09-24 (§ "Dix-neuvième
  * déclenchement", docs/FBI.md, dump complet des champs) : COCHÉE par

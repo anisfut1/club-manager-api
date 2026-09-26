@@ -2893,3 +2893,126 @@ encore trop courte" (pageCount bas) ou "pages relues sans avancer"
 (pageCount élevé mais count final toujours sous 82) — deux causes
 différentes, deux corrections différentes, aucune à deviner avant d'avoir
 ce chiffre.
+
+### Pagination "Suivant" instable côté serveur — maximiser la longueur de page (treizième round, 2026-09-27)
+
+Le diagnostic du round précédent a payé : `passDiagnostics[0]` en
+production donne `{ pageCount: 5, rawRowCount: 97, keptRowCount: 51 }`.
+`pageCount: 5` confirme que la pagination avance RÉELLEMENT sur 5 pages
+distinctes (jamais la même page relue en boucle, hypothèse éliminée) —
+mais `rawRowCount: 97` pour seulement `keptRowCount: 51` après
+déduplication par numéro signifie que ~46 lignes sont des DOUBLONS de
+lignes déjà vues sur une page précédente. Signe classique d'une
+pagination "offset" côté serveur dont le tri n'est pas parfaitement
+déterministe : entre deux clics "Suivant", le jeu de résultats se
+retrie/se refenêtre légèrement, faisant réapparaître certaines lignes
+(déjà vues) et probablement en sautant d'autres (jamais vues du tout) —
+cohérent avec le club qui reste bloqué à 51/82 malgré 5 pages
+parcourues.
+
+**Fix** : plutôt que de continuer à corriger le mécanisme "Suivant" lui-
+même (déjà deux rounds dessus), contourner entièrement la pagination —
+DataTables expose un contrôle "Afficher X entrées" (`<select
+id="<idTable>_length">`, convention CODÉE EN DUR dans la librairie,
+jamais personnalisée par FBI, même principe que `<idTable>_next` du
+dixième round) avec une option `-1` ("Tous") qui affiche TOUT en une
+seule page — plus de découpage serveur en pages, donc plus d'instabilité
+possible. `selectors.resultsLengthSelect` (`select[name$="_length"
+i], select[id$="_length" i]`) + `BrowserFbiClient.tryMaximizeResultsPageLength`
+(nouveau, best effort) choisissent la plus grande valeur disponible
+(`-1` en priorité, sinon la plus grande valeur numérique) et
+sélectionnent cette option AVANT de commencer la lecture — la pagination
+"Suivant" de `collectAllResultPages` ne sert plus que de repli si ce
+contrôle est absent/inefficace sur une page FBI qui ne l'aurait pas.
+
+**Bug découvert en écrivant le test** (30s de timeout sur les 3 tests
+`fetchAllDerogations`, jamais en production — seulement en test avant ce
+commit) : une fois "Tous" sélectionné, DataTables MASQUE ses contrôles
+de pagination (`.dataTables_paginate { display: none }`, reproduit dans
+la fixture) — mais les `<a>` "Précédent"/"Suivant" restent PRÉSENTS dans
+le DOM (juste invisibles), donc `nextPageControl(page).count()` ET
+`isEnabled()` restent vrais. `collectAllResultPages` tentait alors de
+CLIQUER sur ce bouton invisible — l'actionabilité Playwright (visible ET
+stable ET activé) n'est jamais remplie pour un élément cliqué mais
+masqué, bloquant chaque test pendant les 30000ms du timeout
+d'actionabilité par défaut. Fix : vérifier explicitement `isVisible()`
+avant `isEnabled()`/le clic, jamais juste présence + activé — la même
+règle vaudra pour tout futur contrôle DataTables masqué plutôt que
+supprimé du DOM.
+
+### Le détail redevient nécessaire — cinquième revirement (quatorzième round, 2026-09-27)
+
+Constat club immédiat une fois le round précédent en production : **"gros
+probleme, on récupère plus le demandeur le motif, lheure la date etc"**.
+Vérification directe en base (`fbi_derogation_checks`, lecture seule) :
+`date_rencontre`/`heure` (colonnes du TABLEAU de résultats, jamais retirées)
+étaient bien renseignées — mais `demandeur`/`motif`/
+`date_rencontre_demandee`/`heure_demandee`/`adversaire`/`date_reponse`/
+`acceptation`/`motif_refus` (colonnes de DÉTAIL, une page par ligne)
+étaient TOUTES `null` pour les 51 lignes connues, sans exception. Cause
+directe : le onzième round (timeout Vercel) avait retiré tout détail par
+ligne du bulk, remplacé `fetchAllDerogations` par la même mécanique
+"liste seule" que `fetchScheduleRows` — un compromis délibéré à l'époque
+("`ca doit pas bloquer`"), mais qui casse l'affichage de
+`DerogationsList.tsx` (SCSB) pour CHAQUE dérogation, jamais seulement au
+clic "Vérifier sur FBI" d'un match précis. Un échange non voulu par le
+club : le compromis n'était acceptable QUE tant qu'il restait implicite,
+jamais annoncé comme "plus de détail du tout" à l'utilisateur final.
+
+**Pourquoi le détail redevient praticable maintenant** : le onzième round
+avait retiré le détail par ligne à cause du VOLUME (80+ nouveaux onglets
+séquentiels) — mais le treizième round (ci-dessus) élimine l'essentiel du
+temps qui restait après ça, en ramenant la recherche à UNE SEULE page
+(`tryMaximizeResultsPageLength`) plutôt que 5 pages avec un clic
+"Suivant" à plusieurs secondes chacun. Le budget de temps restant pour le
+détail par ligne est donc bien plus large qu'au onzième round.
+
+**Fix** : `collectAllDerogationPages` (nouvelle méthode, remplace l'usage
+de `collectAllResultPages` dans `fetchAllDerogations` — `fetchScheduleRows`
+garde `collectAllResultPages`, INCHANGÉ, jamais concerné par le détail)
+reprend la mécanique de pagination du treizième round, mais enrichit
+CHAQUE ligne de son détail (`fetchDerogationDetailForRow`, même
+mécanisme qu'utilise déjà `fetchDerogationForMatch` depuis le
+cinquième round — nouvel onglet, lu, refermé) avant de passer à la page
+suivante. **Jamais un retour pur et simple au onzième round sans
+protection** : borné explicitement par `derogationDetailBudgetMs`
+(nouvelle option du constructeur, défaut 220 000 ms sur les 300 000 ms
+Vercel — 80s de marge pour le lancement du navigateur, le login, la
+recherche elle-même et l'écriture en base, jamais mesurés depuis cet
+environnement donc volontairement généreux). Dès que ce budget est
+dépassé, les lignes restantes (page courante ET pages suivantes le cas
+échéant) gardent leurs champs de détail à `null` plutôt que de risquer un
+nouveau dépassement dur du timeout Vercel — jamais une ligne perdue pour
+autant, juste son détail (le tableau de résultats — numéro/état/dates —
+reste la source de vérité minimale, toujours renseigné).
+
+**Filet de sécurité côté écriture** (`processCheckAllDerogationsJob`) :
+avant cette exécution, `fbi_derogation_checks` était TOUJOURS écrasé avec
+les valeurs de détail de `fetchAllDerogations`, `null` ou pas — un
+détail déjà connu d'une exécution précédente (`fetchDerogationForMatch`,
+ou un `check_all_derogations` antérieur qui avait eu le temps de le
+lire) pouvait donc être ÉCRASÉ à `null` par une exécution qui, elle,
+n'a pas eu ce temps (budget dépassé, best effort). C'est exactement ce
+qui s'est produit ici : le round précédent écrasait tout systématiquement.
+Corrigé : `processCheckAllDerogationsJob` lit maintenant le détail déjà
+connu du club (une seule requête, avant la boucle d'upsert) et ne
+l'écrase JAMAIS avec `null` — seulement avec une vraie valeur fraîche.
+Les champs TOUJOURS fiables depuis le tableau de résultats (état, dates,
+domicile/visiteur) restent eux systématiquement rafraîchis, jamais de
+repli sur l'ancien.
+
+**Tests** : le test "ne ramène PAS le détail" du onzième round est
+inversé (le serveur de test route par chemin seul, donc chaque ligne
+ramène le même détail fixe de la fixture `afficher-derogation.html` —
+suffisant pour prouver que le détail est bien lu). Nouveau test dédié à
+`derogationDetailBudgetMs: 0` : confirme que budget épuisé ⇒ aucun
+onglet ouvert, détail `null`, mais le tableau de résultats (numéro/état)
+reste intact. 26/26 tests FBI passants, suite complète (417 tests)
+inchangée par ailleurs.
+
+**Prochaine vérification en production** : re-déclencher "Vérifier
+toutes les dérogations", puis lire `fbi_derogation_checks` — `demandeur`/
+`motif`/etc. devraient être renseignés pour les ~51-82 lignes (dans la
+limite du budget de 220s), et `fbi_jobs.result.passDiagnostics[0]`
+devrait montrer `pageCount: 1` (ou très bas) avec `rawRowCount ===
+keptRowCount` (plus de doublons dus à la pagination instable).

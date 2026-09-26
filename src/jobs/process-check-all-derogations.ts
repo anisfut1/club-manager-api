@@ -92,6 +92,28 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
 
     const matchIdByNumero = new Map((matches ?? []).filter((m) => m.numero).map((m) => [m.numero as string, m.id]));
 
+    /**
+     * Détail déjà connu d'une exécution précédente (`processCheckDerogationJob`,
+     * le bouton "Vérifier sur FBI" d'un match précis, OU un précédent
+     * `check_all_derogations` qui avait eu le temps de lire ce détail) —
+     * lu ICI, une seule fois pour tout le club, jamais une requête par
+     * ligne dans la boucle ci-dessous. Sert de FILET DE SÉCURITÉ pour
+     * `derogationDetailBudgetMs` (browser-client.ts) : si CETTE exécution
+     * n'a pas eu le temps de lire le détail d'une ligne (budget dépassé,
+     * best effort), l'upsert ne doit jamais ÉCRASER un détail déjà connu
+     * avec `null` — une régression déjà vécue en production le
+     * 2026-09-27 ("on récupère plus le demandeur le motif...", après le
+     * round précédent qui avait retiré tout détail par ligne DU LOT et
+     * l'écrasait donc systématiquement à `null`, y compris pour des
+     * lignes dont le détail avait été lu par ailleurs).
+     */
+    const { data: existingChecks, error: existingChecksError } = await supabase
+      .from("fbi_derogation_checks")
+      .select("match_id, demandeur, motif, date_rencontre_demandee, heure_demandee, adversaire, date_reponse, acceptation, motif_refus")
+      .eq("club_id", job.club_id);
+    if (existingChecksError) throw new Error(`Lecture du détail de dérogation déjà connu échouée : ${existingChecksError.message}`);
+    const existingByMatchId = new Map((existingChecks ?? []).map((c) => [c.match_id, c]));
+
     const now = new Date().toISOString();
     let matched = 0;
     let unmatched = 0;
@@ -107,6 +129,8 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
         continue;
       }
 
+      const existing = existingByMatchId.get(matchId);
+
       const { error: upsertError } = await supabase.from("fbi_derogation_checks").upsert(
         {
           club_id: job.club_id,
@@ -119,14 +143,19 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
           heure: derogation.heure,
           domicile: derogation.domicile,
           visiteur: derogation.visiteur,
-          demandeur: derogation.demandeur,
-          motif: derogation.motif,
-          date_rencontre_demandee: derogation.dateRencontreDemandee,
-          heure_demandee: derogation.heureDemandee,
-          adversaire: derogation.adversaire,
-          date_reponse: derogation.dateReponse,
-          acceptation: derogation.acceptation,
-          motif_refus: derogation.motifRefus,
+          // Champs de DÉTAIL uniquement (jamais etat/dates ci-dessus, TOUJOURS
+          // connus de façon fiable depuis le tableau de résultats) : garde la
+          // valeur déjà connue en base si CETTE exécution n'a pas pu lire le
+          // détail de cette ligne (budget de temps dépassé, voir la note
+          // au-dessus de `existingByMatchId`).
+          demandeur: derogation.demandeur ?? existing?.demandeur ?? null,
+          motif: derogation.motif ?? existing?.motif ?? null,
+          date_rencontre_demandee: derogation.dateRencontreDemandee ?? existing?.date_rencontre_demandee ?? null,
+          heure_demandee: derogation.heureDemandee ?? existing?.heure_demandee ?? null,
+          adversaire: derogation.adversaire ?? existing?.adversaire ?? null,
+          date_reponse: derogation.dateReponse ?? existing?.date_reponse ?? null,
+          acceptation: derogation.acceptation ?? existing?.acceptation ?? null,
+          motif_refus: derogation.motifRefus ?? existing?.motif_refus ?? null,
           checked_at: now,
           updated_at: now,
         },

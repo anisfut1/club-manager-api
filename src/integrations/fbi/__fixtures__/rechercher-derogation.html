@@ -36,12 +36,27 @@
          intermédiaire qui avait cru "Tous les états" (TT) incomplet pour
          "En Cours" et "Acceptée par les deux associations sportives") —
          `TT` couvre RÉELLEMENT tous les états (sauf "A Créer"), la vraie
-         cause était une PAGINATION incomplète. `PAGE_SIZE = 2` ci-dessous
-         force artificiellement plusieurs pages (3 rencontres non-"A
-         Créer" → 2 pages) pour reproduire fidèlement ce scénario en test,
-         avec une VRAIE pagination "Suivant"/"Précédent" cliquable (jamais
-         `href="#"` inerte) — voir `collectAllDerogationsWithDetail`
+         cause était une PAGINATION incomplète. `PAGE_SIZE` par défaut à 2
+         ci-dessous force artificiellement plusieurs pages (4 rencontres
+         non-"A Créer" → 2 pages) pour reproduire fidèlement ce scénario en
+         test, avec une VRAIE pagination "Suivant"/"Précédent" cliquable
+         (jamais `href="#"` inerte) — voir `collectAllResultPages`
          (browser-client.ts) et `waitForStableDerogationTable`.
+
+      5. `<select id="getTableauDerogation_length">` — contrôle "Afficher X
+         entrées" DataTables, dont l'`id` suit la convention CODÉE EN DUR
+         `<idTable>_length` (jamais personnalisée par FBI, voir
+         `selectors.resultsLengthSelect`) : le club a ensuite signalé
+         (2026-09-27) que la pagination "Suivant" traversait bien 5 pages
+         RÉELLES mais avec de nombreux doublons — instabilité classique
+         d'une pagination "offset" côté serveur. `tryMaximizeResultsPageLength`
+         (browser-client.ts) choisit désormais la plus grande option (`-1`,
+         "Tous") pour afficher TOUT en une seule page, contournant cette
+         instabilité — ce que ce contrôle permet de tester ici : le test de
+         pagination multi-page vérifie maintenant `pageCount: 1` (une seule
+         lecture, `-1` sélectionné automatiquement), la pagination "Suivant"
+         ci-dessus ne servant plus que de repli si ce contrôle est
+         absent/inefficace sur une autre page FBI.
     -->
     <form id="rechercherDerogation">
       <div class="row">
@@ -72,6 +87,17 @@
     </form>
 
     <div id="tableauResultats" style="display:none">
+      <div class="dataTables_length">
+        <label
+          >Afficher
+          <select name="getTableauDerogation_length" id="getTableauDerogation_length" onchange="onLengthChange()">
+            <option value="2">2</option>
+            <option value="10">10</option>
+            <option value="-1">Tous</option>
+          </select>
+          entrées</label
+        >
+      </div>
       <table id="getTableauDerogation">
         <thead>
           <tr>
@@ -155,11 +181,18 @@
         },
       ];
 
-      // Force artificiellement plusieurs pages sous "Tous les états" (3
-      // rencontres non-"A Créer" → 2 pages) — voir la note 4 plus haut.
-      const PAGE_SIZE = 2;
+      // Taille de page dynamique — pilotée par #getTableauDerogation_length,
+      // "2" par défaut pour forcer artificiellement plusieurs pages sous
+      // "Tous les états" (voir note 4) tant que le code ne l'a pas changée
+      // (voir note 5 : tryMaximizeResultsPageLength sélectionne "-1" dès la
+      // première recherche, ramenant tout sur une seule page).
       let lastFilteredRows = [];
       let currentPage = 0;
+
+      function currentPageSize() {
+        const raw = Number(document.getElementById("getTableauDerogation_length").value);
+        return raw === -1 ? Infinity : raw;
+      }
 
       function rechercherDerogationAjax() {
         const etat = document.querySelector('select[name*="etat" i]').value;
@@ -177,8 +210,14 @@
         renderCurrentPage();
       }
 
+      function onLengthChange() {
+        currentPage = 0;
+        renderCurrentPage();
+      }
+
       function changerPage(delta) {
-        const maxPage = Math.max(0, Math.ceil(lastFilteredRows.length / PAGE_SIZE) - 1);
+        const pageSize = currentPageSize();
+        const maxPage = Math.max(0, Math.ceil(lastFilteredRows.length / pageSize) - 1);
         const next = currentPage + delta;
         if (next < 0 || next > maxPage) return false;
         currentPage = next;
@@ -187,10 +226,17 @@
       }
 
       function renderCurrentPage() {
-        const rows = lastFilteredRows.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
+        const pageSize = currentPageSize();
+        const maxPage = Math.max(0, Math.ceil(lastFilteredRows.length / pageSize) - 1);
+        const rows = lastFilteredRows.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
         const tbody = document.querySelector("#getTableauDerogation tbody");
         tbody.innerHTML = "";
         document.getElementById("paginateCurrentPage").textContent = String(currentPage + 1);
+        // DataTables masque ses contrôles "Précédent/Suivant" quand tout
+        // tient sur une seule page — reproduit ici pour rester fidèle
+        // (voir note 5) : évite un clic "Suivant" inutile sur un contrôle
+        // qui, sur le vrai FBI, n'existerait alors simplement pas.
+        document.querySelector(".dataTables_paginate").style.display = maxPage > 0 ? "" : "none";
 
         if (rows.length === 0) {
           // Reproduit la ligne "Aucune donnée disponible dans le tableau"

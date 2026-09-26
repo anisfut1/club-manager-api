@@ -432,27 +432,27 @@ describe("BrowserFbiClient.fetchAllDerogations ('je veux un bouton global qui ch
     await client.closeSession(session);
   });
 
-  it("traverse TOUTES les pages de résultats sous UNE SEULE passe 'Tous les états' — 'si si il prend tout en compte le tous les états, c juste que ya 5 pages à prendre en compte' (correction du club, 2026-09-27, après un round intermédiaire qui avait ajouté à tort une passe par état alors que la vraie cause était une pagination incomplète, voir docs/FBI.md § 'Retour à une seule passe TT')", async () => {
+  it("affiche TOUTES les entrées sur une seule page via le contrôle de longueur DataTables ('-1'/'Tous') plutôt que de compter sur la pagination 'Suivant' — la fixture force 2 pages par défaut (PAGE_SIZE=2), preuve que tryMaximizeResultsPageLength contourne bien la pagination (constaté en production le 2026-09-27 : 'Suivant' traverse RÉELLEMENT 5 pages mais avec des doublons dus à une pagination serveur instable, voir docs/FBI.md § 'Toujours incomplet malgré 5 pages')", async () => {
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
     const session = await client.login({ username: "club1234", password: "secret" });
 
     const derogations = await client.fetchAllDerogations(session);
 
-    // La fixture force 2 pages (PAGE_SIZE=2, 4 rencontres non-"A Créer") —
-    // les 4 doivent être trouvées, y compris celles de la 2ᵉ page ("9820"
-    // et "16"), jamais seulement celles de la 1ère.
+    // Les 4 rencontres non-"A Créer" doivent toutes ressortir, y compris
+    // "9820" et "16" (qui seraient sur une 2ᵉ page si la longueur de page
+    // n'était pas maximisée en premier).
     expect(derogations.map((d) => d.numero).sort()).toEqual(["1", "16", "9578", "9820"]);
 
     const diagnostics = client.getLastDerogationPassDiagnostics();
     expect(diagnostics).toHaveLength(1);
-    // Aucune ligne fantôme ni page perdue en route : lignes brutes lues =
-    // lignes conservées = les 4 vraies dérogations, toutes pages confondues.
-    expect(diagnostics[0]).toMatchObject({ pass: "tousLesEtats", rawRowCount: 4, keptRowCount: 4, pageCount: 2 });
+    // pageCount: 1 — une seule lecture, jamais besoin de cliquer "Suivant"
+    // (l'option "-1"/"Tous" a été sélectionnée automatiquement).
+    expect(diagnostics[0]).toMatchObject({ pass: "tousLesEtats", rawRowCount: 4, keptRowCount: 4, pageCount: 1 });
 
     await client.closeSession(session);
   });
 
-  it("ne ramène PAS le détail par ligne (motif/dates demandées) et n'ouvre JAMAIS de nouvel onglet — quatrième revirement après le timeout Vercel de 300s constaté en production sur 80+ dérogations (\"ca doit pas bloquer\", demande du club) : lit uniquement le tableau, même principe que fetchScheduleRows, jamais de détail en masse", async () => {
+  it("ramène le détail par ligne (motif/dates demandées/demandeur) pour CHAQUE dérogation — cinquième revirement (régression production 2026-09-27 : \"on récupère plus le demandeur le motif, l'heure la date etc\" après le round précédent qui avait retiré tout détail du lot) : ouvre un nouvel onglet PAR LIGNE, refermé aussitôt après lecture, jamais laissé ouvert sur la page principale", async () => {
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
     const session = await client.login({ username: "club1234", password: "secret" });
 
@@ -460,11 +460,39 @@ describe("BrowserFbiClient.fetchAllDerogations ('je veux un bouton global qui ch
 
     expect(derogations).toHaveLength(4);
     for (const derogation of derogations) {
-      expect(derogation.motif).toBeNull();
-      expect(derogation.dateRencontreDemandee).toBeNull();
+      // Le serveur de test route par CHEMIN seul (query string ignorée,
+      // voir setRoute plus haut) — chaque ligne ramène donc le MÊME détail
+      // fixe (fixture afficher-derogation.html), suffisant pour prouver
+      // que le détail est bien lu (jamais resté à `null` comme au round
+      // précédent).
+      expect(derogation.motif).toBe("Gymnase indisponible ce jour-là");
+      expect(derogation.demandeur).toBe("Domicile");
+      expect(derogation.dateRencontreDemandee).toBe("03/10/2026");
+      expect(derogation.heureDemandee).toBe("20:00");
     }
-    // Jamais quitté rechercherDerogation.fbi — aucun clic, aucun onglet.
+    // Jamais quitté rechercherDerogation.fbi sur la page PRINCIPALE — le
+    // détail de chaque ligne est lu dans un onglet SÉPARÉ, refermé
+    // aussitôt après (voir fetchDerogationDetailByHref), jamais laissé
+    // ouvert une fois toutes les lignes traitées.
     expect(session.page.url()).toContain("rechercherDerogation.fbi");
+    expect(session.context.pages()).toHaveLength(1);
+
+    await client.closeSession(session);
+  });
+
+  it("respecte derogationDetailBudgetMs — une fois le budget de détail dépassé, les lignes restantes gardent leurs champs de détail à null plutôt que de risquer un dépassement du timeout Vercel de 300s (\"ca doit pas bloquer\", demande du club) ; le tableau de résultats (numéro/état/dates) reste lui INCHANGÉ, jamais amputé", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50, derogationDetailBudgetMs: 0 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    const derogations = await client.fetchAllDerogations(session);
+
+    expect(derogations.map((d) => d.numero).sort()).toEqual(["1", "16", "9578", "9820"]);
+    for (const derogation of derogations) {
+      expect(derogation.motif).toBeNull();
+      expect(derogation.demandeur).toBeNull();
+    }
+    // Budget épuisé dès le départ : aucun onglet de détail ne doit même
+    // avoir été ouvert.
     expect(session.context.pages()).toHaveLength(1);
 
     await client.closeSession(session);

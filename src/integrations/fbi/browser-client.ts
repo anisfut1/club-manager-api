@@ -73,6 +73,27 @@ export interface BrowserFbiClientOptions {
   browser: Browser;
   /** Délai après une action de navigation, avant de considérer la page stabilisée (ms). Les apps Java legacy type FBI n'utilisent pas toujours des transitions détectables par networkidle. */
   navigationSettleMs?: number;
+  /**
+   * Budget de temps (ms) alloué à `fetchAllDerogations` pour le détail
+   * PAR LIGNE (demandeur/motif/dates demandées/réponse adversaire) —
+   * cinquième revirement (voir docs/FBI.md, § "Le détail redevient
+   * nécessaire") : "on récupère plus le demandeur le motif, l'heure la
+   * date etc" (constat club, 2026-09-27) après le quatrième revirement qui
+   * avait retiré tout détail par ligne du lot pour éviter le timeout
+   * Vercel de 300s. Le détail reste indispensable à l'affichage
+   * (`DerogationsList.tsx` côté SCSB) — mais 80+ nouveaux onglets
+   * séquentiels dépassaient largement 300s. Maintenant que
+   * `tryMaximizeResultsPageLength` ramène tout sur UNE SEULE page (plus de
+   * 5 clics "Suivant" à ~2-6s chacun), le budget restant pour le détail
+   * est bien plus large — mais reste borné explicitement : dès que ce
+   * budget est dépassé, les lignes restantes gardent leurs champs de
+   * détail à `null` (comme avant ce round) plutôt que de risquer un
+   * timeout dur. Défaut 220s sur les 300s Vercel — 80s de marge pour le
+   * lancement du navigateur, le login, la recherche elle-même et l'écriture
+   * en base (voir `processCheckAllDerogationsJob`), jamais mesurés depuis
+   * cet environnement (réseau FBI bloqué), donc volontairement généreux.
+   */
+  derogationDetailBudgetMs?: number;
 }
 
 export interface DerogationPassDiagnostic {
@@ -91,6 +112,7 @@ export class BrowserFbiClient {
   private readonly baseUrl: string;
   private readonly browser: Browser;
   private readonly navigationSettleMs: number;
+  private readonly derogationDetailBudgetMs: number;
 
   /**
    * Diagnostic de la DERNIÈRE `fetchAllDerogations` — jamais fait partie
@@ -110,6 +132,7 @@ export class BrowserFbiClient {
     this.baseUrl = options.baseUrl;
     this.browser = options.browser;
     this.navigationSettleMs = options.navigationSettleMs ?? 500;
+    this.derogationDetailBudgetMs = options.derogationDetailBudgetMs ?? 220_000;
   }
 
   getLastDerogationPassDiagnostics(): readonly DerogationPassDiagnostic[] {
@@ -825,13 +848,68 @@ export class BrowserFbiClient {
   }
 
   /**
+   * Choisit la plus grande longueur de page disponible (ou "Tous"/`-1`)
+   * sur le contrôle "Afficher X entrées" de DataTables (voir
+   * `selectors.resultsLengthSelect`) — best effort, jamais bloquant.
+   *
+   * Constaté en production le 2026-09-27 (§ "Toujours incomplet malgré 5
+   * pages", docs/FBI.md) : la pagination "Suivant" traverse bien 5 pages
+   * RÉELLES (`pageCount: 5`), mais `rawRowCount` (97) très supérieur à
+   * `keptRowCount` après dédoublonnage (51) — signe d'une pagination
+   * "offset" côté serveur qui re-fenêtre/re-trie le jeu de résultats à
+   * chaque page (tri non parfaitement déterministe), faisant apparaître
+   * certaines lignes plusieurs fois et probablement en sauter d'autres.
+   * Afficher TOUT en une seule page contourne entièrement cette
+   * instabilité — plutôt qu'un onzième correctif sur la mécanique de clic
+   * "Suivant" elle-même.
+   */
+  private async tryMaximizeResultsPageLength(page: Page): Promise<void> {
+    try {
+      const lengthSelect = selectors.resultsLengthSelect(page);
+      if ((await lengthSelect.count().catch(() => 0)) === 0) return;
+
+      const options = lengthSelect.locator("option");
+      const optionCount = await options.count().catch(() => 0);
+      let bestValue: string | null = null;
+      let bestRank = -Infinity;
+
+      for (let i = 0; i < optionCount; i += 1) {
+        const value = await options.nth(i).getAttribute("value").catch(() => null);
+        if (value === null) continue;
+        const numeric = Number(value);
+        // -1 est la convention DataTables pour "Tous" — toujours le plus grand.
+        const rank = numeric === -1 ? Number.POSITIVE_INFINITY : numeric;
+        if (Number.isNaN(rank)) continue;
+        if (rank > bestRank) {
+          bestRank = rank;
+          bestValue = value;
+        }
+      }
+
+      if (bestValue !== null) {
+        await lengthSelect.selectOption({ value: bestValue }).catch(() => {});
+        await this.settle(page);
+        await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+        await this.waitForStableDerogationTable(page);
+      }
+    } catch {
+      // Best effort — voir la note ci-dessus.
+    }
+  }
+
+  /**
    * Parcourt toutes les pages du tableau de résultats courant ("Suivant",
    * voir `selectors.nextPageControl`), en s'arrêtant dès qu'un clic ne
    * change plus le contenu de la page (dernière page, contrôle inerte) —
    * jamais un nombre de pages supposé à l'avance, et jamais de boucle
-   * infinie (`MAX_PAGES` en filet de sécurité).
+   * infinie (`MAX_PAGES` en filet de sécurité). Tente d'abord d'afficher
+   * TOUTES les lignes sur une seule page (voir
+   * `tryMaximizeResultsPageLength`) — la pagination "Suivant" ci-dessous
+   * ne sert alors que de repli si ce contrôle est absent/inefficace.
    */
   private async collectAllResultPages(page: Page): Promise<{ rows: Record<string, string>[]; pageCount: number }> {
+    await this.tryMaximizeResultsPageLength(page);
+
     const MAX_PAGES = 50;
     const collected: Record<string, string>[] = [];
     let previousSignature: string | null = null;
@@ -845,12 +923,27 @@ export class BrowserFbiClient {
       pageCount += 1;
       if (rows) collected.push(...rows);
 
-      const next = selectors.nextPageControl(page);
+      const next = selectors.nextPageControl(page).first();
       if ((await next.count().catch(() => 0)) === 0) break;
-      if (!(await next.first().isEnabled().catch(() => false))) break;
+      /**
+       * Constaté en écrivant les tests de `tryMaximizeResultsPageLength`
+       * (2026-09-27) : une fois "Tous" sélectionné, DataTables MASQUE ses
+       * contrôles de pagination (`.dataTables_paginate { display: none }`,
+       * voir la fixture) — mais le `<a>` "Suivant" reste PRÉSENT dans le
+       * DOM (juste invisible), donc `count()` ET `isEnabled()` restent
+       * vrais. `.click()` sur un élément cliqué mais invisible attend que
+       * Playwright le juge "actionnable" (visible ET stable ET activé) —
+       * il ne le devient JAMAIS ici, bloquant chaque test pendant les 30s
+       * du timeout d'actionabilité par défaut de Playwright (exactement le
+       * symptôme observé : 3 tests `fetchAllDerogations` en échec à
+       * 30000ms). Vérifier explicitement la VISIBILITÉ avant de cliquer,
+       * jamais juste présence + activé.
+       */
+      if (!(await next.isVisible().catch(() => false))) break;
+      if (!(await next.isEnabled().catch(() => false))) break;
 
       try {
-        await next.first().click();
+        await next.click();
         await this.settle(page);
         await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
         // Même correctif que `collectAllDerogationsWithDetail` (voir
@@ -865,6 +958,84 @@ export class BrowserFbiClient {
     }
 
     return { rows: collected, pageCount };
+  }
+
+  /**
+   * Même mécanique de pagination que `collectAllResultPages`, mais pour
+   * `fetchAllDerogations` : enrichit CHAQUE ligne de son détail (demandeur/
+   * motif/dates demandées/réponse adversaire) AVANT de passer à la page
+   * suivante — cinquième revirement (voir docs/FBI.md, § "Le détail
+   * redevient nécessaire") : "on récupère plus le demandeur le motif,
+   * l'heure la date etc" (constat club, 2026-09-27), régression directe du
+   * quatrième revirement qui avait retiré tout détail par ligne du lot
+   * pour éviter le timeout Vercel de 300s (`fetchScheduleRows`-like, sans
+   * détail). Le détail reste indispensable à l'affichage — mais 80+
+   * nouveaux onglets séquentiels dépassaient largement 300s à l'époque, EN
+   * PLUS d'une pagination qui tournait alors en rond (voir `pageCount`).
+   *
+   * Maintenant que `tryMaximizeResultsPageLength` ramène (best effort)
+   * tout sur UNE SEULE page — plus de 5 clics "Suivant" à plusieurs
+   * secondes chacun avant même de commencer le détail —, le détail par
+   * ligne redevient praticable dans le budget restant. Reste borné
+   * explicitement par `detailDeadlineAt` (voir `derogationDetailBudgetMs`) :
+   * dès qu'il est dépassé, les lignes restantes (de CETTE page ET des
+   * pages suivantes, si `tryMaximizeResultsPageLength` a échoué) gardent
+   * leurs champs de détail à `null` plutôt que de risquer un dépassement
+   * dur du timeout Vercel — jamais une ligne perdue pour autant, juste son
+   * détail (le tableau de résultats reste la source de vérité minimale,
+   * même principe que `fetchDerogationDetailForRow`).
+   *
+   * Détail lu par INDEX DOM (`fetchDerogationDetailForRow`), jamais par
+   * index dans le tableau normalisé/filtré — la ligne fantôme DataTables
+   * ("Aucune donnée disponible...") ET les lignes "A Créer" comptent
+   * quand même dans l'index DOM de la page courante.
+   */
+  private async collectAllDerogationPages(page: Page, detailDeadlineAt: number): Promise<{ rows: FbiDerogationRow[]; pageCount: number; rawRowCount: number }> {
+    await this.tryMaximizeResultsPageLength(page);
+
+    const MAX_PAGES = 50;
+    const collected: FbiDerogationRow[] = [];
+    let previousSignature: string | null = null;
+    let pageCount = 0;
+    let rawRowCount = 0;
+
+    for (let i = 0; i < MAX_PAGES; i += 1) {
+      const rawRows = await selectors.resultsTableGenericRows(page).catch(() => null);
+      const signature = JSON.stringify(rawRows);
+      if (signature === previousSignature) break;
+      previousSignature = signature;
+      pageCount += 1;
+
+      if (rawRows) {
+        rawRowCount += rawRows.length;
+
+        for (let domIndex = 0; domIndex < rawRows.length; domIndex += 1) {
+          const normalizedRow = normalizeDerogationRow(rawRows[domIndex]);
+          // Ligne fantôme DataTables ("Aucune donnée disponible dans le
+          // tableau") — jamais de détail à aller chercher pour elle.
+          if (normalizedRow.numero === null) continue;
+
+          const detail = Date.now() < detailDeadlineAt ? await this.fetchDerogationDetailForRow(page, domIndex).catch(() => null) : null;
+          collected.push(detail ? { ...normalizedRow, ...detail } : normalizedRow);
+        }
+      }
+
+      const next = selectors.nextPageControl(page).first();
+      if ((await next.count().catch(() => 0)) === 0) break;
+      if (!(await next.isVisible().catch(() => false))) break;
+      if (!(await next.isEnabled().catch(() => false))) break;
+
+      try {
+        await next.click();
+        await this.settle(page);
+        await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+        await this.waitForStableDerogationTable(page);
+      } catch {
+        break;
+      }
+    }
+
+    return { rows: collected, pageCount, rawRowCount };
   }
 
   /**
@@ -957,11 +1128,22 @@ export class BrowserFbiClient {
    * club) — `fetchScheduleRows` (rapprochement calendrier FFBB/FBI) ne
    * fait QUE lire le tableau, jamais de détail par ligne, et n'a jamais eu
    * ce problème même sur un calendrier de plusieurs centaines de
-   * rencontres. Même principe ici : `collectAllResultPages` (générique,
-   * pagination seule, JAMAIS de nouvel onglet) au lieu de
-   * `collectAllDerogationsWithDetail`. Le détail par ligne reste
-   * disponible via `fetchDerogationForMatch` (un seul match, un seul
-   * aller-retour détail — jamais un problème de volume).
+   * rencontres.
+   *
+   * **Le détail redevient nécessaire — cinquième revirement** (voir
+   * docs/FBI.md) : "on récupère plus le demandeur le motif, l'heure la
+   * date etc" (constat club, 2026-09-27) — `DerogationsList.tsx` (SCSB)
+   * affiche ces champs pour CHAQUE dérogation, jamais seulement au clic
+   * "Vérifier sur FBI" d'un match précis. Les retirer du lot a réglé le
+   * timeout mais cassé l'affichage pour toutes les lignes d'un coup — un
+   * échange inacceptable. `collectAllDerogationPages` (générique,
+   * pagination + détail par ligne, borné par `derogationDetailBudgetMs`)
+   * remplace `collectAllResultPages` ici : maintenant que
+   * `tryMaximizeResultsPageLength` ramène tout sur UNE SEULE page (plus de
+   * 5 clics "Suivant" qui, EUX, causaient l'essentiel du dépassement de
+   * 300s), le détail par ligne redevient praticable dans le budget
+   * restant — jamais un nombre de lignes supposé à l'avance, voir sa doc
+   * pour le détail du compromis.
    */
   async fetchAllDerogations(session: BrowserFbiSession): Promise<FbiDerogationRow[]> {
     const { page } = session;
@@ -989,11 +1171,11 @@ export class BrowserFbiClient {
       );
     }
 
-    const { rows: rawRows, pageCount } = await this.collectAllResultPages(page);
-    // Filtre la ligne fantôme DataTables ("Aucune donnée disponible dans
-    // le tableau", voir docs/FBI.md) — une VRAIE dérogation a toujours un
-    // numéro de rencontre, jamais `null`.
-    const normalized = rawRows.map(normalizeDerogationRow).filter((row) => row.numero !== null);
+    const detailDeadlineAt = Date.now() + this.derogationDetailBudgetMs;
+    const { rows: normalized, pageCount, rawRowCount } = await this.collectAllDerogationPages(page, detailDeadlineAt);
+    // `collectAllDerogationPages` filtre déjà la ligne fantôme DataTables
+    // ("Aucune donnée disponible dans le tableau", voir docs/FBI.md) —
+    // une VRAIE dérogation a toujours un numéro de rencontre, jamais `null`.
 
     /**
      * Constaté en production le 2026-09-27 : le même numéro apparaît
@@ -1003,17 +1185,22 @@ export class BrowserFbiClient {
      * MÊME page comme deux pages différentes, voir `pageCount` ci-dessous
      * pour confirmer combien de pages ont RÉELLEMENT été parcourues).
      * Dédoublonné par numéro — jamais deux lignes pour la même rencontre.
+     * Si deux lectures du même numéro n'ont pas le même détail (l'une
+     * ayant dépassé `detailDeadlineAt`, l'autre non), garde celle AVEC
+     * détail plutôt que la dernière lue arbitrairement.
      */
     const deduped = new Map<string, FbiDerogationRow>();
     for (const row of normalized) {
-      if (row.numero) deduped.set(row.numero, row);
+      if (!row.numero) continue;
+      const existing = deduped.get(row.numero);
+      if (!existing || (!existing.demandeur && row.demandeur)) deduped.set(row.numero, row);
     }
     const result = Array.from(deduped.values());
 
     this.lastDerogationPassDiagnostics.push({
       pass: "tousLesEtats",
       selectedEtatValueAtSubmit,
-      rawRowCount: rawRows.length,
+      rawRowCount,
       keptRowCount: result.length,
       pageCount,
     });
