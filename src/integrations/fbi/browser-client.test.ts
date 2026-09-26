@@ -447,7 +447,7 @@ describe("BrowserFbiClient.fetchAllDerogations ('je veux un bouton global qui ch
     expect(diagnostics).toHaveLength(1);
     // Aucune ligne fantôme ni page perdue en route : lignes brutes lues =
     // lignes conservées = les 4 vraies dérogations, toutes pages confondues.
-    expect(diagnostics[0]).toMatchObject({ pass: "tousLesEtats", rawRowCount: 4, keptRowCount: 4 });
+    expect(diagnostics[0]).toMatchObject({ pass: "tousLesEtats", rawRowCount: 4, keptRowCount: 4, pageCount: 2 });
 
     await client.closeSession(session);
   });

@@ -81,8 +81,10 @@ export interface DerogationPassDiagnostic {
   selectedEtatValueAtSubmit: string | null;
   /** Nombre de lignes brutes lues dans le tableau (AVANT filtrage de la ligne fantôme DataTables), toutes pages confondues. */
   rawRowCount: number;
-  /** Nombre de lignes conservées après filtrage de la ligne fantôme DataTables (voir `fetchAllDerogations`). */
+  /** Nombre de lignes conservées après filtrage de la ligne fantôme DataTables ET déduplication par numéro (voir `fetchAllDerogations`). */
   keptRowCount: number;
+  /** Nombre de pages RÉELLEMENT parcourues (itérations de `collectAllResultPages` avant l'arrêt) — confirme si la pagination avance vraiment ou relit la même page. */
+  pageCount: number;
 }
 
 export class BrowserFbiClient {
@@ -780,7 +782,7 @@ export class BrowserFbiClient {
 
     for (const nonJoueChecked of [true, false]) {
       await this.trySetNonJoueAndSearch(page, nonJoueChecked);
-      rawRows.push(...(await this.collectAllResultPages(page)));
+      rawRows.push(...(await this.collectAllResultPages(page)).rows);
     }
 
     return rawRows.map(normalizeScheduleRow);
@@ -829,16 +831,18 @@ export class BrowserFbiClient {
    * jamais un nombre de pages supposé à l'avance, et jamais de boucle
    * infinie (`MAX_PAGES` en filet de sécurité).
    */
-  private async collectAllResultPages(page: Page): Promise<Record<string, string>[]> {
+  private async collectAllResultPages(page: Page): Promise<{ rows: Record<string, string>[]; pageCount: number }> {
     const MAX_PAGES = 50;
     const collected: Record<string, string>[] = [];
     let previousSignature: string | null = null;
+    let pageCount = 0;
 
     for (let i = 0; i < MAX_PAGES; i += 1) {
       const rows = await selectors.resultsTableGenericRows(page).catch(() => null);
       const signature = JSON.stringify(rows);
       if (signature === previousSignature) break;
       previousSignature = signature;
+      pageCount += 1;
       if (rows) collected.push(...rows);
 
       const next = selectors.nextPageControl(page);
@@ -860,7 +864,7 @@ export class BrowserFbiClient {
       }
     }
 
-    return collected;
+    return { rows: collected, pageCount };
   }
 
   /**
@@ -985,20 +989,36 @@ export class BrowserFbiClient {
       );
     }
 
-    const rawRows = await this.collectAllResultPages(page);
+    const { rows: rawRows, pageCount } = await this.collectAllResultPages(page);
     // Filtre la ligne fantôme DataTables ("Aucune donnée disponible dans
     // le tableau", voir docs/FBI.md) — une VRAIE dérogation a toujours un
     // numéro de rencontre, jamais `null`.
     const normalized = rawRows.map(normalizeDerogationRow).filter((row) => row.numero !== null);
 
+    /**
+     * Constaté en production le 2026-09-27 : le même numéro apparaît
+     * PLUSIEURS FOIS dans `normalized` (ex : "9820" deux fois) — signe
+     * qu'au moins une page a été lue deux fois (probablement une
+     * comparaison de signature qui distingue à tort deux lectures de LA
+     * MÊME page comme deux pages différentes, voir `pageCount` ci-dessous
+     * pour confirmer combien de pages ont RÉELLEMENT été parcourues).
+     * Dédoublonné par numéro — jamais deux lignes pour la même rencontre.
+     */
+    const deduped = new Map<string, FbiDerogationRow>();
+    for (const row of normalized) {
+      if (row.numero) deduped.set(row.numero, row);
+    }
+    const result = Array.from(deduped.values());
+
     this.lastDerogationPassDiagnostics.push({
       pass: "tousLesEtats",
       selectedEtatValueAtSubmit,
       rawRowCount: rawRows.length,
-      keptRowCount: normalized.length,
+      keptRowCount: result.length,
+      pageCount,
     });
 
-    return normalized;
+    return result;
   }
 
   /**

@@ -2850,3 +2850,46 @@ déjà couverte) — le test vérifie maintenant que `motif`/
 qu'AUCUN second onglet n'est ouvert (`session.context.pages()` reste à 1
 tout le parcours). 25/25 tests FBI passants, suite complète (416 tests)
 inchangée par ailleurs.
+
+### Toujours incomplet (40/82) + doublons — diagnostic de pages ajouté (douzième round, 2026-09-27)
+
+Après déblocage du job resté coincé en "claimed" (timeout Vercel du round
+précédent, nettoyé manuellement en base), la première exécution avec le
+détail retiré du bulk tourne enfin vite (24s) et progresse nettement :
+`rawRowCount` passe de 23 à 46 (`keptRowCount: 40`). Mieux, mais le club
+signale toujours deux manques concrets ("Acceptée par les deux
+associations sportives", rencontres n°16 et n°9) et rappelle le total
+attendu : **82 entrées, "on en est loin"**.
+
+Fait notable dans `foundNumeros` de cette exécution : plusieurs numéros
+apparaissent DEUX FOIS (`9544`, `9578`, `9589`, `9820`, `9830`, `9860`) —
+alors qu'une dérogation n'a qu'un seul numéro de rencontre. Signe qu'au
+moins une page a été comptée deux fois dans `collectAllResultPages`,
+probablement parce que deux lectures de LA MÊME page produisent des
+signatures `JSON.stringify` différentes (un détail non identifié rend
+chaque lecture légèrement différente) — la boucle continue alors à tort
+au lieu de s'arrêter, ET compte une page déjà vue comme "nouvelle".
+
+**Pas de nouveau correctif à l'aveugle cette fois** : deux diagnostics
+ajoutés pour objectiver ce qui se passe RÉELLEMENT à la prochaine
+exécution, avant de deviner une treizième fois :
+- `collectAllResultPages` renvoie maintenant aussi `pageCount` (nombre de
+  fois où la boucle a lu une page AVANT de s'arrêter) — persisté dans
+  `passDiagnostics[0].pageCount`. Si `pageCount` reste bloqué à 2-3 alors
+  que le club voit 5 pages, la pagination s'arrête encore trop tôt malgré
+  `nextPageControl`/`waitForStableDerogationTable`. Si `pageCount` monte
+  à 5+ mais `keptRowCount` reste sous 82, le problème serait alors des
+  pages relues (cohérent avec les doublons observés).
+- `fetchAllDerogations` dédoublonne désormais explicitement par numéro
+  (`Map` par numéro avant de renvoyer) — une VRAIE dérogation n'a qu'un
+  numéro, jamais deux lignes pour la même rencontre. Ne résout pas la
+  cause racine (pourquoi une page est relue), mais élimine son symptôme
+  le plus visible côté SCSB (des doublons dans `/admin/derogations`).
+
+**Ce qui reste à vérifier sur la PROCHAINE exécution** (lire
+`fbi_jobs.result.passDiagnostics[0]` directement en base) : `pageCount`
+et `rawRowCount`/`keptRowCount` diront si le problème est "pagination
+encore trop courte" (pageCount bas) ou "pages relues sans avancer"
+(pageCount élevé mais count final toujours sous 82) — deux causes
+différentes, deux corrections différentes, aucune à deviner avant d'avoir
+ce chiffre.
