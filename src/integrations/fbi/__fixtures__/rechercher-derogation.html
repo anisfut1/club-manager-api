@@ -30,6 +30,15 @@
          `derogationRowDetailHref` (browser-client.ts) pour ouvrir le détail
          dans un NOUVEL onglet, sans jamais cliquer/naviguer sur CETTE page
          (voir le commentaire au-dessus de `fetchDerogationDetailByHref`).
+
+      4. "ya le statut en cours qui est pas pris en compte" (retour du club,
+         2026-09-26, HTML source réel de la rencontre n°9820 : dérogation
+         ACTUELLEMENT "En Cours", `acceptation` = "NC", aucune
+         `reponseAdversaireDate`) — la ligne "9820" ci-dessous n'est
+         délibérément PAS renvoyée sous le filtre "TT" (reproduit le
+         comportement RÉEL constaté, que ce soit un choix ou un bug de
+         FBI), UNIQUEMENT sous "EC" — prouve que `DEROGATION_ETAT_PASSES`
+         (browser-client.ts, passe "TT" PUIS "EC") la retrouve bien.
     -->
     <form id="rechercherDerogation">
       <div class="row">
@@ -111,6 +120,13 @@
           cells: ["", "2659", "PRF", "OUEST MONTPELLIER METROPOLE BASKET - 3", "SPORT CLUB DE SETE BASKET - 1", "07/11/2026", "18:30", "", "A Créer"],
           detailUrl: "afficherDerogation.fbi?idDerogation=xuFqkhFXKcVOZPHKMXZhbQ&idRencontre=0",
         },
+        {
+          numero: "9820",
+          etat: "EC",
+          etatLabel: "En Cours",
+          cells: ["14/09/2026 14:55", "9820", "PRF", "MONTPELLIER BASKET MOSSON - 1", "SPORT CLUB DE SETE BASKET - 1", "15/11/2026", "17:00", "14/11/2026", "En Cours"],
+          detailUrl: "afficherDerogation.fbi?idDerogation=CEM2hVj%2BYyDjc%2FV2sYOC6Q%3D%3D&idRencontre=0",
+        },
       ];
 
       function rechercherDerogationAjax() {
@@ -118,7 +134,11 @@
         const numero = document.getElementById("rechercheDerogationFormNumeroRencontre").value.trim();
 
         const rows = ALL_ROWS.filter((row) => {
-          if (etat === "TT" && row.etat === "CREER") return false; // "Tous les états SAUF à créer"
+          // Reproduit le comportement RÉEL constaté par le club le
+          // 2026-09-26 ("ya le statut en cours qui est pas pris en
+          // compte") : "TT" exclut aussi "En Cours", pas seulement "A
+          // Créer" — que ce soit un choix ou un bug du VRAI FBI.
+          if (etat === "TT" && (row.etat === "CREER" || row.etat === "EC")) return false;
           if (etat !== "TT" && row.etat !== etat) return false;
           if (numero && row.numero !== numero) return false;
           return true;

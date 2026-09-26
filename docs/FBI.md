@@ -2483,3 +2483,75 @@ parcours (jamais quittée) — 24/24 tests passants, suite complète
 n'a nécessité AUCUN changement : il écrivait déjà les 8 colonnes de
 détail sans condition, restées `null` tant que `fetchAllDerogations` ne
 les remplissait pas.
+
+### Statut "En Cours" absent des résultats le 2026-09-26 (sixième round)
+
+Après le déploiement du cinquième round, le club relance "Vérifier toutes
+les dérogations" en production : `derogationsFound: 3, matched: 0` — un
+lot connu de ~20 dérogations (voir la requête SQL directe sur
+`fbi_derogation_checks`, toutes avec `updated_at` figé à la veille, preuve
+qu'aucune n'a été mise à jour par cette exécution) retombe à 3 trouvées,
+aucune matchée. Diagnostic ajouté (`fbi_jobs.result` enrichi de
+`foundDerogations`/`matchNumerosDisponibles`, consultable en base sans
+dépendre des logs Vercel) pour départager deux hypothèses avant de
+retenter à l'aveugle.
+
+Le club fournit alors, sans attendre le prochain résultat du diagnostic,
+DEUX preuves directes :
+1. Le HTML source réel de `rechercherDerogation.fbi` montre le `<select>`
+   "Etat de la dérogation" avec **"En Cours" (`EC`) sélectionné par
+   défaut**, pas "Tous les états" — signe que ce champ garde en session la
+   dernière valeur choisie par l'utilisateur (patron JSF classique, bean
+   session-scope), pas une preuve en soi d'un bug.
+2. Le HTML source réel de `afficherDerogation.fbi?idDerogation=...` pour
+   la rencontre n°9820 (division PRF Poule A) montre une dérogation
+   **ACTUELLEMENT "En Cours"** : `acceptation` = "NC" (non communiqué),
+   AUCUNE `reponseAdversaireDate` — un dossier réellement en attente de
+   réponse, déposé le 14/09/2026 (`dateDepot`), demandant à déplacer la
+   rencontre du 15/11/2026 au 14/11/2026 à 21:00.
+3. Message du club, sans ambiguïté : **"ya le statut en cours qui est pas
+   pris en compte"**.
+
+Or `fetchAllDerogations`/`fetchDerogationForMatch` sélectionnent TOUJOURS
+"Tous les états (sauf à créer)" (`TT`) avant de chercher — jamais "En
+Cours" (`EC`) spécifiquement. Que "Tous les états (sauf à créer)" exclue
+RÉELLEMENT aussi "En Cours" côté FBI (comportement voulu ou bug, jamais
+vérifiable depuis cet environnement, réseau `*.ffbb.com` bloqué) ou que ce
+soit encore autre chose, le retour direct et non ambigu du club — la
+dérogation n°9820 existe, est "En Cours", et n'apparaît pas dans nos
+résultats — est une preuve suffisante pour agir SANS attendre une
+confirmation supplémentaire du diagnostic.
+
+**Fix** : `fetchAllDerogations` et `fetchDerogationForMatch` bouclent
+maintenant sur `DEROGATION_ETAT_PASSES = ["tousLesEtats", "enCours"]`
+(browser-client.ts) — exactement le même principe déjà établi par
+`fetchScheduleRows` pour la case "non joué" (deux passes, un seul filtre à
+la fois ne couvre jamais les deux sous-ensembles) :
+- `navigateToDerogationSearchScreen(page, pass)` accepte désormais quel
+  état sélectionner (par LIBELLÉ, jamais par valeur devinée — "Tous les
+  états" ou "En Cours" selon `pass`), au lieu de toujours forcer "TT".
+- `fetchAllDerogations` : boucle les deux passes, dédoublonne par numéro
+  dans une `Map` (la passe "En Cours", exécutée en second, gagne en cas de
+  conflit — un dossier "En Cours" retrouvé est plus à jour qu'un éventuel
+  doublon "TT" pour le même numéro).
+- `fetchDerogationForMatch` : boucle les deux passes, s'arrête à la
+  première qui trouve CE numéro (évite une recherche "En Cours"
+  systématique quand "TT" suffit déjà).
+
+**Fixture mise à jour pour reproduire le bug, pas juste le corriger dans
+le vide** : `rechercher-derogation.html` ajoute une 4ᵉ ligne ("9820", état
+"En Cours") explicitement EXCLUE du filtre "TT" dans le script de la
+fixture (reproduit le comportement RÉEL constaté, pas un comportement
+"logique" supposé) — sans ce test, un futur refactor pourrait réintroduire
+la régression sans qu'aucun test ne la détecte. 26/26 tests passants
+(2 nouveaux : `fetchDerogationForMatch` retombe sur "EC" quand "TT" ne
+trouve rien, `fetchAllDerogations` retrouve bien "9820"), suite complète
+(417 tests) inchangée par ailleurs.
+
+**Ce qui reste à vérifier en production** : ce fix suppose que "TT" ET
+"EC" couvrent ensemble tous les états pertinents (CREER étant le seul
+volontairement exclu). Si un futur retour du club montre qu'un état
+`ACCEPT`/`ORGCREACC`/`ORGCREREF` manque ÉGALEMENT sous "TT" (jamais
+constaté à ce jour — le lot de ~20 dérogations connu avant l'incident du
+round 4 contenait déjà ces trois états), le même principe s'étendrait à
+une passe par état plutôt que seulement `TT`+`EC`.

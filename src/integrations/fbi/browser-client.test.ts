@@ -411,6 +411,22 @@ describe("BrowserFbiClient.fetchDerogationForMatch (gestion des dérogations, vo
     expect(derogation).toBeNull();
     await client.closeSession(session);
   });
+
+  it("retombe sur une seconde passe 'En Cours' quand 'Tous les états' ne trouve rien pour ce numéro — 'ya le statut en cours qui est pas pris en compte' (retour du club, 2026-09-26, HTML source réel de la rencontre n°9820)", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    // La fixture reproduit le comportement RÉEL constaté : "9820" (état
+    // "En Cours") n'apparaît QUE sous le filtre "EC", jamais sous "TT".
+    const derogation = await client.fetchDerogationForMatch(session, "9820");
+
+    expect(derogation).toMatchObject({ numero: "9820", etat: "En Cours" });
+    // Trouvée seulement à la seconde passe : le <select> reste sur "EC" au
+    // moment où la méthode rend la main (jamais remis sur "TT" après coup).
+    expect(await session.page.locator('select[name*="etat" i]').inputValue()).toBe("EC");
+
+    await client.closeSession(session);
+  });
 });
 
 describe("BrowserFbiClient.fetchAllDerogations ('je veux un bouton global qui check toutes les demandes, pas match par match', voir docs/FBI.md)", () => {
@@ -420,13 +436,26 @@ describe("BrowserFbiClient.fetchAllDerogations ('je veux un bouton global qui ch
 
     const derogations = await client.fetchAllDerogations(session);
 
-    // La fixture contient 3 rencontres : "1" et "9578" (Acceptée par
-    // l'organisme dirigeant) et "2659" (A Créer) — seules les deux
-    // premières doivent ressortir sous le filtre "Tous les états (sauf à
-    // créer)".
-    expect(derogations.map((d) => d.numero).sort()).toEqual(["1", "9578"]);
+    // La fixture contient 4 rencontres : "1" et "9578" (Acceptée par
+    // l'organisme dirigeant), "9820" (En Cours) et "2659" (A Créer) — les
+    // trois premières doivent ressortir (TT retrouve les deux premières,
+    // EC retrouve "9820" — voir le test dédié ci-dessous), jamais "2659".
+    expect(derogations.map((d) => d.numero).sort()).toEqual(["1", "9578", "9820"]);
     expect(derogations.every((d) => d.etat !== "A Créer")).toBe(true);
-    expect(await session.page.locator('select[name*="etat" i]').inputValue()).toBe("TT");
+    // Dernière passe exécutée : "EC" (TT puis EC, voir DEROGATION_ETAT_PASSES).
+    expect(await session.page.locator('select[name*="etat" i]').inputValue()).toBe("EC");
+
+    await client.closeSession(session);
+  });
+
+  it("retrouve aussi les dérogations 'En Cours' via une seconde passe — 'ya le statut en cours qui est pas pris en compte' (retour du club, 2026-09-26) : un lot connu de ~20 dérogations est retombé à 3 trouvées juste après le déploiement de l'extraction de détail, cause racine confirmée par le HTML source réel de la rencontre n°9820", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    const derogations = await client.fetchAllDerogations(session);
+
+    const enCours = derogations.find((d) => d.numero === "9820");
+    expect(enCours).toMatchObject({ etat: "En Cours", division: "PRF" });
 
     await client.closeSession(session);
   });
@@ -437,10 +466,10 @@ describe("BrowserFbiClient.fetchAllDerogations ('je veux un bouton global qui ch
 
     const derogations = await client.fetchAllDerogations(session);
 
-    expect(derogations).toHaveLength(2);
+    expect(derogations).toHaveLength(3);
     for (const derogation of derogations) {
       // Le serveur de test STATIQUE route par CHEMIN seulement (query string
-      // ignorée) : les deux lignes renvoient donc la MÊME fixture de détail
+      // ignorée) : les trois lignes renvoient donc la MÊME fixture de détail
       // (afficher-derogation.html) — suffisant pour prouver que le détail
       // est bien récupéré pour chaque ligne, sans dépendre d'un contenu
       // distinct par idDerogation.

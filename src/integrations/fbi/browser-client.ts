@@ -46,6 +46,31 @@ export interface BrowserFbiSession {
   page: Page;
 }
 
+/**
+ * Passes de recherche de dérogations — "ya le statut en cours qui est pas
+ * pris en compte" (retour du club, 2026-09-26, avec le HTML source réel de
+ * `rechercherDerogation.fbi` ET de `afficherDerogation.fbi` pour la
+ * rencontre n°9820, dont la dérogation ACTUELLE a pour acceptation "NC"
+ * (non communiqué, aucune `reponseAdversaireDate`) — un dossier RÉELLEMENT
+ * "En Cours" à cette date). "Tous les états (sauf à créer)" (`TT`) a
+ * toujours été supposé couvrir tout sauf "A Créer" — un lot connu de ~20
+ * dérogations (Acceptée/Refusée) confirme que `TT` couvre bien CES
+ * états-là — mais le club constate en conditions réelles qu'un dossier
+ * "En Cours" (`EC`) n'apparaît PAS dans les résultats sous `TT`, que ce
+ * soit un comportement voulu ou un bug du VRAI FBI (jamais vérifiable
+ * depuis cet environnement, réseau `*.ffbb.com` bloqué). Plutôt que de
+ * deviner lequel des deux, une DEUXIÈME passe explicite sur `EC` — même
+ * principe que `fetchScheduleRows` (déjà deux passes sur la case "non
+ * joué" pour la même raison : un seul filtre à la fois ne couvre jamais
+ * les deux sous-ensembles) — garantit que les dossiers "En Cours" sont
+ * ramenés, que `TT` les couvre réellement ou non (dédoublonnée par numéro
+ * dans `fetchAllDerogations`, donc jamais de doublon si `TT` les couvrait
+ * déjà). Partagée par `fetchDerogationForMatch` (une seule rencontre) et
+ * `fetchAllDerogations` (tout le club).
+ */
+const DEROGATION_ETAT_PASSES = ["tousLesEtats", "enCours"] as const;
+type DerogationEtatPass = (typeof DEROGATION_ETAT_PASSES)[number];
+
 export interface BrowserFbiClientOptions {
   baseUrl: string;
   browser: Browser;
@@ -786,47 +811,57 @@ export class BrowserFbiClient {
    * motif, la date/heure demandées et la réponse de l'adversaire (demande
    * du club, 2026-09-25 : "il me faut du détail sur le motif... les dates
    * initiales et demandées... comme sur fbi", voir `fetchDerogationDetailForRow`).
+   *
+   * Boucle sur `DEROGATION_ETAT_PASSES` (`TT` puis `EC`, voir sa doc) :
+   * s'arrête à la première passe qui trouve CE numéro — "TT" seul aurait pu
+   * manquer une dérogation actuellement "En Cours" pour ce match, exactement
+   * comme constaté pour la rencontre n°9820 le 2026-09-26.
    */
   async fetchDerogationForMatch(session: BrowserFbiSession, matchNumber: string): Promise<FbiDerogationRow | null> {
     const { page } = session;
-    await this.navigateToDerogationSearchScreen(page);
 
-    const numeroInput = await selectors.matchNumberSearchInput(page);
-    if (!numeroInput) {
-      throw new FbiError(
-        `Champ "Numéro de rencontre" introuvable sur l'écran de recherche des dérogations (${this.baseUrl}/rechercherDerogation.fbi).`,
-        "NAVIGATION_FAILED",
-      );
+    for (const pass of DEROGATION_ETAT_PASSES) {
+      await this.navigateToDerogationSearchScreen(page, pass);
+
+      const numeroInput = await selectors.matchNumberSearchInput(page);
+      if (!numeroInput) {
+        throw new FbiError(
+          `Champ "Numéro de rencontre" introuvable sur l'écran de recherche des dérogations (${this.baseUrl}/rechercherDerogation.fbi).`,
+          "NAVIGATION_FAILED",
+        );
+      }
+
+      try {
+        await numeroInput.fill(matchNumber);
+        const submit = selectors.searchSubmitControl(page).first();
+        if ((await submit.count().catch(() => 0)) > 0) await submit.click();
+        else await numeroInput.press("Enter");
+        await this.settle(page);
+        await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+      } catch (error) {
+        throw new FbiError(
+          `Recherche de dérogation échouée pour la rencontre ${matchNumber} (état ${pass}) : ${error instanceof Error ? error.message : String(error)}`,
+          "NAVIGATION_FAILED",
+          error,
+        );
+      }
+
+      const rows = await selectors.resultsTableGenericRows(page);
+      if (!rows || rows.length === 0) continue;
+
+      const normalized = rows.map(normalizeDerogationRow);
+      // Comparaison EXACTE du numéro — jamais la première ligne supposée
+      // correcte (même prudence que `matchNumberInResultsTable` côté
+      // découverte e-Marque : une recherche mal filtrée pourrait renvoyer
+      // d'autres rencontres).
+      const matchIndex = normalized.findIndex((row) => row.numero === matchNumber);
+      if (matchIndex === -1) continue;
+
+      const detail = await this.fetchDerogationDetailForRow(page, matchIndex);
+      return detail ? { ...normalized[matchIndex], ...detail } : normalized[matchIndex];
     }
 
-    try {
-      await numeroInput.fill(matchNumber);
-      const submit = selectors.searchSubmitControl(page).first();
-      if ((await submit.count().catch(() => 0)) > 0) await submit.click();
-      else await numeroInput.press("Enter");
-      await this.settle(page);
-      await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
-    } catch (error) {
-      throw new FbiError(
-        `Recherche de dérogation échouée pour la rencontre ${matchNumber} : ${error instanceof Error ? error.message : String(error)}`,
-        "NAVIGATION_FAILED",
-        error,
-      );
-    }
-
-    const rows = await selectors.resultsTableGenericRows(page);
-    if (!rows || rows.length === 0) return null;
-
-    const normalized = rows.map(normalizeDerogationRow);
-    // Comparaison EXACTE du numéro — jamais la première ligne supposée
-    // correcte (même prudence que `matchNumberInResultsTable` côté
-    // découverte e-Marque : une recherche mal filtrée pourrait renvoyer
-    // d'autres rencontres).
-    const matchIndex = normalized.findIndex((row) => row.numero === matchNumber);
-    if (matchIndex === -1) return null;
-
-    const detail = await this.fetchDerogationDetailForRow(page, matchIndex);
-    return detail ? { ...normalized[matchIndex], ...detail } : normalized[matchIndex];
+    return null;
   }
 
   /**
@@ -844,25 +879,44 @@ export class BrowserFbiClient {
    * motifs etc") : voir `collectAllDerogationsWithDetail` pour pourquoi ce
    * mécanisme (extraction de `href`, nouvel onglet) n'a PAS les défauts des
    * deux précédents.
+   *
+   * Boucle sur `DEROGATION_ETAT_PASSES` (`TT` puis `EC`, voir sa doc) —
+   * "ya le statut en cours qui est pas pris en compte" (retour du club,
+   * 2026-09-26) : un lot connu de ~20 dérogations est retombé à 3 trouvées
+   * juste après le déploiement de l'extraction de détail, et la rencontre
+   * n°9820 (HTML source réel fourni) a une dérogation ACTUELLEMENT "En
+   * Cours" absente des résultats sous "TT" seul. Dédoublonnée par numéro —
+   * la passe "EC" gagne en cas de conflit (un dossier "En Cours" retrouvé
+   * est plus à jour qu'un éventuel doublon "TT" pour le même numéro).
    */
   async fetchAllDerogations(session: BrowserFbiSession): Promise<FbiDerogationRow[]> {
     const { page } = session;
-    await this.navigateToDerogationSearchScreen(page);
+    const collected = new Map<string, FbiDerogationRow>();
 
-    try {
-      const submit = selectors.searchSubmitControl(page).first();
-      if ((await submit.count().catch(() => 0)) > 0) await submit.click();
-      await this.settle(page);
-      await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
-    } catch (error) {
-      throw new FbiError(
-        `Recherche de toutes les dérogations du club échouée : ${error instanceof Error ? error.message : String(error)}`,
-        "NAVIGATION_FAILED",
-        error,
-      );
+    for (const pass of DEROGATION_ETAT_PASSES) {
+      await this.navigateToDerogationSearchScreen(page, pass);
+
+      try {
+        const submit = selectors.searchSubmitControl(page).first();
+        if ((await submit.count().catch(() => 0)) > 0) await submit.click();
+        await this.settle(page);
+        await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+      } catch (error) {
+        throw new FbiError(
+          `Recherche de toutes les dérogations du club échouée (état ${pass}) : ${error instanceof Error ? error.message : String(error)}`,
+          "NAVIGATION_FAILED",
+          error,
+        );
+      }
+
+      const rowsForPass = await this.collectAllDerogationsWithDetail(page);
+      for (const row of rowsForPass) {
+        const key = row.numero ?? JSON.stringify(row.raw);
+        collected.set(key, row);
+      }
     }
 
-    return await this.collectAllDerogationsWithDetail(page);
+    return Array.from(collected.values());
   }
 
   /**
@@ -980,14 +1034,15 @@ export class BrowserFbiClient {
 
   /**
    * Rejoint l'écran de recherche des dérogations et réinitialise "Etat de
-   * la dérogation" sur "Tous les états (sauf à créer)" PAR LIBELLÉ (voir
+   * la dérogation" sur l'état demandé (`pass`) PAR LIBELLÉ (voir
    * ci-dessous, jamais par position — un précédent correctif sélectionnait
    * à tort le premier `<option>`, "A Créer" dans la vraie liste, ce qui
    * aurait masqué toutes les vraies demandes en cours). Best effort,
    * jamais bloquant. Partagé par `fetchDerogationForMatch` et
-   * `fetchAllDerogations`.
+   * `fetchAllDerogations`, chacun bouclant sur `DEROGATION_ETAT_PASSES`
+   * (voir sa doc, § "ya le statut en cours qui est pas pris en compte").
    */
-  private async navigateToDerogationSearchScreen(page: Page): Promise<void> {
+  private async navigateToDerogationSearchScreen(page: Page, pass: DerogationEtatPass = "tousLesEtats"): Promise<void> {
     const targetUrl = `${this.baseUrl}/rechercherDerogation.fbi`;
 
     try {
@@ -998,15 +1053,15 @@ export class BrowserFbiClient {
     }
 
     /**
-     * Sélectionne "Tous les états (sauf à créer)" — confirmé par capture
-     * d'écran ET par le HTML source réel de `rechercherDerogation.fbi`
-     * fourni par le club le 2026-09-25 : les 6 options réelles sont "A
-     * Créer" (value="CREER") | "En Cours" (value="EC") | "Acceptée par
-     * les deux associations sportives" (value="ACCEPT") | "Acceptée par
-     * l'organisme dirigeant" (value="ORGCREACC") | "Refusée"
-     * (value="ORGCREREF") | "Tous les états (sauf à créer)" (value="TT",
-     * `selected="selected"` par défaut) — valeurs jamais devinées, lues
-     * dynamiquement ci-dessous, jamais codées en dur.
+     * Sélectionne "Tous les états (sauf à créer)" (`TT`) ou "En Cours"
+     * (`EC`) selon `pass` — confirmé par capture d'écran ET par le HTML
+     * source réel de `rechercherDerogation.fbi` fourni par le club les
+     * 2026-09-25/26 : les 6 options réelles sont "A Créer" (value="CREER")
+     * | "En Cours" (value="EC") | "Acceptée par les deux associations
+     * sportives" (value="ACCEPT") | "Acceptée par l'organisme dirigeant"
+     * (value="ORGCREACC") | "Refusée" (value="ORGCREREF") | "Tous les
+     * états (sauf à créer)" (value="TT") — valeurs jamais devinées, lues
+     * dynamiquement ci-dessous par LIBELLÉ, jamais codées en dur.
      *
      * **Bug corrigé le 2026-09-25 (deuxième round, HTML réel fourni par le
      * club après un premier test en production qui ne renvoyait QUE des
@@ -1030,6 +1085,8 @@ export class BrowserFbiClient {
      * demande — l'exclure est le comportement voulu pour "vérifier
      * toutes les demandes", jamais un oubli).
      */
+    const labelPattern = pass === "enCours" ? /^en cours$/i : /tous les [ée]tats/i;
+
     try {
       const etatSelect = page.locator('select[name*="etat" i]').first();
       if ((await etatSelect.count().catch(() => 0)) > 0) {
@@ -1038,7 +1095,7 @@ export class BrowserFbiClient {
 
         for (let i = 0; i < optionCount; i += 1) {
           const label = ((await options.nth(i).textContent().catch(() => "")) ?? "").trim();
-          if (!/tous les [ée]tats/i.test(label)) continue;
+          if (!labelPattern.test(label)) continue;
 
           const value = await options.nth(i).getAttribute("value").catch(() => null);
           await etatSelect.selectOption(value !== null ? { value } : { label }).catch(() => {});
