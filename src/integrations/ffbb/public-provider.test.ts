@@ -107,6 +107,51 @@ describe("FfbbPublicProvider.listMatchesForOrganisme", () => {
     expect(matches[0]!.venue).toEqual({ ffbbId: "4242", name: null, address: null, raw: 4242 });
   });
 
+  it(
+    "convertit date_rencontre (heure MURALE française, sans marqueur de fuseau) en instant UTC réel, " +
+      "jamais stockée telle quelle comme si c'était déjà de l'UTC (bug confirmé le 2026-09-27 : rencontre n°15, " +
+      "FBI dit 17:00, match_datetime affichait 19:00 — voir docs/FFBB.md)",
+    async () => {
+      const fetchImpl = vi.fn(async (url: string | URL) => {
+        const href = url.toString();
+        if (href.includes("items/configuration")) return jsonResponse(200, CONFIGURATION_BODY);
+        return jsonResponse(200, {
+          data: [
+            // 17:00 heure de Paris en octobre (CEST, UTC+2) -> 15:00 UTC.
+            { id: "match-cest", idOrganismeEquipe1: "org-1", idOrganismeEquipe2: "org-2", date_rencontre: "2026-10-03T17:00:00" },
+            // 11:00 heure de Paris en janvier (CET, UTC+1) -> 10:00 UTC.
+            { id: "match-cet", idOrganismeEquipe1: "org-1", idOrganismeEquipe2: "org-2", date_rencontre: "2024-01-06T11:00:00" },
+          ],
+        });
+      });
+
+      const provider = new FfbbPublicProvider({ fetchImpl: fetchImpl as unknown as typeof fetch, candidateRetryDelayMs: 0 });
+      const matches = await provider.listMatchesForOrganisme("org-1");
+
+      expect(matches.find((m) => m.ffbbId === "match-cest")?.matchDateTime).toBe("2026-10-03T15:00:00.000Z");
+      expect(matches.find((m) => m.ffbbId === "match-cet")?.matchDateTime).toBe("2024-01-06T10:00:00.000Z");
+    },
+  );
+
+  it("date_rencontre absent/format inattendu -> jamais un crash (null passe, une valeur imprévue reste inchangée)", async () => {
+    const fetchImpl = vi.fn(async (url: string | URL) => {
+      const href = url.toString();
+      if (href.includes("items/configuration")) return jsonResponse(200, CONFIGURATION_BODY);
+      return jsonResponse(200, {
+        data: [
+          { id: "match-sans-date", idOrganismeEquipe1: "org-1", idOrganismeEquipe2: "org-2" },
+          { id: "match-deja-iso", idOrganismeEquipe1: "org-1", idOrganismeEquipe2: "org-2", date_rencontre: "2026-10-03T15:00:00.000Z" },
+        ],
+      });
+    });
+
+    const provider = new FfbbPublicProvider({ fetchImpl: fetchImpl as unknown as typeof fetch, candidateRetryDelayMs: 0 });
+    const matches = await provider.listMatchesForOrganisme("org-1");
+
+    expect(matches.find((m) => m.ffbbId === "match-sans-date")?.matchDateTime).toBeNull();
+    expect(matches.find((m) => m.ffbbId === "match-deja-iso")?.matchDateTime).toBe("2026-10-03T15:00:00.000Z");
+  });
+
   it("normalise une salle étendue (libelle/adresse) vers name/address", async () => {
     const fetchImpl = vi.fn(async (url: string | URL) => {
       const href = url.toString();

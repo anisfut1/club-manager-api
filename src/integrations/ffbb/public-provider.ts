@@ -1,5 +1,6 @@
 import { FFBB_API_BASE_URL, FFBB_ENDPOINTS, FFBB_MATCH_HISTORY_MONTHS } from "./config.js";
 import { FfbbApiError, FfbbDirectusClient, type DirectusClientOptions } from "./directus-client.js";
+import { zonedWallTimeToUtc } from "../../util/timezone.js";
 import type {
   FfbbClubSnapshot,
   NormalizedCompetition,
@@ -28,6 +29,29 @@ function historyCutoffDate(monthsBack: number): string {
 function buildAssetUrl(assetId: string | null | undefined): string | null {
   if (!assetId) return null;
   return `${FFBB_API_BASE_URL}${FFBB_ENDPOINTS.assets}/${assetId}`;
+}
+
+/**
+ * `date_rencontre` est une heure MURALE FRANÇAISE, SANS AUCUN marqueur de
+ * fuseau ("2026-10-03T17:00:00", jamais un "Z" ni un offset — confirmé en
+ * base sur les 656 matchs déjà synchronisés du club, `raw_horaire`
+ * "1700" toujours cohérent avec l'heure embarquée ici, 2026-09-27).
+ * La stocker telle quelle (comportement précédent) revient à la traiter
+ * comme de l'UTC : chaque affichage en heure locale la décale de +1h (CET)
+ * ou +2h (CEST) — bug RÉEL et confirmé (rencontre n°15, FBI dit "17:00",
+ * `match_datetime` affichait "19:00" ; déjà détecté sans être corrigé par
+ * `fbi_schedule_discrepancies`, voir schedule-reconciliation.ts). Convertie
+ * ici en instant UTC réel, DST-safe (`zonedWallTimeToUtc`, déjà utilisée
+ * par `util/timezone.ts`/`schedule-reconciliation.ts`). Format inattendu ou
+ * `null` -> valeur brute inchangée, jamais un crash sur une variation d'API
+ * non documentée.
+ */
+function normalizeFfbbDateTime(dateRencontre: string | null | undefined): string | null {
+  if (!dateRencontre) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})$/.exec(dateRencontre);
+  if (!match) return dateRencontre;
+  const [, year, month, day, hour, minute, second] = match;
+  return zonedWallTimeToUtc(Number(year), Number(month), Number(day), Number(hour), Number(minute), Number(second), "Europe/Paris").toISOString();
 }
 
 // Formes brutes attendues côté Directus (voir docs/FFBB_ECOSYSTEM_RESEARCH.md
@@ -362,7 +386,7 @@ export class FfbbPublicProvider {
         // Renseigné séparément dans fetchClubSnapshot (listOrganismeLogos) —
         // pas de relation étendue ici, voir NormalizedMatch.opponentLogoUrl.
         opponentLogoUrl: null,
-        matchDateTime: row.date_rencontre ?? null,
+        matchDateTime: normalizeFfbbDateTime(row.date_rencontre),
         scoreHome,
         scoreAway,
         status: normalizeMatchStatus(row),
