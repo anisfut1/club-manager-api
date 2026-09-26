@@ -3142,3 +3142,41 @@ désormais montrer un `pageCount` STABLE d'une exécution à l'autre (le
 vrai nombre de pages FBI, probablement ~4-5 pour ~82 dérogations) avec
 `rawRowCount === keptRowCount` (plus de doublons — la sortie de boucle
 n'intervient plus qu'une fois la VRAIE dernière page confirmée).
+
+### Résultat encore pire (0/51) juste après déploiement — diagnostic de contenu ajouté, pas de dix-septième correctif à l'aveugle (2026-09-27)
+
+Le club relance ~70 secondes après le push du seizième round —
+probablement AVANT la fin du redéploiement Vercel (build + bascule,
+souvent 1-3 minutes) : le job qui a tourné donne `{ pageCount: 1,
+rawRowCount: 3, keptRowCount: 0 }` — encore moins que les 51 déjà
+connus, et pour la première fois AUCUNE ligne gardée du tout
+(`matched: 0`). Deux hypothèses concurrentes, aucune confirmée par une
+preuve directe pour l'instant :
+1. Ce job a tourné contre l'AVANT-DERNIER déploiement (le round
+   diagnostic seul, sans le fix de pagination) — plausible vu le délai
+   court, mais n'explique pas `rawRowCount: 3` (un résultat bien plus
+   bas que tout ce qui avait été vu jusqu'ici, y compris avant tout
+   correctif de pagination).
+2. Un problème distinct : accès répété au VRAI FBI (7 déclenchements
+   manuels du même job en moins de 3 heures) déclenchant un
+   ralentissement/une dégradation côté FBI, OU une navigation qui a
+   atterri sur une page/tableau qui n'est PAS celui des dérogations (3
+   lignes sans rapport, jamais vérifié directement).
+
+**Toujours pas de correctif à l'aveugle** : `rawRowSample` (jusqu'aux 3
+premières lignes BRUTES lues, dictionnaire en-tête→cellule complet,
+AVANT tout filtrage) et `pageTitleAtFirstRead` (titre de la page au
+moment de cette lecture) sont ajoutés à `passDiagnostics[0]` — la
+PROCHAINE exécution dira, sans deviner, si ces 3 lignes sont la ligne
+fantôme DataTables ("Aucune donnée disponible..."), le contenu d'une
+tout autre page, ou autre chose. 26/26 tests FBI passants, suite
+complète (417 tests) inchangée par ailleurs.
+
+**Recommandation au club** : laisser 2-3 minutes après un push avant de
+relancer "Vérifier toutes les dérogations" (le temps qu'un déploiement
+Vercel bascule), et éviter de le redéclencher en rafale (attendre au
+moins quelques minutes entre deux tentatives) — le nombre de
+déclenchements rapprochés cette après-midi (7 en moins de 3 heures)
+pourrait lui-même contribuer à une dégradation côté FBI, hypothèse à
+confirmer ou écarter avec `pageTitleAtFirstRead`/`rawRowSample` sur la
+prochaine exécution plutôt que supposée.

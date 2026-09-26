@@ -131,6 +131,10 @@ export interface DerogationPassDiagnostic {
   pageCount: number;
   /** Voir `LengthSelectDiagnostic` — confirme si `tryMaximizeResultsPageLength` a pu s'appliquer, ou si `collectAllDerogationPages` est systématiquement retombé sur la pagination "Suivant" instable. */
   lengthSelect: LengthSelectDiagnostic;
+  /** Titre de la page au moment de la toute première lecture du tableau — confirme qu'on est bien sur l'écran de résultats des dérogations, jamais deviné. */
+  pageTitleAtFirstRead: string;
+  /** Jusqu'aux 3 premières lignes BRUTES lues (dictionnaire en-tête→cellule complet, AVANT tout filtrage), toutes colonnes confondues — voir sa doc dans `collectAllDerogationPages` : permet de voir le VRAI contenu d'une exécution anormale (ex : rawRowCount très bas) sans deviner. */
+  rawRowSample: Record<string, string>[];
 }
 
 export class BrowserFbiClient {
@@ -1027,7 +1031,14 @@ export class BrowserFbiClient {
   private async collectAllDerogationPages(
     page: Page,
     detailDeadlineAt: number,
-  ): Promise<{ rows: FbiDerogationRow[]; pageCount: number; rawRowCount: number; lengthSelect: LengthSelectDiagnostic }> {
+  ): Promise<{
+    rows: FbiDerogationRow[];
+    pageCount: number;
+    rawRowCount: number;
+    lengthSelect: LengthSelectDiagnostic;
+    rawRowSample: Record<string, string>[];
+    pageTitleAtFirstRead: string;
+  }> {
     const lengthSelect = await this.tryMaximizeResultsPageLength(page);
 
     const MAX_PAGES = 50;
@@ -1037,6 +1048,18 @@ export class BrowserFbiClient {
 
     let currentRows = await selectors.resultsTableGenericRows(page).catch(() => null);
     let currentSignature = JSON.stringify(currentRows);
+    /**
+     * Échantillon des toutes premières lignes BRUTES lues (avant tout
+     * filtrage/normalisation), persisté dans `passDiagnostics[0]` —
+     * constaté en production le 2026-09-27 : une exécution a ramené
+     * `rawRowCount: 3, keptRowCount: 0` (bien moins que les 51-97 connus,
+     * ET aucune ligne gardée du tout) sans qu'on sache si ces 3 lignes
+     * sont la ligne fantôme DataTables ("Aucune donnée disponible..."),
+     * un tableau d'une AUTRE page (navigation dérivée), ou autre chose —
+     * jamais deviné une seizième fois sans preuve directe du CONTENU réel.
+     */
+    const rawRowSample = (currentRows ?? []).slice(0, 3);
+    const pageTitleAtFirstRead = await page.title().catch(() => "?");
 
     for (let i = 0; i < MAX_PAGES; i += 1) {
       pageCount += 1;
@@ -1074,7 +1097,7 @@ export class BrowserFbiClient {
       currentSignature = JSON.stringify(advanced);
     }
 
-    return { rows: collected, pageCount, rawRowCount, lengthSelect };
+    return { rows: collected, pageCount, rawRowCount, lengthSelect, rawRowSample, pageTitleAtFirstRead };
   }
 
   /**
@@ -1259,7 +1282,7 @@ export class BrowserFbiClient {
     }
 
     const detailDeadlineAt = Date.now() + this.derogationDetailBudgetMs;
-    const { rows: normalized, pageCount, rawRowCount, lengthSelect } = await this.collectAllDerogationPages(page, detailDeadlineAt);
+    const { rows: normalized, pageCount, rawRowCount, lengthSelect, rawRowSample, pageTitleAtFirstRead } = await this.collectAllDerogationPages(page, detailDeadlineAt);
     // `collectAllDerogationPages` filtre déjà la ligne fantôme DataTables
     // ("Aucune donnée disponible dans le tableau", voir docs/FBI.md) —
     // une VRAIE dérogation a toujours un numéro de rencontre, jamais `null`.
@@ -1291,6 +1314,8 @@ export class BrowserFbiClient {
       keptRowCount: result.length,
       pageCount,
       lengthSelect,
+      pageTitleAtFirstRead,
+      rawRowSample,
     });
 
     return result;
