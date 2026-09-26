@@ -1032,22 +1032,20 @@ export class BrowserFbiClient {
 
     const MAX_PAGES = 50;
     const collected: FbiDerogationRow[] = [];
-    let previousSignature: string | null = null;
     let pageCount = 0;
     let rawRowCount = 0;
 
+    let currentRows = await selectors.resultsTableGenericRows(page).catch(() => null);
+    let currentSignature = JSON.stringify(currentRows);
+
     for (let i = 0; i < MAX_PAGES; i += 1) {
-      const rawRows = await selectors.resultsTableGenericRows(page).catch(() => null);
-      const signature = JSON.stringify(rawRows);
-      if (signature === previousSignature) break;
-      previousSignature = signature;
       pageCount += 1;
 
-      if (rawRows) {
-        rawRowCount += rawRows.length;
+      if (currentRows) {
+        rawRowCount += currentRows.length;
 
-        for (let domIndex = 0; domIndex < rawRows.length; domIndex += 1) {
-          const normalizedRow = normalizeDerogationRow(rawRows[domIndex]);
+        for (let domIndex = 0; domIndex < currentRows.length; domIndex += 1) {
+          const normalizedRow = normalizeDerogationRow(currentRows[domIndex]);
           // Ligne fantôme DataTables ("Aucune donnée disponible dans le
           // tableau") — jamais de détail à aller chercher pour elle.
           if (normalizedRow.numero === null) continue;
@@ -1066,13 +1064,65 @@ export class BrowserFbiClient {
         await next.click();
         await this.settle(page);
         await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
-        await this.waitForStableDerogationTable(page);
       } catch {
         break;
       }
+
+      const advanced = await this.waitForDerogationPageAdvance(page, currentSignature);
+      if (advanced === null) break; // Dernière page RÉELLEMENT atteinte — voir sa doc.
+      currentRows = advanced;
+      currentSignature = JSON.stringify(advanced);
     }
 
     return { rows: collected, pageCount, rawRowCount, lengthSelect };
+  }
+
+  /**
+   * Attend que le tableau change RÉELLEMENT de contenu après un clic
+   * "Suivant" — jamais juste "cette lecture diffère de la lecture d'AVANT
+   * le clic", qui confond deux causes très différentes : une VRAIE
+   * dernière page (rien de plus à charger) et un AJAX simplement LENT côté
+   * vrai FBI (le tableau affiche encore la page PRÉCÉDENTE au moment de la
+   * lecture, pas encore rafraîchi).
+   *
+   * Constaté en production le 2026-09-27 (§ "Toujours 51...", docs/FBI.md) :
+   * `passDiagnostics[0].pageCount` variait de 1 à 5 D'UNE EXÉCUTION À
+   * L'AUTRE pour EXACTEMENT le même club/jeu de dérogations réel — signe
+   * que l'ancienne détection de fin de pagination (`collectAllDerogationPages`
+   * lisait une fois, comparait à la lecture de l'itération PRÉCÉDENTE,
+   * s'arrêtait dès qu'elles étaient égales) s'arrêtait parfois AVANT que
+   * l'AJAX du clic ait fini de rafraîchir le tableau — la lecture "trop
+   * tôt" retombait alors sur le contenu de la page qu'on vient de QUITTER,
+   * indistinguable d'une "vraie" dernière page pour cette comparaison.
+   * `lengthSelect.found: false` confirmé par le round précédent (le
+   * contrôle "Afficher X entrées" n'existe pas sur cette page réelle) —
+   * la pagination "Suivant" reste donc le SEUL mécanisme disponible, elle
+   * doit être fiable.
+   *
+   * Repolle jusqu'à `maxAttempts` fois une lecture qui diffère de
+   * `previousSignature` (la page qu'on vient de quitter) ET qui se
+   * STABILISE (deux lectures consécutives identiques, même principe que
+   * `waitForStableDerogationTable`) — renvoie ces nouvelles lignes dès
+   * qu'elles le sont. `null` uniquement si le contenu n'a JAMAIS changé
+   * après `maxAttempts` tentatives — alors, et seulement alors, la
+   * dernière page est considérée réellement atteinte.
+   */
+  private async waitForDerogationPageAdvance(page: Page, previousSignature: string | null, maxAttempts = 15, intervalMs = this.navigationSettleMs): Promise<Record<string, string>[] | null> {
+    let lastSignature: string | null = null;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const rows = await selectors.resultsTableGenericRows(page).catch(() => null);
+      const signature = JSON.stringify(rows);
+
+      if (signature !== previousSignature && signature === lastSignature) {
+        return rows;
+      }
+
+      lastSignature = signature;
+      await page.waitForTimeout(intervalMs);
+    }
+
+    return null;
   }
 
   /**

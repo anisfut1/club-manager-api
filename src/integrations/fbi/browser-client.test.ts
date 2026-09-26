@@ -432,28 +432,30 @@ describe("BrowserFbiClient.fetchAllDerogations ('je veux un bouton global qui ch
     await client.closeSession(session);
   });
 
-  it("affiche TOUTES les entrées sur une seule page via le contrôle de longueur DataTables ('-1'/'Tous') plutôt que de compter sur la pagination 'Suivant' — la fixture force 2 pages par défaut (PAGE_SIZE=2), preuve que tryMaximizeResultsPageLength contourne bien la pagination (constaté en production le 2026-09-27 : 'Suivant' traverse RÉELLEMENT 5 pages mais avec des doublons dus à une pagination serveur instable, voir docs/FBI.md § 'Toujours incomplet malgré 5 pages')", async () => {
+  it("traverse TOUTES les pages de façon fiable malgré un AJAX FBI réel LENT — jamais de lecture prématurée confondant 'pas encore rafraîchi' avec 'dernière page atteinte' (régression production 2026-09-27 : pageCount variait de 1 à 5 D'UNE EXÉCUTION À L'AUTRE pour le même jeu de données réel, voir docs/FBI.md § 'Toujours 51...')", async () => {
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
     const session = await client.login({ username: "club1234", password: "secret" });
 
     const derogations = await client.fetchAllDerogations(session);
 
     // Les 4 rencontres non-"A Créer" doivent toutes ressortir, y compris
-    // "9820" et "16" (qui seraient sur une 2ᵉ page si la longueur de page
-    // n'était pas maximisée en premier).
+    // "9820" et "16" — sur la 2ᵉ page (PAGE_SIZE=2, voir la fixture), qui
+    // n'est atteinte qu'après un délai artificiel de 150ms simulant un
+    // vrai AJAX FBI lent.
     expect(derogations.map((d) => d.numero).sort()).toEqual(["1", "16", "9578", "9820"]);
 
     const diagnostics = client.getLastDerogationPassDiagnostics();
     expect(diagnostics).toHaveLength(1);
-    // pageCount: 1 — une seule lecture, jamais besoin de cliquer "Suivant"
-    // (l'option "-1"/"Tous" a été sélectionnée automatiquement).
-    expect(diagnostics[0]).toMatchObject({ pass: "tousLesEtats", rawRowCount: 4, keptRowCount: 4, pageCount: 1 });
+    // pageCount: 2 — la pagination "Suivant" traverse RÉELLEMENT les 2
+    // pages, malgré le délai artificiel, sans doublon ni ligne perdue
+    // (rawRowCount === keptRowCount).
+    expect(diagnostics[0]).toMatchObject({ pass: "tousLesEtats", rawRowCount: 4, keptRowCount: 4, pageCount: 2 });
     // Diagnostic dédié (§ "Toujours 51 après le round treize/quatorze",
-    // docs/FBI.md) : confirme, depuis la fixture, que le contrôle "Afficher
-    // X entrées" a bien été TROUVÉ et que "-1"/"Tous" a bien été appliqué —
-    // c'est ce même diagnostic qui, en production, doit dire si le vrai
-    // FBI a réellement ce contrôle (jamais confirmé par du HTML réel).
-    expect(diagnostics[0].lengthSelect).toMatchObject({ found: true, selectId: "getTableauDerogation_length", appliedValue: "-1" });
+    // docs/FBI.md) : confirme qu'AUCUN contrôle "Afficher X entrées"
+    // n'existe sur cette page — fidèle à ce que le vrai FBI a confirmé en
+    // production (`found: false`), la pagination "Suivant" est donc le
+    // SEUL mécanisme exercé par ce test.
+    expect(diagnostics[0].lengthSelect).toMatchObject({ found: false, selectId: null, appliedValue: null });
 
     await client.closeSession(session);
   });

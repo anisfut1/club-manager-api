@@ -43,20 +43,30 @@
          (jamais `href="#"` inerte) — voir `collectAllResultPages`
          (browser-client.ts) et `waitForStableDerogationTable`.
 
-      5. `<select id="getTableauDerogation_length">` — contrôle "Afficher X
-         entrées" DataTables, dont l'`id` suit la convention CODÉE EN DUR
-         `<idTable>_length` (jamais personnalisée par FBI, voir
-         `selectors.resultsLengthSelect`) : le club a ensuite signalé
-         (2026-09-27) que la pagination "Suivant" traversait bien 5 pages
-         RÉELLES mais avec de nombreux doublons — instabilité classique
-         d'une pagination "offset" côté serveur. `tryMaximizeResultsPageLength`
-         (browser-client.ts) choisit désormais la plus grande option (`-1`,
-         "Tous") pour afficher TOUT en une seule page, contournant cette
-         instabilité — ce que ce contrôle permet de tester ici : le test de
-         pagination multi-page vérifie maintenant `pageCount: 1` (une seule
-         lecture, `-1` sélectionné automatiquement), la pagination "Suivant"
-         ci-dessus ne servant plus que de repli si ce contrôle est
-         absent/inefficace sur une autre page FBI.
+      5. AUCUN contrôle "Afficher X entrées" ("`<select id="..._length">`")
+         ici — un round intermédiaire en avait ajouté un par ANALOGIE avec
+         la convention DataTables (jamais confirmé par du HTML réel,
+         contrairement au bouton "Suivant" au point 6), pour contourner
+         l'instabilité de la pagination "Suivant". Le club reste bloqué à
+         51/82 dérogations MALGRÉ ce contournement en production — le
+         diagnostic `lengthSelect` ajouté en conséquence
+         (`passDiagnostics[0].lengthSelect`) confirme `found: false` sur le
+         VRAI FBI : ce contrôle n'existe simplement pas sur cette page.
+         Retiré de cette fixture pour ne plus tester un scénario qui
+         n'existe pas en production — la pagination "Suivant" est le SEUL
+         mécanisme réel, elle doit donc être fiable seule.
+
+      6. Délai artificiel (`setTimeout`, voir `changerPage` ci-dessous) sur
+         le changement de page — reproduit un AJAX FBI réel LENT. Preuve
+         directe en production (2026-09-27) : `passDiagnostics[0].pageCount`
+         variait de 1 à 5 D'UNE EXÉCUTION À L'AUTRE pour EXACTEMENT le même
+         jeu de dérogations réel, alors que `PAGE_SIZE=2` ci-dessous force
+         artificiellement plusieurs pages (4 rencontres non-"A Créer" → 2
+         pages) — sans délai, ce bug (une lecture trop précoce après le
+         clic "Suivant" confondant "AJAX pas encore fini" avec "dernière
+         page atteinte") ne pouvait jamais être reproduit en test, la
+         fixture réagissant instantanément. Voir
+         `waitForDerogationPageAdvance` (browser-client.ts).
     -->
     <form id="rechercherDerogation">
       <div class="row">
@@ -87,17 +97,6 @@
     </form>
 
     <div id="tableauResultats" style="display:none">
-      <div class="dataTables_length">
-        <label
-          >Afficher
-          <select name="getTableauDerogation_length" id="getTableauDerogation_length" onchange="onLengthChange()">
-            <option value="2">2</option>
-            <option value="10">10</option>
-            <option value="-1">Tous</option>
-          </select>
-          entrées</label
-        >
-      </div>
       <table id="getTableauDerogation">
         <thead>
           <tr>
@@ -181,18 +180,14 @@
         },
       ];
 
-      // Taille de page dynamique — pilotée par #getTableauDerogation_length,
-      // "2" par défaut pour forcer artificiellement plusieurs pages sous
-      // "Tous les états" (voir note 4) tant que le code ne l'a pas changée
-      // (voir note 5 : tryMaximizeResultsPageLength sélectionne "-1" dès la
-      // première recherche, ramenant tout sur une seule page).
+      // Taille de page FIXE à 2 — force artificiellement plusieurs pages
+      // sous "Tous les états" (4 rencontres non-"A Créer" → 2 pages, voir
+      // note 4) : AUCUN contrôle "Afficher X entrées" sur le vrai FBI
+      // (voir note 5, `lengthSelect.found: false` confirmé en production),
+      // donc plus de taille dynamique à piloter ici.
+      const PAGE_SIZE = 2;
       let lastFilteredRows = [];
       let currentPage = 0;
-
-      function currentPageSize() {
-        const raw = Number(document.getElementById("getTableauDerogation_length").value);
-        return raw === -1 ? Infinity : raw;
-      }
 
       function rechercherDerogationAjax() {
         const etat = document.querySelector('select[name*="etat" i]').value;
@@ -210,23 +205,26 @@
         renderCurrentPage();
       }
 
-      function onLengthChange() {
-        currentPage = 0;
-        renderCurrentPage();
-      }
+      // Délai artificiel simulant un AJAX FBI réel LENT (voir note 6) —
+      // change de page seulement après ce délai, jamais synchrone comme le
+      // reste de cette fixture. `changerPage` reste elle-même synchrone
+      // (retourne `false` immédiatement, comme le vrai `onclick`) : c'est
+      // le RENDU qui est différé, pas le clic.
+      const SIMULATED_AJAX_DELAY_MS = 150;
 
       function changerPage(delta) {
-        const pageSize = currentPageSize();
-        const maxPage = Math.max(0, Math.ceil(lastFilteredRows.length / pageSize) - 1);
+        const maxPage = Math.max(0, Math.ceil(lastFilteredRows.length / PAGE_SIZE) - 1);
         const next = currentPage + delta;
         if (next < 0 || next > maxPage) return false;
-        currentPage = next;
-        renderCurrentPage();
+        setTimeout(() => {
+          currentPage = next;
+          renderCurrentPage();
+        }, SIMULATED_AJAX_DELAY_MS);
         return false;
       }
 
       function renderCurrentPage() {
-        const pageSize = currentPageSize();
+        const pageSize = PAGE_SIZE;
         const maxPage = Math.max(0, Math.ceil(lastFilteredRows.length / pageSize) - 1);
         const rows = lastFilteredRows.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
         const tbody = document.querySelector("#getTableauDerogation tbody");

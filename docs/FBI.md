@@ -3073,3 +3073,72 @@ Testé contre la fixture (qui, elle, a bien ce contrôle) : nouveau
 sous-test confirmant `lengthSelect: { found: true, selectId:
 "getTableauDerogation_length", appliedValue: "-1" }`. 26/26 tests FBI
 passants, suite complète (417 tests) inchangée par ailleurs.
+
+### Preuve obtenue : le contrôle n'existe pas — la vraie cause était une lecture prématurée après "Suivant" (seizième round, 2026-09-27)
+
+Le club relance, le diagnostic répond SANS deviner :
+```json
+"lengthSelect": { "found": false, "selectId": null, "appliedValue": null, "optionValues": [] }
+```
+Confirmé : le contrôle "Afficher X entrées" n'existe PAS sur cette page
+FBI. `tryMaximizeResultsPageLength` no-op donc systématiquement (best
+effort) et `collectAllDerogationPages` retombe TOUJOURRS sur la
+pagination "Suivant" — seule option réelle disponible.
+
+**Mais le vrai problème n'est pas là où le treizième round le pensait.**
+La même exécution donne `{ pageCount: 1, rawRowCount: 23, keptRowCount: 20 }`
+— PIRE que les 51 déjà connus. Et l'exécution juste avant (contre le même
+code) donnait `{ pageCount: 2, rawRowCount: 46 }`. Deux exécutions
+consécutives contre EXACTEMENT le même code, le même club, le même jeu de
+dérogations réel — `pageCount` passe de 1 à 2 à (déjà vu) 5. Une pagination
+qui s'arrête à un nombre de pages différent CHAQUE FOIS n'est pas un
+problème de tri instable côté serveur (hypothèse du douzième round) : le
+nombre de pages RÉELLES ne change pas d'une minute à l'autre. C'est la
+DÉTECTION DE FIN DE PAGINATION elle-même qui est en cause.
+
+**Cause identifiée** : l'ancienne boucle (`collectAllResultPages`/
+`collectAllDerogationPages`) lisait le tableau, cliquait "Suivant", puis
+comparait la PROCHAINE lecture à celle d'AVANT le clic — si identique,
+elle concluait "dernière page atteinte, le clic n'a rien changé". Cette
+comparaison confond deux causes totalement différentes : une VRAIE
+dernière page (rien de plus à charger, le clic est un no-op) et un AJAX
+FBI simplement LENT dont la réponse n'est pas encore arrivée au moment de
+la lecture — dans ce second cas, le tableau affiche encore l'ANCIENNE
+page au moment où le code la lit, indistinguable d'une dernière page pour
+cette comparaison. Le VRAI FBI, servi depuis Vercel vers l'extranet FFBB
+(latence réseau réelle, jamais observée dans les tests contre une fixture
+locale synchrone), a un temps de réponse variable d'une exécution à
+l'autre — expliquant enfin pourquoi `pageCount` varie 1/2/5 pour le même
+jeu de données.
+
+**Fix** : nouvelle méthode `waitForDerogationPageAdvance` — après un clic
+"Suivant", repolle jusqu'à 15 fois une lecture qui DIFFÈRE de la page
+précédente ET qui se STABILISE (deux lectures consécutives identiques),
+avant de l'accepter comme la nouvelle page. Renvoie `null` UNIQUEMENT si
+le contenu n'a jamais changé après ces 15 tentatives — alors, et
+seulement alors, la dernière page est considérée réellement atteinte.
+`collectAllDerogationPages` restructurée en conséquence (lit une fois
+avant le clic, utilise `waitForDerogationPageAdvance` après, jamais un
+second `resultsTableGenericRows` non gardé par cette attente).
+
+**Fixture mise à jour pour refléter la preuve, pas une supposition** :
+- Le contrôle "Afficher X entrées" (ajouté au treizième round par
+  analogie, jamais confirmé) est RETIRÉ de la fixture — il n'existe pas
+  sur le vrai FBI (`lengthSelect.found: false` ci-dessus), le garder
+  aurait continué à tester un scénario qui n'arrive jamais en production.
+- `changerPage` différée par un `setTimeout` de 150ms — simule l'AJAX
+  FBI réel lent. Sans ce délai, une fixture synchrone ne pouvait
+  structurellement jamais reproduire ce bug (la lecture "trop précoce"
+  n'existe pas quand tout se met à jour instantanément).
+- Le test de pagination multi-page attend maintenant `pageCount: 2` (2
+  vraies pages, `PAGE_SIZE` fixe à 2) avec `rawRowCount === keptRowCount
+  === 4` MALGRÉ le délai artificiel — preuve directe que le nouveau code
+  attend correctement la fin de l'AJAX avant de conclure.
+
+26/26 tests FBI passants, suite complète (417 tests) inchangée par
+ailleurs. **Prochaine vérification en production** : re-déclencher
+"Vérifier toutes les dérogations" — `passDiagnostics[0]` devrait
+désormais montrer un `pageCount` STABLE d'une exécution à l'autre (le
+vrai nombre de pages FBI, probablement ~4-5 pour ~82 dérogations) avec
+`rawRowCount === keptRowCount` (plus de doublons — la sortie de boucle
+n'intervient plus qu'une fois la VRAIE dernière page confirmée).
