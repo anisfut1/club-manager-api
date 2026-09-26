@@ -59,6 +59,14 @@ export const DerogationListItemDtoSchema = DerogationStatusDtoSchema.extend({
   matchId: z.string().uuid(),
   opponentName: z.string().nullable(),
   matchDatetime: z.string().nullable(),
+  /**
+   * Catégorie FFBB lisible du match concerné (`competitions.category_label`,
+   * ex. "U13", "Seniors") — demande du club, 2026-09-26 : "jaimerais quon
+   * rajoute la catégorie concernée sur les derog". Distincte du code de
+   * division FBI brut (`competitions.code`, ex. "BU13FN23") utilisé en
+   * interne pour désambiguïser les numéros de rencontre.
+   */
+  categoryLabel: z.string().nullable(),
 }).openapi("DerogationListItemDto");
 
 export type DerogationListItemDto = z.infer<typeof DerogationListItemDtoSchema>;

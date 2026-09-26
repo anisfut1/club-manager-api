@@ -94,6 +94,12 @@ export interface FakeMatchRow {
   status: string;
   emarque_status: string;
   team_id: string | null;
+  competition_id?: string | null;
+}
+
+export interface FakeCompetitionRow {
+  id: string;
+  category_label: string | null;
 }
 
 export interface FakeTeamRow {
@@ -182,6 +188,7 @@ export interface FakeClubSupabaseState {
   fbiIntegrationStatus: FakeFbiIntegrationStatusRow[];
   syncRuns: FakeSyncRunRow[];
   matches: FakeMatchRow[];
+  competitions: FakeCompetitionRow[];
   teams: FakeTeamRow[];
   emarqueImports: FakeEmarqueImportRow[];
   profiles: FakeProfileRow[];
@@ -204,6 +211,7 @@ export function makeFakeClubSupabaseState(overrides: Partial<FakeClubSupabaseSta
     syncRuns: [],
     licencies: [],
     matches: [],
+    competitions: [],
     teams: [],
     emarqueImports: [],
     profiles: [],
@@ -446,6 +454,7 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
       return api;
     },
   };
+  const competitionsTable = { select: (_cols?: string) => queryable(state.competitions) };
   const emarqueImportsTable = { select: (_cols?: string, _opts?: { count?: string }) => queryable(state.emarqueImports) };
   const fbiScheduleDiscrepanciesTable = { select: (_cols?: string) => queryable(state.fbiScheduleDiscrepancies) };
   const fbiDerogationChecksTable = { select: (_cols?: string) => queryable(state.fbiDerogationChecks) };
@@ -529,6 +538,8 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
           return syncRunsTable;
         case "matches":
           return matchesTable;
+        case "competitions":
+          return competitionsTable;
         case "teams":
           return teamsTable;
         case "emarque_imports":

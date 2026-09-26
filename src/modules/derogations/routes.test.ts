@@ -165,6 +165,91 @@ describe("GET /:clubId/derogations (voir docs/FBI.md)", () => {
     });
   });
 
+  it("enrichit la dérogation de la catégorie FFBB du match (competitions.category_label, jamais le code de division cryptique)", async () => {
+    state.matches = [
+      {
+        id: "match-1",
+        club_id: CLUB_A.id,
+        numero: "23",
+        journee: null,
+        match_datetime: "2026-10-10T13:30:00.000Z",
+        is_home: true,
+        opponent_name: "FO PISCENOIS - 2",
+        venue_raw_label: null,
+        score_home: null,
+        score_away: null,
+        status: "scheduled",
+        emarque_status: "not_applicable",
+        team_id: null,
+        competition_id: "competition-u11",
+      },
+    ];
+    state.competitions = [{ id: "competition-u11", category_label: "U11" }];
+    state.fbiDerogationChecks = [
+      {
+        id: "check-1",
+        club_id: CLUB_A.id,
+        match_id: "match-1",
+        numero: "23",
+        etat: "Acceptée par l'organisme dirigeant",
+        date_depot: null,
+        date_derogation: null,
+        date_rencontre: "10/10/2026",
+        heure: null,
+        domicile: "FO PISCENOIS - 2",
+        visiteur: "SPORT CLUB DE SETE BASKET - 1",
+        checked_at: "2026-09-26T16:00:00.000Z",
+      },
+    ];
+
+    const res = await request(`/${CLUB_A.id}/derogations`);
+    const body = await res.json();
+
+    expect(body.derogations[0]).toMatchObject({ categoryLabel: "U11" });
+  });
+
+  it("categoryLabel reste `null` si le match n'a pas de compétition connue", async () => {
+    state.matches = [
+      {
+        id: "match-1",
+        club_id: CLUB_A.id,
+        numero: "1",
+        journee: null,
+        match_datetime: "2026-09-26T13:30:00.000Z",
+        is_home: true,
+        opponent_name: "Castelnau Basket - 2",
+        venue_raw_label: null,
+        score_home: null,
+        score_away: null,
+        status: "scheduled",
+        emarque_status: "not_applicable",
+        team_id: null,
+        competition_id: null,
+      },
+    ];
+    state.fbiDerogationChecks = [
+      {
+        id: "check-1",
+        club_id: CLUB_A.id,
+        match_id: "match-1",
+        numero: "1",
+        etat: "A Créer",
+        date_depot: null,
+        date_derogation: null,
+        date_rencontre: "26/09/2026",
+        heure: "15:30",
+        domicile: "SPORT CLUB DE SETE BASKET - 1",
+        visiteur: "CASTELNAU BASKET - 2",
+        checked_at: "2026-09-25T16:00:00.000Z",
+      },
+    ];
+
+    const res = await request(`/${CLUB_A.id}/derogations`);
+    const body = await res.json();
+
+    expect(body.derogations[0]).toMatchObject({ categoryLabel: null });
+  });
+
   it("un coach reçoit 403 (réservé au club_admin, cohérent avec la policy RLS de lecture)", async () => {
     state.roles = [{ membership_id: "membership-a1", role: "coach" }];
 
