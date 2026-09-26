@@ -402,7 +402,7 @@ describe("BrowserFbiClient.fetchDerogationForMatch (gestion des dérogations, vo
     await client.closeSession(session);
   });
 
-  it("renvoie null quand aucune dérogation n'existe pour ce numéro (cas normal, pas une erreur)", async () => {
+  it("renvoie null quand aucune dérogation n'existe pour ce numéro (cas normal, pas une erreur) — traverse aussi la ligne fantôme DataTables 'Aucune donnée disponible' sur les DEUX passes sans planter ni la confondre avec une vraie dérogation", async () => {
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
     const session = await client.login({ username: "club1234", password: "secret" });
 

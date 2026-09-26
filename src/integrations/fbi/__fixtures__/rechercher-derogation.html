@@ -146,6 +146,26 @@
 
         const tbody = document.querySelector("#getTableauDerogation tbody");
         tbody.innerHTML = "";
+
+        if (rows.length === 0) {
+          // Reproduit la ligne "Aucune donnée disponible dans le tableau"
+          // que DataTables insère RÉELLEMENT dans <tbody> quand une
+          // recherche/page ne renvoie aucun résultat (constaté en
+          // production le 2026-09-26 : la passe "En Cours" — ou toute
+          // recherche par numéro inexistant — produisait une ligne
+          // "fantôme" numero=null/etat=null que browser-client.ts filtre
+          // désormais explicitement, voir son commentaire).
+          const emptyTr = document.createElement("tr");
+          const emptyTd = document.createElement("td");
+          emptyTd.colSpan = 10;
+          emptyTd.className = "dataTables_empty";
+          emptyTd.textContent = "Aucune donnée disponible dans le tableau";
+          emptyTr.appendChild(emptyTd);
+          tbody.appendChild(emptyTr);
+          document.getElementById("tableauResultats").style.display = "block";
+          return;
+        }
+
         for (const row of rows) {
           const tr = document.createElement("tr");
 

@@ -2555,3 +2555,62 @@ volontairement exclu). Si un futur retour du club montre qu'un état
 constaté à ce jour — le lot de ~20 dérogations connu avant l'incident du
 round 4 contenait déjà ces trois états), le même principe s'étendrait à
 une passe par état plutôt que seulement `TT`+`EC`.
+
+### Ligne fantôme DataTables et statut "En Cours" toujours absent (septième round, 2026-09-26)
+
+Le club relance après déploiement du sixième round : toujours aucune
+dérogation "En Cours" dans la liste. `fbi_jobs.result` (lu directement en
+base, deux exécutions consécutives) révèle un fait inattendu :
+`foundDerogations` contient systématiquement UNE ligne
+`{"etat":null,"numero":null,"motifLu":false}` mélangée aux vraies lignes —
+JAMAIS une vraie dérogation à l'état "En Cours" (0 sur les deux
+exécutions).
+
+**Cause de la ligne fantôme, identifiée sur preuve (pas devinée)** :
+DataTables insère dans `<tbody>` une ligne `<tr><td colspan="N">Aucune
+donnée disponible dans le tableau</td></tr>` quand une recherche/page ne
+renvoie AUCUN résultat — un unique `<td>` (le `colspan`), que
+`resultsTableGenericRows` (qui aligne chaque cellule à l'INDEX de sa
+colonne, jamais son libellé) associe à tort à l'en-tête de la 1ère colonne
+(vide, la checkbox) — ignoré (`if (!header) continue`), d'où un `record`
+entièrement vide, puis un `FbiDerogationRow` avec `numero: null` que rien
+ne distinguait jusqu'ici d'une vraie ligne. Cette ligne fantôme gonflait
+`derogationsFound`/`unmatched` sans jamais correspondre à une vraie
+dérogation.
+
+**Fix** : `collectAllDerogationsWithDetail` (browser-client.ts) filtre
+désormais explicitement toute ligne dont `numero === null` — une VRAIE
+dérogation a TOUJOURS un numéro de rencontre, jamais un moyen légitime de
+produire ce cas. Fixture `rechercher-derogation.html` mise à jour pour
+reproduire fidèlement cette ligne DataTables (`colspan`, classe
+`dataTables_empty`, texte exact) quand la recherche filtrée ne trouve
+aucune ligne, plutôt qu'un `<tbody>` simplement vide — le test "renvoie
+null quand aucune dérogation n'existe pour ce numéro" traverse maintenant
+cette ligne fantôme sur les deux passes sans la confondre avec une vraie
+dérogation.
+
+**Diagnostic supplémentaire** : chaque dérogation trouvée porte désormais
+un marqueur `raw.__etatPass` (jamais persisté, lu uniquement par
+`processCheckAllDerogationsJob` pour enrichir `foundDerogations` d'un
+champ `pass`) — confirme, sur la PROCHAINE exécution après ce
+déploiement, si la passe "En Cours" tourne bien et ce qu'elle trouve
+RÉELLEMENT (0 lignes réelles ± la fantôme désormais filtrée, ou enfin de
+vraies lignes "En Cours").
+
+**Hypothèse retenue, à confirmer par le club plutôt que deviner un
+huitième correctif à l'aveugle** : la dérogation n°9820 (celle dont le
+club a fourni le HTML source montrant "En Cours"/acceptation "NC") ressort
+désormais, sur les deux dernières exécutions, à l'état "Acceptée par
+l'organisme dirigeant" sous la passe "TT" — un état FINAL, différent de
+"En Cours". La capture HTML du club datait d'avant ces exécutions : le
+plus probable est que cette dérogation a simplement été RÉSOLUE entre les
+deux (l'adversaire/l'organisme a répondu), ce qui est le fonctionnement
+normal d'une dérogation "en cours" — pas un bug de cette recherche. Si le
+club constate, EN REGARDANT LE VRAI FBI AU MOMENT DU TEST (pas une capture
+plus ancienne), qu'une dérogation reste "En Cours" alors que
+`check_all_derogations` ne la trouve pas, la prochaine étape est de
+confirmer son numéro de rencontre précis pour vérifier directement dans
+`fbi_jobs.result.foundDerogations` (filtré sur `pass: "enCours"`) si la
+passe "En Cours" l'a bien vue et pourquoi elle n'apparaît pas côté
+SCSB — plutôt que de re-deviner le mécanisme de sélection d'état une
+troisième fois sans preuve nouvelle.

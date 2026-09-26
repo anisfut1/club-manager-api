@@ -171,7 +171,7 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
       derogationsFound: derogations.length,
       matched,
       unmatched,
-      foundDerogations: derogations.map((d) => ({ numero: d.numero, etat: d.etat, motifLu: d.motif !== null })),
+      foundDerogations: derogations.map((d) => ({ numero: d.numero, etat: d.etat, motifLu: d.motif !== null, pass: d.raw.__etatPass ?? null })),
       matchNumerosDisponibles: Array.from(matchIdByNumero.keys()).sort(),
     };
     await supabase.from("fbi_jobs").update({ status: "succeeded", finished_at: now, result }).eq("id", job.id);

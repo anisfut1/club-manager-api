@@ -911,6 +911,12 @@ export class BrowserFbiClient {
 
       const rowsForPass = await this.collectAllDerogationsWithDetail(page);
       for (const row of rowsForPass) {
+        // Marqueur de diagnostic UNIQUEMENT (jamais persisté — voir
+        // process-check-all-derogations.ts, qui ne lit `raw` que pour ça) :
+        // permet de confirmer, sans deviner, que la passe "En Cours" a
+        // RÉELLEMENT tourné et ce qu'elle a trouvé (voir docs/FBI.md,
+        // § "Statut En Cours absent").
+        row.raw.__etatPass = pass;
         const key = row.numero ?? JSON.stringify(row.raw);
         collected.set(key, row);
       }
@@ -956,6 +962,26 @@ export class BrowserFbiClient {
       if (rows) {
         for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
           const normalized = normalizeDerogationRow(rows[rowIndex]);
+
+          /**
+           * Constaté en production le 2026-09-26 (§ "Statut En Cours absent",
+           * docs/FBI.md) : une ligne fantôme (`numero: null, etat: null`,
+           * `raw: {}`) apparaît systématiquement parmi les résultats — la
+           * ligne "Aucune donnée disponible dans le tableau" que DataTables
+           * insère dans `<tbody>` quand une recherche/page ne renvoie AUCUN
+           * résultat (ex : la passe "En Cours" quand aucune dérogation
+           * n'est actuellement en cours) a un unique `<td colspan="N">`, que
+           * `resultsTableGenericRows` (aligné sur l'INDEX de colonne, jamais
+           * son libellé) associe à tort à l'en-tête vide de la 1ère colonne
+           * (checkbox) — ignoré (`if (!header) continue`), d'où un `record`
+           * entièrement vide. Une VRAIE dérogation a TOUJOURS un numéro de
+           * rencontre — jamais `null` — donc jamais confondue avec ce cas.
+           * Sans ce filtre, cette ligne fantôme gonflait `derogationsFound`/
+           * `unmatched` (voir `fbi_jobs.result`) sans jamais correspondre à
+           * une vraie dérogation.
+           */
+          if (normalized.numero === null) continue;
+
           const detail = await this.fetchDerogationDetailForRow(page, rowIndex);
           collected.push(detail ? { ...normalized, ...detail } : normalized);
         }
