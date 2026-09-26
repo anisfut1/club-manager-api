@@ -430,13 +430,25 @@ export async function matchNumberInResultsTable(page: Page, matchNumber: string)
  * la page courante n'a pas la forme d'un tableau de résultats (pas d'en-tête
  * exploitable) — jamais un tableau vide silencieusement pris pour "zéro
  * rencontre".
+ *
+ * `scope` (§ "jen ai que 8", docs/FBI.md, 2026-09-27) — `page` elle-même
+ * (comportement HISTORIQUE, toujours utilisé par `fetchScheduleRows`) ou
+ * un `Locator` plus étroit : passer `page` fait matcher `page.locator
+ * ("table ...")` N'IMPORTE QUEL `<table>` de TOUTE la page, y compris des
+ * tableaux SANS RAPPORT (menu, mise en page) si le vrai tableau de
+ * résultats n'a pas encore de lignes au moment de la lecture — cause
+ * confirmée d'un résultat incohérent (3 lignes, aucune ne correspondant
+ * aux colonnes attendues) en production sur `rechercherDerogation.fbi`.
+ * Les appelants dérogations passent `selectors.derogationResultsContainer(page)`
+ * pour scoper la lecture au VRAI conteneur des résultats, jamais toute la
+ * page.
  */
-export async function resultsTableGenericRows(page: Page): Promise<Record<string, string>[] | null> {
-  const headerCells = page.locator("table th, table thead td");
+export async function resultsTableGenericRows(scope: Page | Locator): Promise<Record<string, string>[] | null> {
+  const headerCells = scope.locator("table th, table thead td");
   const headerTexts = (await headerCells.allTextContents().catch(() => [])).map((t) => t.trim());
   if (headerTexts.length === 0 || headerTexts.every((t) => t === "")) return null;
 
-  const rows = page.locator("table tbody tr");
+  const rows = scope.locator("table tbody tr");
   const rowCount = await rows.count().catch(() => 0);
   const results: Record<string, string>[] = [];
 
@@ -521,6 +533,34 @@ export function nextPageControl(page: Page): Locator {
  */
 export function resultsLengthSelect(page: Page): Locator {
   return page.locator('select[name$="_length" i], select[id$="_length" i], select[name*="_length" i]').first();
+}
+
+/**
+ * Conteneur RÉEL du tableau de résultats des dérogations —
+ * `rechercherDerogation.fbi`. DataTables enveloppe TOUJOURS son tableau
+ * dans un `<div id="<idTable>_wrapper">` (même famille de convention CODÉE
+ * EN DUR dans la librairie que `<idTable>_next`/`_previous`/`_length`,
+ * déjà confirmée réelle sur le bouton "Suivant" le 2026-09-27) : le
+ * `aria-controls="rechercherDerogationAjax"` de ce bouton (HTML source
+ * réel fourni par le club) révèle que le VRAI id de la table est
+ * `rechercherDerogationAjax` — jamais `getTableauDerogation`, une
+ * supposition antérieure jamais confirmée par du HTML réel.
+ *
+ * Scoper les lectures à ce conteneur (au lieu de "n'importe quel `<table>`
+ * de la page", voir `resultsTableGenericRows`) corrige une lecture
+ * incohérente constatée en production (§ "jen ai que 8", docs/FBI.md,
+ * 2026-09-27) : 3 lignes ne correspondant à AUCUNE colonne attendue,
+ * signe que `page.locator("table ...")` lisait un tableau SANS RAPPORT
+ * ailleurs sur la page tant que le vrai tableau de résultats n'avait pas
+ * encore de lignes.
+ *
+ * Repli sur `#rechercherDerogationAjax` seul (sans le wrapper, jamais
+ * confirmé aussi précisément que l'id de la table) si le wrapper n'existe
+ * pas — jamais un échec dur si aucun des deux n'est trouvé, l'appelant
+ * retombe alors sur `page` entière (comportement d'avant ce correctif).
+ */
+export function derogationResultsContainer(page: Page): Locator {
+  return page.locator("#rechercherDerogationAjax_wrapper, #rechercherDerogationAjax").first();
 }
 
 /**

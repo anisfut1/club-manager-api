@@ -16,8 +16,8 @@
          fixture doit les reproduire pour que le test soit fidèle.
       Le bouton RECHERCHER est `type="button"` (soumission AJAX réelle, la
       page ne navigue JAMAIS — `rechercherDerogationAjax()` injecte le
-      résultat dans #getTableauDerogation) : reproduit ici par un script
-      minimal, jamais un vrai appel réseau.
+      résultat dans #rechercherDerogationAjax, voir note 7 ci-dessous) :
+      reproduit ici par un script minimal, jamais un vrai appel réseau.
 
       3. Ligne de résultat réelle fournie par le club le 2026-09-25 (outerHTML
          d'un `<tr>` copié depuis le VRAI FBI, "ca marche tjr pas les motifs
@@ -67,7 +67,42 @@
          page atteinte") ne pouvait jamais être reproduit en test, la
          fixture réagissant instantanément. Voir
          `waitForDerogationPageAdvance` (browser-client.ts).
+
+      7. Table et conteneur renommés en `rechercherDerogationAjax`/
+         `rechercherDerogationAjax_wrapper` (vingtième round, 2026-09-27,
+         § "jen ai que 8", docs/FBI.md) : `getTableauDerogation`/
+         `tableauResultats` (noms précédents) n'ont JAMAIS été confirmés
+         par du HTML réel — seul l'`aria-controls="rechercherDerogationAjax"`
+         du bouton "Suivant" (vrai, fourni par le club) est confirmé, et la
+         convention DataTables CODÉE EN DUR (même famille que
+         `<idTable>_next`) veut que le vrai id de la table soit
+         `rechercherDerogationAjax`, enveloppée dans un `<div
+         id="rechercherDerogationAjax_wrapper">`. Une TABLE DÉCOY sans
+         rapport (`#menuSansRapport`, mise en page/navigation plausible)
+         est ajoutée AVANT ce conteneur pour reproduire fidèlement le bug
+         constaté : `page.locator("table ...")` (jamais scopé avant ce
+         round) lisait cette table décoy tant que le vrai tableau de
+         résultats n'avait pas encore de lignes, produisant des lectures
+         de "3 lignes vides" sans rapport avec les dérogations — voir
+         `selectors.derogationResultsContainer`/`resolveDerogationScope`
+         (browser-client.ts).
     -->
+    <table id="menuSansRapport">
+      <thead>
+        <tr>
+          <th>Accueil</th>
+          <th>Compétitions</th>
+          <th>Aide</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Accueil</td>
+          <td>Compétitions</td>
+          <td>Aide</td>
+        </tr>
+      </tbody>
+    </table>
     <form id="rechercherDerogation">
       <div class="row">
         <select name="rechercheDerogationForm.rechercheDerogationBean.idTypeDemande" id="listeType">
@@ -107,8 +142,8 @@
       </div>
     </form>
 
-    <div id="tableauResultats" style="display:none">
-      <table id="getTableauDerogation">
+    <div id="rechercherDerogationAjax_wrapper" style="display:none">
+      <table id="rechercherDerogationAjax">
         <thead>
           <tr>
             <th></th>
@@ -257,7 +292,7 @@
         const pageSize = PAGE_SIZE;
         const maxPage = Math.max(0, Math.ceil(lastFilteredRows.length / pageSize) - 1);
         const rows = lastFilteredRows.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
-        const tbody = document.querySelector("#getTableauDerogation tbody");
+        const tbody = document.querySelector("#rechercherDerogationAjax tbody");
         tbody.innerHTML = "";
         document.getElementById("paginateCurrentPage").textContent = String(currentPage + 1);
         // DataTables masque ses contrôles "Précédent/Suivant" quand tout
@@ -281,7 +316,7 @@
           emptyTd.textContent = "Aucune donnée disponible dans le tableau";
           emptyTr.appendChild(emptyTd);
           tbody.appendChild(emptyTr);
-          document.getElementById("tableauResultats").style.display = "block";
+          document.getElementById("rechercherDerogationAjax_wrapper").style.display = "block";
           return;
         }
 
@@ -310,7 +345,7 @@
           }
           tbody.appendChild(tr);
         }
-        document.getElementById("tableauResultats").style.display = "block";
+        document.getElementById("rechercherDerogationAjax_wrapper").style.display = "block";
       }
     </script>
   </body>

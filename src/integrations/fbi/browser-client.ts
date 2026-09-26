@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Browser, BrowserContext, Page } from "playwright-core";
+import type { Browser, BrowserContext, Locator, Page } from "playwright-core";
 import { FbiError } from "./errors.js";
 import * as selectors from "./selectors.js";
 import { normalizeScheduleRow } from "./schedule-row.js";
@@ -137,6 +137,8 @@ export interface DerogationPassDiagnostic {
   rawRowSample: Record<string, string>[];
   /** Valeur du champ "Numéro de rencontre" AVANT qu'il ne soit vidé explicitement (voir `fetchAllDerogations`) — non-vide confirme que FBI retient une valeur soumise précédemment côté serveur, jamais réinitialisée par un simple nouveau login. `null` si le champ n'a pas pu être lu. */
   numeroValueBeforeClear: string | null;
+  /** `selectors.derogationResultsContainer(page)` a été trouvé sur la page (voir `resolveDerogationScope`) — `false` signifie que les lectures sont retombées sur `page` entière (comportement d'avant le vingtième round), risquant de lire un tableau SANS RAPPORT ailleurs sur la page si le vrai tableau n'a pas encore de lignes. */
+  derogationContainerFound: boolean;
 }
 
 export class BrowserFbiClient {
@@ -1032,6 +1034,7 @@ export class BrowserFbiClient {
    */
   private async collectAllDerogationPages(
     page: Page,
+    scope: Page | Locator,
     detailDeadlineAt: number,
   ): Promise<{
     rows: FbiDerogationRow[];
@@ -1048,7 +1051,7 @@ export class BrowserFbiClient {
     let pageCount = 0;
     let rawRowCount = 0;
 
-    let currentRows = await selectors.resultsTableGenericRows(page).catch(() => null);
+    let currentRows = await selectors.resultsTableGenericRows(scope).catch(() => null);
     let currentSignature = JSON.stringify(currentRows);
     /**
      * Échantillon des toutes premières lignes BRUTES lues (avant tout
@@ -1078,7 +1081,7 @@ export class BrowserFbiClient {
           // `href` lu UNE SEULE fois, réutilisé pour `idDerogation` (clé
           // stable de la ligne, § "82 vs 51" docs/FBI.md) ET pour le détail
           // — jamais deux requêtes DOM séparées pour la même information.
-          const href = await this.derogationRowDetailHref(page, domIndex);
+          const href = await this.derogationRowDetailHref(scope, domIndex);
           const idDerogation = href ? this.parseIdDerogation(href, page.url()) : null;
           const rowWithId: FbiDerogationRow = { ...normalizedRow, idDerogation };
 
@@ -1100,7 +1103,7 @@ export class BrowserFbiClient {
         break;
       }
 
-      const advanced = await this.waitForDerogationTableRefresh(page, currentSignature);
+      const advanced = await this.waitForDerogationTableRefresh(scope, currentSignature);
       if (advanced === null) break; // Dernière page RÉELLEMENT atteinte — voir sa doc.
       currentRows = advanced;
       currentSignature = JSON.stringify(advanced);
@@ -1149,11 +1152,16 @@ export class BrowserFbiClient {
    * AJAX qui n'a jamais répondu) — l'appelant reste libre de continuer
    * avec l'état lu par ailleurs plutôt que de planter, best effort.
    */
-  private async waitForDerogationTableRefresh(page: Page, previousSignature: string | null, maxAttempts = 15, intervalMs = this.navigationSettleMs): Promise<Record<string, string>[] | null> {
+  private async waitForDerogationTableRefresh(
+    scope: Page | Locator,
+    previousSignature: string | null,
+    maxAttempts = 15,
+    intervalMs = this.navigationSettleMs,
+  ): Promise<Record<string, string>[] | null> {
     let lastSignature: string | null = null;
 
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      const rows = await selectors.resultsTableGenericRows(page).catch(() => null);
+      const rows = await selectors.resultsTableGenericRows(scope).catch(() => null);
       const signature = JSON.stringify(rows);
 
       if (signature !== previousSignature && signature === lastSignature) {
@@ -1161,10 +1169,29 @@ export class BrowserFbiClient {
       }
 
       lastSignature = signature;
-      await page.waitForTimeout(intervalMs);
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }
 
     return null;
+  }
+
+  /**
+   * Résout le VRAI conteneur des résultats de dérogations — voir
+   * `selectors.derogationResultsContainer` (§ "jen ai que 8", docs/FBI.md,
+   * 2026-09-27) : `id="rechercherDerogationAjax"`/`"..._wrapper"`,
+   * déduit de l'`aria-controls` confirmé réel du bouton "Suivant", jamais
+   * `getTableauDerogation` (une supposition antérieure jamais confirmée).
+   *
+   * Repli sur `page` ENTIÈRE (comportement d'avant ce round) si ce
+   * conteneur n'est trouvé nulle part — jamais un échec dur, mais
+   * `derogationContainerFound: false` dans le diagnostic signale alors
+   * que cette hypothèse d'id doit être reconfirmée sur preuve plutôt que
+   * de continuer à deviner un vingt-et-unième correctif.
+   */
+  private async resolveDerogationScope(page: Page): Promise<{ scope: Page | Locator; found: boolean }> {
+    const container = selectors.derogationResultsContainer(page);
+    const found = (await container.count().catch(() => 0)) > 0;
+    return { scope: found ? container : page, found };
   }
 
   /**
@@ -1215,7 +1242,8 @@ export class BrowserFbiClient {
         );
       }
 
-      const preSubmitSignature = JSON.stringify(await selectors.resultsTableGenericRows(page).catch(() => null));
+      const { scope } = await this.resolveDerogationScope(page);
+      const preSubmitSignature = JSON.stringify(await selectors.resultsTableGenericRows(scope).catch(() => null));
 
       try {
         await numeroInput.fill(matchNumber);
@@ -1224,7 +1252,7 @@ export class BrowserFbiClient {
         else await numeroInput.press("Enter");
         await this.settle(page);
         await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
-        await this.waitForDerogationTableRefresh(page, preSubmitSignature);
+        await this.waitForDerogationTableRefresh(scope, preSubmitSignature);
       } catch (error) {
         throw new FbiError(
           `Recherche de dérogation échouée pour la rencontre ${matchNumber} (état ${pass}) : ${error instanceof Error ? error.message : String(error)}`,
@@ -1233,7 +1261,7 @@ export class BrowserFbiClient {
         );
       }
 
-      const rows = await selectors.resultsTableGenericRows(page);
+      const rows = await selectors.resultsTableGenericRows(scope);
       if (!rows || rows.length === 0) continue;
 
       const normalized = rows.map(normalizeDerogationRow);
@@ -1249,7 +1277,7 @@ export class BrowserFbiClient {
 
       const bestIndex = matchIndices.reduce((best, current) => (compareDerogationDateDepot(normalized[current].dateDepot, normalized[best].dateDepot) >= 0 ? current : best));
 
-      const href = await this.derogationRowDetailHref(page, bestIndex);
+      const href = await this.derogationRowDetailHref(scope, bestIndex);
       const idDerogation = href ? this.parseIdDerogation(href, page.url()) : null;
       const rowWithId: FbiDerogationRow = { ...normalized[bestIndex], idDerogation };
       const detail = href ? await this.fetchDerogationDetailByHref(page, href).catch(() => null) : null;
@@ -1330,19 +1358,31 @@ export class BrowserFbiClient {
     const numeroValueBeforeClear = numeroInput ? await numeroInput.inputValue().catch(() => null) : null;
     if (numeroInput) await numeroInput.fill("").catch(() => {});
 
+    /**
+     * Résolu AVANT la soumission — vingtième round (2026-09-27, docs/FBI.md
+     * § "jen ai que 8") : `page.locator("table ...")` (utilisé partout
+     * jusqu'ici) matche N'IMPORTE QUEL `<table>` de TOUTE la page, jamais
+     * scopé au VRAI tableau de résultats — cause confirmée d'une lecture
+     * de "3 lignes" ne correspondant à AUCUNE colonne attendue (un
+     * tableau SANS RAPPORT ailleurs sur la page, lu tant que le vrai
+     * tableau de résultats n'avait pas encore de lignes). Voir
+     * `resolveDerogationScope`/`selectors.derogationResultsContainer`.
+     */
+    const { scope, found: derogationContainerFound } = await this.resolveDerogationScope(page);
+
     // État du tableau AVANT la soumission — voir `waitForDerogationTableRefresh` :
     // une recherche "tous les numéros" est nécessairement plus LENTE côté
     // serveur qu'une recherche filtrée sur un seul numéro, la comparaison
     // doit donc attendre un changement RÉEL, jamais juste une stabilisation
     // qui pourrait se figer sur cet état PRÉ-soumission.
-    const preSubmitSignature = JSON.stringify(await selectors.resultsTableGenericRows(page).catch(() => null));
+    const preSubmitSignature = JSON.stringify(await selectors.resultsTableGenericRows(scope).catch(() => null));
 
     try {
       const submit = selectors.searchSubmitControl(page).first();
       if ((await submit.count().catch(() => 0)) > 0) await submit.click();
       await this.settle(page);
       await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
-      await this.waitForDerogationTableRefresh(page, preSubmitSignature);
+      await this.waitForDerogationTableRefresh(scope, preSubmitSignature);
     } catch (error) {
       throw new FbiError(
         `Recherche de toutes les dérogations du club échouée : ${error instanceof Error ? error.message : String(error)}`,
@@ -1352,7 +1392,7 @@ export class BrowserFbiClient {
     }
 
     const detailDeadlineAt = Date.now() + this.derogationDetailBudgetMs;
-    const { rows: normalized, pageCount, rawRowCount, lengthSelect, rawRowSample, pageTitleAtFirstRead } = await this.collectAllDerogationPages(page, detailDeadlineAt);
+    const { rows: normalized, pageCount, rawRowCount, lengthSelect, rawRowSample, pageTitleAtFirstRead } = await this.collectAllDerogationPages(page, scope, detailDeadlineAt);
     // `collectAllDerogationPages` filtre déjà la ligne fantôme DataTables
     // ("Aucune donnée disponible dans le tableau", voir docs/FBI.md) —
     // une VRAIE dérogation a toujours un numéro de rencontre, jamais `null`.
@@ -1399,6 +1439,7 @@ export class BrowserFbiClient {
       pageTitleAtFirstRead,
       rawRowSample,
       numeroValueBeforeClear,
+      derogationContainerFound,
     });
 
     return result;
@@ -1429,8 +1470,8 @@ export class BrowserFbiClient {
    * `a[href]` cherché sur la ligne entière plutôt qu'une cellule précise —
    * n'importe quelle cellule de donnée porte le même `href`.
    */
-  private async derogationRowDetailHref(page: Page, rowIndex: number): Promise<string | null> {
-    const row = page.locator("table tbody tr").nth(rowIndex);
+  private async derogationRowDetailHref(scope: Page | Locator, rowIndex: number): Promise<string | null> {
+    const row = scope.locator("table tbody tr").nth(rowIndex);
     if ((await row.count().catch(() => 0)) === 0) return null;
 
     const link = row.locator('a[href*="afficherDerogation"]').first();

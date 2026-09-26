@@ -3333,3 +3333,61 @@ ailleurs. **Prochaine vérification en production** : re-déclencher
 refléter la RÉELLE ampleur de la recherche "tous les numéros" (plusieurs
 dizaines de lignes, pas 0), avec `numeroValueBeforeClear` confirmant que
 le champ est bien vidé avant chaque soumission désormais.
+
+### "jen ai que 8" — `page.locator("table ...")` lisait un tableau SANS RAPPORT ailleurs sur la page (vingtième round, 2026-09-27)
+
+Le club relance : `numeroValueBeforeClear: ""` confirme que le champ est
+bien vide dès le départ cette fois (round précédent confirmé réglé) —
+mais le résultat retombe EXACTEMENT au même schéma que deux exécutions
+antérieures (20:41 et 21:46) : `rawRowCount: 3, keptRowCount: 0,
+rawRowSample: [{}, {}, {}]` — trois lignes, TOUJOURS vides une fois
+mappées à nos 9 colonnes attendues. Constaté IDENTIQUE à trois reprises
+différentes (jamais une valeur qui varie comme un aléa de timing le
+ferait) : signe d'un problème STRUCTUREL, pas d'une course AJAX — la
+famille de bug déjà corrigée aux rounds seize et dix-neuf.
+
+**La vraie cause, enfin isolée** : `selectors.resultsTableGenericRows`
+(et `derogationRowDetailHref`) utilisaient `page.locator("table th, ...")`
+/`page.locator("table tbody tr")` — un sélecteur qui matche N'IMPORTE
+QUEL `<table>` de TOUTE la page, jamais scopé au VRAI tableau de
+résultats. Si ce vrai tableau n'a pas encore de lignes au moment de la
+lecture (recherche encore en cours, ou juste après navigation), ce
+sélecteur retombe sur un AUTRE tableau sans rapport ailleurs sur la page
+(menu, mise en page — probablement toujours LE MÊME, d'où les "3 lignes"
+identiques à chaque fois) — un bug de longue date, jamais visible avant
+que la recherche "tous les numéros" ne s'exécute pour de vrai (les
+recherches filtrées par numéro, plus rapides, laissaient rarement le
+temps à ce mauvais lock-on de se produire).
+
+**Fix** : `selectors.derogationResultsContainer(page)` scope désormais
+les lectures au VRAI conteneur — `id="rechercherDerogationAjax"`,
+enveloppé dans `id="rechercherDerogationAjax_wrapper"` (convention
+DataTables CODÉE EN DUR, même famille que `<idTable>_next` déjà confirmé
+réel sur le bouton "Suivant" — jamais `getTableauDerogation`, une
+supposition antérieure jamais confirmée par du HTML réel). `resolveDerogationScope`
+résout ce conteneur UNE FOIS par recherche (repli sur `page` entière,
+comportement d'avant ce round, si le conteneur n'est pas trouvé — jamais
+un échec dur), réutilisé pour TOUTES les lectures de cette recherche
+(`resultsTableGenericRows`, `derogationRowDetailHref`,
+`waitForDerogationTableRefresh`) — jamais un mélange d'un tableau scopé
+et d'un tableau page-entière pour la même recherche. `derogationContainerFound`
+persisté dans `passDiagnostics[0]` pour confirmer si ce conteneur existe
+vraiment sur le VRAI FBI.
+
+**Fixture mise à jour pour reproduire fidèlement ce bug** — table et
+conteneur renommés `rechercherDerogationAjax`/`_wrapper` (au lieu de
+`getTableauDerogation`/`tableauResultats`, jamais confirmés), et une
+TABLE DÉCOY (`#menuSansRapport`, mise en page plausible) ajoutée avant le
+conteneur des résultats. Vérifié manuellement que retirer le scope
+(passer `page` au lieu du conteneur résolu) fait ÉCHOUER 4 tests avec un
+résultat corrompu très parlant — le numéro de rencontre remplacé par des
+noms d'équipe (colonnes mal alignées entre le décoy et le vrai tableau) —
+la même famille de symptôme que "3 lignes vides" en production. 29/29
+tests FBI passants avec le scope actif, suite complète (423 tests)
+inchangée par ailleurs.
+
+**Prochaine vérification en production** : re-déclencher "Vérifier toutes
+les dérogations" — `derogationContainerFound` dira si l'id
+`rechercherDerogationAjax` est confirmé réel ; `rawRowCount` devrait
+enfin refléter la vraie ampleur de la recherche (plusieurs dizaines de
+lignes, jamais 3).
