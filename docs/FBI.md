@@ -2639,3 +2639,58 @@ native). Si c'est bien `"EC"` mais `rawRowCount: 0`, chercher côté
 soumission/rendu (peut-être une case complémentaire du formulaire, comme
 la case "non joué" pour l'écran de rencontres, qui filtre aussi les
 dérogations sans qu'on l'ait identifiée).
+
+### Lecture du tableau trop tôt après l'AJAX (huitième round, 2026-09-26/27)
+
+Le diagnostic ci-dessus, lu sur l'exécution suivante, TRANCHE
+définitivement : `selectedEtatValueAtSubmit` vaut bien `"EC"` pour la
+passe "En Cours" — la sélection d'état N'EST PAS le problème, contrairement
+à l'hypothèse précédente. Mais le résultat est pourtant pire que jamais :
+```
+passDiagnostics: [
+  { pass: "tousLesEtats", rawRowCount: 4, keptRowCount: 1, selectedEtatValueAtSubmit: "TT" },
+  { pass: "enCours",      rawRowCount: 4, keptRowCount: 0, selectedEtatValueAtSubmit: "EC" },
+]
+derogationsFound: 1 (numéro 2659, "Refusée")
+```
+Un lot connu de ~20 dérogations (passe "TT" seule) tombe à **1 seule**
+trouvée — bien pire que les exécutions précédentes (20, 20, 21) — et le
+job entier a pris ~38s au lieu des ~90-100s habituels (bien moins de
+détails à récupérer, cohérent avec bien moins de lignes lues). `4` lignes
+brutes identiques pour les DEUX passes (au lieu de ~20 pour "TT" et 9 pour
+"EC", confirmées par la capture du club) est la preuve la plus parlante :
+la recherche n'a manifestement pas eu le temps de charger avant d'être lue.
+
+**Cause identifiée (raisonnement, pas une preuve réseau directe — le
+réseau `*.ffbb.com` reste bloqué depuis cet environnement)** :
+`rechercherDerogationAjax()` (HTML source réel, round 5) est un vrai appel
+AJAX (`postAjax("rechercherDerogation.fbi?action=controleRecherche", ...,
+function(xhr) { remplirDiv("getTableauDerogation", xhr); })`) —
+`page.waitForLoadState("networkidle")` peut se résoudre dès que la
+RÉPONSE réseau est reçue, potentiellement AVANT que le callback
+`remplirDiv()` ait fini d'injecter le HTML et que DataTables ait fini de
+(re)dessiner le tableau — un délai variable selon la charge du serveur
+FBI à cet instant, jamais garanti par un simple délai fixe
+(`navigationSettleMs`, 500ms par défaut).
+
+**Fix** : `waitForStableDerogationTable(page)` — attend que deux lectures
+successives du tableau (même principe que la détection de fin de
+pagination dans `collectAllDerogationsWithDetail`) soient IDENTIQUES avant
+de continuer, jusqu'à 6 tentatives espacées de `navigationSettleMs`
+(jamais un délai fixe supposé suffisant). Appelée après CHAQUE soumission
+de recherche de dérogation (`fetchAllDerogations` ET
+`fetchDerogationForMatch`), avant toute lecture du tableau. Ne bloque
+jamais indéfiniment (recherche réellement vide : épuise les tentatives
+puis continue normalement, comme avant) — coût supplémentaire négligeable
+en test (fixture synthétique déjà stable dès la 1ère lecture, contexte
+`navigationSettleMs: 50` dans les tests), mesuré : 26/26 tests toujours
+verts, aucun ralentissement notable.
+
+**Reste à confirmer sur la prochaine exécution** : si `rawRowCount`
+remonte à ~20 (TT) et ~9 (EC, conforme à la capture du club) une fois ce
+correctif déployé, la cause est confirmée et le problème résolu. Si le
+symptôme persiste malgré `waitForStableDerogationTable`, l'hypothèse du
+timing AJAX serait insuffisante et il faudrait alors envisager qu'un
+symbole d'anti-bot/rate-limit FBI dégrade la recherche après plusieurs
+connexions rapprochées dans la même fenêtre de temps (déjà documenté par
+ailleurs pour `discover_emarque`) — jamais deviné sans nouvelle preuve.

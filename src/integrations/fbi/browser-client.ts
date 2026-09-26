@@ -121,6 +121,43 @@ export class BrowserFbiClient {
     await page.waitForTimeout(this.navigationSettleMs);
   }
 
+  /**
+   * Attend que le tableau de résultats de dérogations se STABILISE avant de
+   * le lire — § "ya le statut en cours qui est pas pris en compte",
+   * docs/FBI.md (2026-09-26/27) : le diagnostic ajouté au round précédent a
+   * confirmé que l'option "En Cours" est bien RÉELLEMENT sélectionnée au
+   * moment du clic (`selectedEtatValueAtSubmit: "EC"`), éliminant
+   * l'hypothèse d'un échec de sélection — mais UNE exécution a ensuite
+   * ramené `rawRowCount: 4` pour LES DEUX passes (au lieu des ~20 connus
+   * pour "TT"), bien plus vite que les exécutions précédentes (~38s contre
+   * ~90-100s) : signe que la lecture du tableau intervenait AVANT que
+   * l'appel AJAX déclenché par `rechercherDerogationAjax()`
+   * (`postAjax("rechercherDerogation.fbi?action=controleRecherche", ...)`)
+   * ait fini de peupler `#getTableauDerogation` — `page.waitForLoadState
+   * ("networkidle")` peut se résoudre dès que la RÉPONSE réseau est reçue,
+   * AVANT que `remplirDiv()` (callback) ait fini d'injecter et que
+   * DataTables ait fini de (re)dessiner le tableau, un délai variable
+   * selon la charge du serveur FBI.
+   *
+   * Best effort : compare deux lectures successives du tableau (même
+   * principe que la détection de fin de pagination dans
+   * `collectAllDerogationsWithDetail`) — s'arrête dès que le contenu ne
+   * change plus (signe que le rendu est terminé), ou après `maxAttempts`
+   * tentatives (recherche réellement vide, ou rendu anormalement lent —
+   * ne bloque jamais indéfiniment le job).
+   */
+  private async waitForStableDerogationTable(page: Page, maxAttempts = 6, intervalMs = this.navigationSettleMs): Promise<void> {
+    let previousSignature: string | null = null;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const rows = await selectors.resultsTableGenericRows(page).catch(() => null);
+      const signature = JSON.stringify(rows);
+      if (signature === previousSignature) return;
+      previousSignature = signature;
+      await page.waitForTimeout(intervalMs);
+    }
+  }
+
   async login(credentials: { username: string; password: string }): Promise<BrowserFbiSession> {
     // Contexte isolé PAR APPEL : jamais de cookie/session partagée entre deux
     // clubs, même s'ils réutilisent ce même Browser.
@@ -866,6 +903,7 @@ export class BrowserFbiClient {
         else await numeroInput.press("Enter");
         await this.settle(page);
         await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+        await this.waitForStableDerogationTable(page);
       } catch (error) {
         throw new FbiError(
           `Recherche de dérogation échouée pour la rencontre ${matchNumber} (état ${pass}) : ${error instanceof Error ? error.message : String(error)}`,
@@ -947,6 +985,7 @@ export class BrowserFbiClient {
         if ((await submit.count().catch(() => 0)) > 0) await submit.click();
         await this.settle(page);
         await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+        await this.waitForStableDerogationTable(page);
       } catch (error) {
         throw new FbiError(
           `Recherche de toutes les dérogations du club échouée (état ${pass}) : ${error instanceof Error ? error.message : String(error)}`,
