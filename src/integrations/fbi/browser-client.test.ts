@@ -463,6 +463,24 @@ describe("BrowserFbiClient.fetchAllDerogations ('je veux un bouton global qui ch
     await client.closeSession(session);
   });
 
+  it("vide EXPLICITEMENT 'Numéro de rencontre' avant de soumettre — dix-huitième round (2026-09-27, docs/FBI.md § 'Rencontre 23 uniquement') : constaté en production, une exécution n'a ramené QUE la rencontre '23' (deux jobs check_derogation pour ce numéro avaient tourné la veille) — le VRAI FBI retient la dernière valeur soumise CÔTÉ SERVEUR, jamais réinitialisée par un simple nouveau login/page fraîchement chargée (la fixture reproduit ça : le champ démarre à \"23\", jamais vide, voir son commentaire)", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    const derogations = await client.fetchAllDerogations(session);
+
+    // Doit ramener TOUTES les rencontres, jamais seulement "23" (qui
+    // n'existe même pas dans cette fixture — le champ, vidé
+    // explicitement, doit renvoyer TOUS les résultats).
+    expect(derogations.map((d) => d.numero).sort()).toEqual(["1", "1", "16", "9578", "9820"]);
+
+    const diagnostics = client.getLastDerogationPassDiagnostics();
+    // Preuve que le champ N'ÉTAIT PAS vide avant d'être vidé explicitement.
+    expect(diagnostics[0].numeroValueBeforeClear).toBe("23");
+
+    await client.closeSession(session);
+  });
+
   it("traverse TOUTES les pages de façon fiable malgré un AJAX FBI réel LENT — jamais de lecture prématurée confondant 'pas encore rafraîchi' avec 'dernière page atteinte' (régression production 2026-09-27 : pageCount variait de 1 à 5 D'UNE EXÉCUTION À L'AUTRE pour le même jeu de données réel, voir docs/FBI.md § 'Toujours 51...')", async () => {
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
     const session = await client.login({ username: "club1234", password: "secret" });

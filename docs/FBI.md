@@ -3252,3 +3252,48 @@ les dérogations" — `fbi_derogation_checks` devrait désormais compter ~82
 lignes (dans la limite de ce que la pagination/le budget de détail
 ramènent réellement), plusieurs par rencontre pour les 21 numéros
 concernés.
+
+### Rencontre 23 uniquement — le champ "Numéro de rencontre" n'est PAS vide par défaut sur le VRAI FBI (dix-huitième round, 2026-09-27)
+
+Le club relance après le dix-septième round : le résultat est PIRE que
+jamais — `matched: 8, unmatched: 0`, et les 8 dérogations trouvées sont
+TOUTES pour la rencontre "23" (les deux divisions BU11FN23/BU11MN2
+confondues), plus 3 lignes filtrées (`rawRowCount: 11`). Aucune autre
+rencontre. `fetchAllDerogations` ne remplit JAMAIS le champ "Numéro de
+rencontre" (recherche "à numéro vide", voir sa doc) — donc si le résultat
+est filtré sur "23" pile, c'est que ce champ N'ÉTAIT PAS vide au moment
+de la soumission.
+
+Preuve corrélée directement en base (`fbi_jobs`) : **deux jobs
+`check_derogation` pour CETTE MÊME rencontre "23" ont tourné la veille**
+(2026-09-25) — `fetchDerogationForMatch` REMPLIT ce champ avec le numéro
+recherché avant de soumettre. Le VRAI FBI (application Java legacy)
+retient donc la DERNIÈRE VALEUR SOUMISE pour ce champ CÔTÉ SERVEUR (très
+probablement liée au compte utilisateur, pas au cookie de session) — un
+nouveau login/`BrowserContext` frais ne le réinitialise PAS. Jamais
+constaté ni supposé avant ce round : `fetchAllDerogations` comptait sur
+un champ "vide par défaut" après navigation vers l'écran de recherche,
+une hypothèse qui ne tient pas en pratique.
+
+**Fix** : le champ est désormais vidé EXPLICITEMENT (`.fill("")`) juste
+avant CHAQUE soumission dans `fetchAllDerogations`, quelle que soit sa
+valeur de départ — ne plus jamais dépendre d'un état ambiant supposé
+quand on peut l'imposer. Sa valeur AVANT ce vidage est capturée dans
+`passDiagnostics[0].numeroValueBeforeClear` (persisté, consultable sans
+deviner si ce risque se reproduit).
+
+**Fixture mise à jour pour refléter la preuve** : le champ "Numéro de
+rencontre" démarre désormais à `value="23"` (jamais vide) dans
+`rechercher-derogation.html` — reproduit fidèlement le comportement
+constaté, et par la même occasion couvre TOUS les tests
+`fetchAllDerogations` existants contre cette régression (ils
+échoueraient tous si le vidage explicite manquait). Nouveau test dédié
+vérifiant `numeroValueBeforeClear: "23"`. 29/29 tests FBI passants, suite
+complète (423 tests) inchangée par ailleurs.
+
+**Prochaine vérification en production** : re-déclencher "Vérifier
+toutes les dérogations" — `foundNumeros`/`matched` devrait à nouveau
+couvrir la diversité de rencontres attendue (pas uniquement "23"), et
+`passDiagnostics[0].numeroValueBeforeClear` confirmera si ce risque était
+bien la cause (une valeur non-vide) ou si le champ était déjà vide cette
+fois (cause différente à chercher).

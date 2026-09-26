@@ -135,6 +135,8 @@ export interface DerogationPassDiagnostic {
   pageTitleAtFirstRead: string;
   /** Jusqu'aux 3 premières lignes BRUTES lues (dictionnaire en-tête→cellule complet, AVANT tout filtrage), toutes colonnes confondues — voir sa doc dans `collectAllDerogationPages` : permet de voir le VRAI contenu d'une exécution anormale (ex : rawRowCount très bas) sans deviner. */
   rawRowSample: Record<string, string>[];
+  /** Valeur du champ "Numéro de rencontre" AVANT qu'il ne soit vidé explicitement (voir `fetchAllDerogations`) — non-vide confirme que FBI retient une valeur soumise précédemment côté serveur, jamais réinitialisée par un simple nouveau login. `null` si le champ n'a pas pu être lu. */
+  numeroValueBeforeClear: string | null;
 }
 
 export class BrowserFbiClient {
@@ -1295,6 +1297,27 @@ export class BrowserFbiClient {
       .inputValue()
       .catch(() => null);
 
+    /**
+     * Vide EXPLICITEMENT "Numéro de rencontre" avant de soumettre — dix-
+     * huitième round (2026-09-27, docs/FBI.md § "Toujours 51..." →
+     * "Rencontre 23 uniquement") : une exécution a ramené `matched: 8,
+     * rawRowCount: 11` — TOUTES pour la rencontre "23" (2 divisions),
+     * alors que le champ n'est JAMAIS rempli par cette méthode (recherche
+     * "à numéro VIDE", voir sa doc). Preuve corrélée en base : deux jobs
+     * `check_derogation` pour CETTE MÊME rencontre "23" (2026-09-25,
+     * `fetchDerogationForMatch` REMPLIT le champ) — signe que le VRAI FBI
+     * retient la dernière valeur soumise pour ce compte CÔTÉ SERVEUR,
+     * jamais réinitialisée par un nouveau login/BrowserContext (jamais
+     * supposé avant ce round : `fetchAllDerogations` comptait sur un champ
+     * "vide par défaut" après navigation, qui ne l'est PAS toujours en
+     * pratique). Ne JAMAIS dépendre d'un état ambiant supposé quand on
+     * peut l'imposer explicitement — vidé ici avant CHAQUE soumission,
+     * quelle que soit sa valeur de départ.
+     */
+    const numeroInput = await selectors.matchNumberSearchInput(page);
+    const numeroValueBeforeClear = numeroInput ? await numeroInput.inputValue().catch(() => null) : null;
+    if (numeroInput) await numeroInput.fill("").catch(() => {});
+
     try {
       const submit = selectors.searchSubmitControl(page).first();
       if ((await submit.count().catch(() => 0)) > 0) await submit.click();
@@ -1356,6 +1379,7 @@ export class BrowserFbiClient {
       lengthSelect,
       pageTitleAtFirstRead,
       rawRowSample,
+      numeroValueBeforeClear,
     });
 
     return result;

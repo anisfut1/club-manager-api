@@ -88,7 +88,18 @@
         <label class="active ml-4 mt-2">Etat de la dérogation</label>
       </div>
       <div class="row">
-        <input type="text" name="rechercheDerogationForm.rechercheDerogationBean.numeroRencontre" value="" id="rechercheDerogationFormNumeroRencontre" />
+        <!--
+          `value="23"` — délibérément NON vide, simule ce que le club a
+          constaté en production le 2026-09-27 (§ "Rencontre 23
+          uniquement", docs/FBI.md) : le VRAI FBI retient la dernière
+          valeur soumise pour ce champ CÔTÉ SERVEUR (deux jobs
+          `check_derogation` pour la rencontre "23" avaient tourné la
+          veille), jamais réinitialisée par un simple nouveau login/page
+          fraîchement chargée. `fetchAllDerogations` doit vider ce champ
+          EXPLICITEMENT avant de soumettre — jamais compter sur un "vide
+          par défaut" supposé après navigation.
+        -->
+        <input type="text" name="rechercheDerogationForm.rechercheDerogationBean.numeroRencontre" value="23" id="rechercheDerogationFormNumeroRencontre" />
         <label for="rechercheDerogationFormNumeroRencontre" class="textRightLabel">Numéro de rencontre</label>
       </div>
       <div class="row">
