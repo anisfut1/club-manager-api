@@ -145,7 +145,35 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
     // largement défavorable. Une ligne "A Créer" périmée qui reste
     // affichée quelques exécutions de plus est un moindre mal ; elle se
     // corrige d'elle-même dès qu'une exécution future la retrouve.
-    const result = { derogationsFound: derogations.length, matched, unmatched };
+
+    /**
+     * Diagnostic riche AJOUTÉ le 2026-09-26 (constaté en production : un
+     * lot connu de ~20 dérogations est retombé à `derogationsFound: 3,
+     * matched: 0` juste après le déploiement de l'extraction de détail par
+     * `href`/nouvel onglet, § "cinquième round", docs/FBI.md) — jusqu'ici
+     * `result` ne gardait que des COMPTEURS, impossible de distinguer
+     * depuis la base (sans dépendre des logs Vercel, lus une seule fois
+     * puis perdus) DEUX hypothèses très différentes :
+     * 1. La recherche FBI elle-même a régressé (état/pagination cassés par
+     *    le nouvel onglet de détail, qui n'a jamais été éprouvé contre le
+     *    VRAI FBI) — les numéros trouvés seraient alors un SOUS-ENSEMBLE
+     *    anormal des numéros déjà connus.
+     * 2. La recherche a bien trouvé 3 VRAIES dérogations récentes, mais
+     *    dont la rencontre FFBB correspondante n'est pas encore synchronisée
+     *    (numéros absents de `matches` pour la saison en cours) — un simple
+     *    problème de synchronisation, sans rapport avec ce job.
+     * Persisté dans `fbi_jobs.result` (consultable en base immédiatement,
+     * jamais un aller-retour Vercel) : le détail par ligne trouvée (numéro/
+     * état/si le motif a pu être lu) et un échantillon des numéros de
+     * `matches` disponibles pour comparaison.
+     */
+    const result = {
+      derogationsFound: derogations.length,
+      matched,
+      unmatched,
+      foundDerogations: derogations.map((d) => ({ numero: d.numero, etat: d.etat, motifLu: d.motif !== null })),
+      matchNumerosDisponibles: Array.from(matchIdByNumero.keys()).sort(),
+    };
     await supabase.from("fbi_jobs").update({ status: "succeeded", finished_at: now, result }).eq("id", job.id);
 
     logInfo("Job check_all_derogations réussi", { clubId: job.club_id, jobId: job.id, ...result });
