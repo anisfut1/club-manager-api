@@ -47,28 +47,25 @@ export interface BrowserFbiSession {
 }
 
 /**
- * Passes de recherche de dérogations — "ya le statut en cours qui est pas
- * pris en compte" (retour du club, 2026-09-26, avec le HTML source réel de
- * `rechercherDerogation.fbi` ET de `afficherDerogation.fbi` pour la
- * rencontre n°9820, dont la dérogation ACTUELLE a pour acceptation "NC"
- * (non communiqué, aucune `reponseAdversaireDate`) — un dossier RÉELLEMENT
- * "En Cours" à cette date). "Tous les états (sauf à créer)" (`TT`) a
- * toujours été supposé couvrir tout sauf "A Créer" — un lot connu de ~20
- * dérogations (Acceptée/Refusée) confirme que `TT` couvre bien CES
- * états-là — mais le club constate en conditions réelles qu'un dossier
- * "En Cours" (`EC`) n'apparaît PAS dans les résultats sous `TT`, que ce
- * soit un comportement voulu ou un bug du VRAI FBI (jamais vérifiable
- * depuis cet environnement, réseau `*.ffbb.com` bloqué). Plutôt que de
- * deviner lequel des deux, une DEUXIÈME passe explicite sur `EC` — même
- * principe que `fetchScheduleRows` (déjà deux passes sur la case "non
- * joué" pour la même raison : un seul filtre à la fois ne couvre jamais
- * les deux sous-ensembles) — garantit que les dossiers "En Cours" sont
- * ramenés, que `TT` les couvre réellement ou non (dédoublonnée par numéro
- * dans `fetchAllDerogations`, donc jamais de doublon si `TT` les couvrait
- * déjà). Partagée par `fetchDerogationForMatch` (une seule rencontre) et
- * `fetchAllDerogations` (tout le club).
+ * Passe(s) de recherche de dérogations — historique de la découverte
+ * (docs/FBI.md pour le détail complet, § "Retour à une seule passe TT") :
+ * un round précédent avait introduit une passe PAR ÉTAT (`EC`, `ACCEPT`,
+ * `ORGCREACC`, `ORGCREREF`), en réaction à des dossiers "En Cours" puis
+ * "Acceptée par les deux associations sportives" absents des résultats
+ * sous "Tous les états (sauf à créer)" (`TT`). **Le club a corrigé cette
+ * hypothèse** ("si si il prend tout en compte le tous les états, c juste
+ * que ya 5 pages à prendre en compte", 2026-09-27) : `TT` couvre bien
+ * TOUS les états réels — la cause était une PAGINATION incomplète
+ * (`collectAllDerogationsWithDetail` ne traversait pas toutes les pages,
+ * voir sa doc). Revenu à une seule passe `TT`, jamais une par état —
+ * inutilement lent (jusqu'à 4x plus de connexions/recherches) et fondé
+ * sur une fausse piste. Partagée par `fetchDerogationForMatch` (une seule
+ * rencontre) et `fetchAllDerogations` (tout le club) ; la structure en
+ * tableau (même à un seul élément) est conservée pour que le diagnostic
+ * par passe (`DerogationPassDiagnostic`) reste réutilisable si un besoin
+ * similaire se représentait, prouvé sur preuve la prochaine fois.
  */
-const DEROGATION_ETAT_PASSES = ["tousLesEtats", "enCours"] as const;
+const DEROGATION_ETAT_PASSES = ["tousLesEtats"] as const;
 type DerogationEtatPass = (typeof DEROGATION_ETAT_PASSES)[number];
 
 export interface BrowserFbiClientOptions {
@@ -877,16 +874,15 @@ export class BrowserFbiClient {
    * du club, 2026-09-25 : "il me faut du détail sur le motif... les dates
    * initiales et demandées... comme sur fbi", voir `fetchDerogationDetailForRow`).
    *
-   * Boucle sur `DEROGATION_ETAT_PASSES` (`TT` puis `EC`, voir sa doc) :
-   * s'arrête à la première passe qui trouve CE numéro — "TT" seul aurait pu
-   * manquer une dérogation actuellement "En Cours" pour ce match, exactement
-   * comme constaté pour la rencontre n°9820 le 2026-09-26.
+   * Boucle sur `DEROGATION_ETAT_PASSES` (une seule passe "TT" depuis le
+   * retour à une seule passe, voir sa doc) — la structure en boucle est
+   * conservée pour rester symétrique avec `fetchAllDerogations`.
    */
   async fetchDerogationForMatch(session: BrowserFbiSession, matchNumber: string): Promise<FbiDerogationRow | null> {
     const { page } = session;
 
     for (const pass of DEROGATION_ETAT_PASSES) {
-      await this.navigateToDerogationSearchScreen(page, pass);
+      await this.navigateToDerogationSearchScreen(page);
 
       const numeroInput = await selectors.matchNumberSearchInput(page);
       if (!numeroInput) {
@@ -946,14 +942,12 @@ export class BrowserFbiClient {
    * mécanisme (extraction de `href`, nouvel onglet) n'a PAS les défauts des
    * deux précédents.
    *
-   * Boucle sur `DEROGATION_ETAT_PASSES` (`TT` puis `EC`, voir sa doc) —
-   * "ya le statut en cours qui est pas pris en compte" (retour du club,
-   * 2026-09-26) : un lot connu de ~20 dérogations est retombé à 3 trouvées
-   * juste après le déploiement de l'extraction de détail, et la rencontre
-   * n°9820 (HTML source réel fourni) a une dérogation ACTUELLEMENT "En
-   * Cours" absente des résultats sous "TT" seul. Dédoublonnée par numéro —
-   * la passe "EC" gagne en cas de conflit (un dossier "En Cours" retrouvé
-   * est plus à jour qu'un éventuel doublon "TT" pour le même numéro).
+   * Boucle sur `DEROGATION_ETAT_PASSES` (une seule passe "TT" — voir sa
+   * doc, § "Retour à une seule passe TT" : le club a confirmé que "Tous
+   * les états" couvre bien tous les états réels, la cause des dossiers
+   * manquants était une pagination incomplète, pas le filtre d'état).
+   * Dédoublonnée par numéro dans `collected` (utile si une future preuve
+   * montrait un besoin réel de plusieurs passes, jamais en l'état actuel).
    */
   async fetchAllDerogations(session: BrowserFbiSession): Promise<FbiDerogationRow[]> {
     const { page } = session;
@@ -961,18 +955,15 @@ export class BrowserFbiClient {
     this.lastDerogationPassDiagnostics = [];
 
     for (const pass of DEROGATION_ETAT_PASSES) {
-      await this.navigateToDerogationSearchScreen(page, pass);
+      await this.navigateToDerogationSearchScreen(page);
 
       /**
        * Relu APRÈS la tentative de sélection dans `navigateToDerogationSearchScreen`
-       * (jamais supposé) — § "ya le statut en cours qui est pas pris en
-       * compte", docs/FBI.md : le club a fourni la preuve directe de 9
-       * dérogations RÉELLEMENT "En Cours" sur le vrai FBI, alors que la
-       * passe "EC" n'en a ramené AUCUNE lors des deux dernières exécutions.
-       * Avant de deviner un troisième correctif, ce diagnostic confirme si
-       * "En Cours" est VRAIMENT sélectionné au moment du clic sur
-       * RECHERCHER, ou si la sélection échoue silencieusement (best effort
-       * intégral dans `navigateToDerogationSearchScreen`).
+       * (jamais supposé) — conservé après le retour à une seule passe "TT"
+       * (voir docs/FBI.md, § "Retour à une seule passe TT") : reste utile
+       * pour confirmer, sur preuve, qu'aucune régression future ne fait
+       * échouer silencieusement la sélection d'état (best effort intégral
+       * dans `navigateToDerogationSearchScreen`).
        */
       const selectedEtatValueAtSubmit = await page
         .locator('select[name*="etat" i]')
@@ -1084,6 +1075,20 @@ export class BrowserFbiClient {
         await next.first().click();
         await this.settle(page);
         await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+        /**
+         * "si si il prend tout en compte le tous les états, c juste que ya
+         * 5 pages à prendre en compte" (club, 2026-09-27) — le VRAI bug :
+         * `resultsTableGenericRows` était lu juste après ce clic AVANT que
+         * la page suivante ait fini de se (re)dessiner (même mécanique que
+         * la lecture prématurée après la soumission de recherche, voir
+         * `waitForStableDerogationTable`), et la vérification de fin de
+         * pagination (`signature === previousSignature` en haut de la
+         * boucle) pouvait alors comparer un état TRANSITOIRE (encore les
+         * lignes de la page précédente, ou une page partiellement
+         * redessinée) à la page précédente RÉELLE — les jugeant identiques
+         * à tort, arrêtant la pagination bien avant la dernière page.
+         */
+        await this.waitForStableDerogationTable(page);
       } catch {
         break;
       }
@@ -1149,15 +1154,16 @@ export class BrowserFbiClient {
 
   /**
    * Rejoint l'écran de recherche des dérogations et réinitialise "Etat de
-   * la dérogation" sur l'état demandé (`pass`) PAR LIBELLÉ (voir
+   * la dérogation" sur "Tous les états (sauf à créer)" PAR LIBELLÉ (voir
    * ci-dessous, jamais par position — un précédent correctif sélectionnait
    * à tort le premier `<option>`, "A Créer" dans la vraie liste, ce qui
    * aurait masqué toutes les vraies demandes en cours). Best effort,
    * jamais bloquant. Partagé par `fetchDerogationForMatch` et
-   * `fetchAllDerogations`, chacun bouclant sur `DEROGATION_ETAT_PASSES`
-   * (voir sa doc, § "ya le statut en cours qui est pas pris en compte").
+   * `fetchAllDerogations` (voir la doc de `DEROGATION_ETAT_PASSES`, §
+   * "Retour à une seule passe TT" — une seule passe suffit, `TT` couvre
+   * bien tous les états réels, une pagination robuste est ce qui manquait).
    */
-  private async navigateToDerogationSearchScreen(page: Page, pass: DerogationEtatPass = "tousLesEtats"): Promise<void> {
+  private async navigateToDerogationSearchScreen(page: Page): Promise<void> {
     const targetUrl = `${this.baseUrl}/rechercherDerogation.fbi`;
 
     try {
@@ -1168,15 +1174,15 @@ export class BrowserFbiClient {
     }
 
     /**
-     * Sélectionne "Tous les états (sauf à créer)" (`TT`) ou "En Cours"
-     * (`EC`) selon `pass` — confirmé par capture d'écran ET par le HTML
-     * source réel de `rechercherDerogation.fbi` fourni par le club les
-     * 2026-09-25/26 : les 6 options réelles sont "A Créer" (value="CREER")
-     * | "En Cours" (value="EC") | "Acceptée par les deux associations
-     * sportives" (value="ACCEPT") | "Acceptée par l'organisme dirigeant"
-     * (value="ORGCREACC") | "Refusée" (value="ORGCREREF") | "Tous les
-     * états (sauf à créer)" (value="TT") — valeurs jamais devinées, lues
-     * dynamiquement ci-dessous par LIBELLÉ, jamais codées en dur.
+     * Sélectionne "Tous les états (sauf à créer)" — confirmé par capture
+     * d'écran ET par le HTML source réel de `rechercherDerogation.fbi`
+     * fourni par le club le 2026-09-25 : les 6 options réelles sont "A
+     * Créer" (value="CREER") | "En Cours" (value="EC") | "Acceptée par
+     * les deux associations sportives" (value="ACCEPT") | "Acceptée par
+     * l'organisme dirigeant" (value="ORGCREACC") | "Refusée"
+     * (value="ORGCREREF") | "Tous les états (sauf à créer)" (value="TT",
+     * `selected="selected"` par défaut) — valeurs jamais devinées, lues
+     * dynamiquement ci-dessous, jamais codées en dur.
      *
      * **Bug corrigé le 2026-09-25 (deuxième round, HTML réel fourni par le
      * club après un premier test en production qui ne renvoyait QUE des
@@ -1200,7 +1206,7 @@ export class BrowserFbiClient {
      * demande — l'exclure est le comportement voulu pour "vérifier
      * toutes les demandes", jamais un oubli).
      */
-    const labelPattern = pass === "enCours" ? /^en cours$/i : /tous les [ée]tats/i;
+    const labelPattern = /tous les [ée]tats/i;
 
     try {
       const etatSelect = page.locator('select[name*="etat" i]').first();

@@ -2694,3 +2694,64 @@ timing AJAX serait insuffisante et il faudrait alors envisager qu'un
 symbole d'anti-bot/rate-limit FBI dégrade la recherche après plusieurs
 connexions rapprochées dans la même fenêtre de temps (déjà documenté par
 ailleurs pour `discover_emarque`) — jamais deviné sans nouvelle preuve.
+
+### Retour à une seule passe TT (neuvième round, 2026-09-27)
+
+Le correctif ci-dessus (`waitForStableDerogationTable`) fait remonter
+`rawRowCount` de 4 à 23 (TT) — une nette amélioration — mais la passe "En
+Cours" reste incomplète (7 dérogations sur les 9 réellement en cours,
+confirmées par une capture complète et actuelle du club). Puis le club
+signale une DEUXIÈME dérogation manquante — rencontre n°16, état
+"Acceptée par les deux associations sportives" (`ACCEPT`) — avec ce
+message, décisif : **"si si il prend tout en compte le tous les états, c
+juste que ya 5 pages à prendre en compte"**.
+
+Ce retour CORRIGE directement l'hypothèse de tous les rounds précédents
+depuis le sixième : "Tous les états" (`TT`) n'a jamais été le problème —
+il couvre RÉELLEMENT tous les états (y compris "En Cours" et "Acceptée
+par les deux associations sportives"). La vraie cause, de bout en bout,
+était une **pagination incomplète** : le club voit 5 pages de résultats
+sous "Tous les états", notre code n'en lisait qu'une fraction.
+
+**Décision** : retour à une seule passe `TT` (`DEROGATION_ETAT_PASSES =
+["tousLesEtats"]`), suppression de la sélection par état individuel
+(`EC`/`ACCEPT`/`ORGCREACC`/`ORGCREREF`) introduite aux rounds 7/8 —
+fondée sur une fausse piste, et inutilement coûteuse (jusqu'à 4
+recherches/logins au lieu d'une). Le diagnostic par passe
+(`DerogationPassDiagnostic`/`getLastDerogationPassDiagnostics()`) est
+conservé (structure en tableau à un seul élément) : utile pour prouver
+sur preuve un futur besoin similaire, jamais pour en deviner un.
+
+**Deuxième correctif, dans `collectAllDerogationsWithDetail`** : la
+`nextDisabledAncestor` (détection d'un "Suivant" désactivé via une classe
+`disabled` sur le `<li>` parent) ajoutée juste avant ce retour en arrière
+est retirée — elle reposait sur une convention DataTables **jamais
+confirmée par le HTML réel de CE tableau précis** (deviné par analogie
+avec la librairie générique, contraire à la discipline du projet), et
+risquait justement de provoquer l'inverse du symptôme réel (arrêter la
+pagination trop tôt plutôt que trop tard). La vraie cause de la
+pagination incomplète est la MÊME lecture-trop-tôt déjà diagnostiquée
+pour la recherche initiale : `waitForStableDerogationTable(page)` est
+maintenant aussi appelée après CHAQUE clic sur "Suivant" (pas seulement
+après la soumission de recherche), avant de relire le tableau pour la
+page suivante — sans dépendre d'une classe CSS jamais vue en HTML réel.
+
+**Test de régression** ajouté avec des données RÉALISTES : la fixture
+`rechercher-derogation.html` force artificiellement 2 pages sous "Tous
+les états" (`PAGE_SIZE = 2`, 4 rencontres non-"A Créer" désormais, dont la
+n°16 ajoutée pour reproduire fidèlement le retour du club), avec une
+VRAIE pagination "Suivant"/"Précédent" cliquable (jamais un `href="#"`
+inerte) — le nouveau test vérifie que `fetchAllDerogations` retrouve bien
+les 4 rencontres, y compris celles de la 2ᵉ page, et que
+`rawRowCount === keptRowCount === 4` (aucune ligne fantôme, aucune page
+perdue en route). 25/25 tests passants (FBI), suite complète (416 tests)
+inchangée par ailleurs.
+
+**Prochaine vérification en production** : si `fbi_jobs.result` montre
+maintenant `derogationsFound` proche du total réel du club (le club a vu
+5 pages, donc probablement ~40-50+ dérogations selon la taille de page
+réelle de FBI) avec `rawRowCount === keptRowCount` pour la passe unique
+`tousLesEtats`, la pagination est enfin correctement traversée. Sinon,
+demander au club le nombre exact affiché ("Affichage de X à Y sur Z
+entrées") pour comparer directement à `derogationsFound`, plutôt que de
+deviner un dixième correctif.

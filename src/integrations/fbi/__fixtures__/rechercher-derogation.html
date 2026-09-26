@@ -31,14 +31,17 @@
          dans un NOUVEL onglet, sans jamais cliquer/naviguer sur CETTE page
          (voir le commentaire au-dessus de `fetchDerogationDetailByHref`).
 
-      4. "ya le statut en cours qui est pas pris en compte" (retour du club,
-         2026-09-26, HTML source réel de la rencontre n°9820 : dérogation
-         ACTUELLEMENT "En Cours", `acceptation` = "NC", aucune
-         `reponseAdversaireDate`) — la ligne "9820" ci-dessous n'est
-         délibérément PAS renvoyée sous le filtre "TT" (reproduit le
-         comportement RÉEL constaté, que ce soit un choix ou un bug de
-         FBI), UNIQUEMENT sous "EC" — prouve que `DEROGATION_ETAT_PASSES`
-         (browser-client.ts, passe "TT" PUIS "EC") la retrouve bien.
+      4. "si si il prend tout en compte le tous les états, c juste que ya 5
+         pages à prendre en compte" (club, 2026-09-27, après un round
+         intermédiaire qui avait cru "Tous les états" (TT) incomplet pour
+         "En Cours" et "Acceptée par les deux associations sportives") —
+         `TT` couvre RÉELLEMENT tous les états (sauf "A Créer"), la vraie
+         cause était une PAGINATION incomplète. `PAGE_SIZE = 2` ci-dessous
+         force artificiellement plusieurs pages (3 rencontres non-"A
+         Créer" → 2 pages) pour reproduire fidèlement ce scénario en test,
+         avec une VRAIE pagination "Suivant"/"Précédent" cliquable (jamais
+         `href="#"` inerte) — voir `collectAllDerogationsWithDetail`
+         (browser-client.ts) et `waitForStableDerogationTable`.
     -->
     <form id="rechercherDerogation">
       <div class="row">
@@ -86,6 +89,19 @@
         </thead>
         <tbody></tbody>
       </table>
+      <!--
+        Pagination DataTables réelle (jquery.datatable.min.js, confirmé par
+        les <script> du HTML source réel) — VRAIMENT cliquable ici (voir le
+        script plus bas), pas juste un marqueur statique : reproduit le "5
+        pages à prendre en compte" constaté par le club le 2026-09-27.
+      -->
+      <div class="dataTables_paginate">
+        <ul class="pagination">
+          <li class="paginate_button previous" id="paginatePrevious"><a href="#" onclick="return changerPage(-1);">Précédent</a></li>
+          <li class="paginate_button active"><a href="#" id="paginateCurrentPage">1</a></li>
+          <li class="paginate_button next" id="paginateNext"><a href="#" onclick="return changerPage(1);">Suivant</a></li>
+        </ul>
+      </div>
     </div>
 
     <script>
@@ -127,34 +143,60 @@
           cells: ["14/09/2026 14:55", "9820", "PRF", "MONTPELLIER BASKET MOSSON - 1", "SPORT CLUB DE SETE BASKET - 1", "15/11/2026", "17:00", "14/11/2026", "En Cours"],
           detailUrl: "afficherDerogation.fbi?idDerogation=CEM2hVj%2BYyDjc%2FV2sYOC6Q%3D%3D&idRencontre=0",
         },
+        {
+          numero: "16",
+          etat: "ACCEPT",
+          etatLabel: "Acceptée par les deux associations sportives",
+          cells: ["23/09/2026 12:44", "16", "BU11FN23", "SPORT CLUB DE SETE BASKET - 1", "ST GELY BASKETBALL - 1", "03/10/2026", "15:00", "", "Acceptée par les deux associations sportives"],
+          detailUrl: "afficherDerogation.fbi?idDerogation=zC%2BwT8kJqRr9&idRencontre=0",
+        },
       ];
+
+      // Force artificiellement plusieurs pages sous "Tous les états" (3
+      // rencontres non-"A Créer" → 2 pages) — voir la note 4 plus haut.
+      const PAGE_SIZE = 2;
+      let lastFilteredRows = [];
+      let currentPage = 0;
 
       function rechercherDerogationAjax() {
         const etat = document.querySelector('select[name*="etat" i]').value;
         const numero = document.getElementById("rechercheDerogationFormNumeroRencontre").value.trim();
 
-        const rows = ALL_ROWS.filter((row) => {
-          // Reproduit le comportement RÉEL constaté par le club le
-          // 2026-09-26 ("ya le statut en cours qui est pas pris en
-          // compte") : "TT" exclut aussi "En Cours", pas seulement "A
-          // Créer" — que ce soit un choix ou un bug du VRAI FBI.
-          if (etat === "TT" && (row.etat === "CREER" || row.etat === "EC")) return false;
+        // "Tous les états (sauf à créer)" couvre RÉELLEMENT tous les états
+        // — voir la note 4 plus haut : le bug n'était jamais le filtre.
+        lastFilteredRows = ALL_ROWS.filter((row) => {
+          if (etat === "TT" && row.etat === "CREER") return false;
           if (etat !== "TT" && row.etat !== etat) return false;
           if (numero && row.numero !== numero) return false;
           return true;
         });
+        currentPage = 0;
+        renderCurrentPage();
+      }
 
+      function changerPage(delta) {
+        const maxPage = Math.max(0, Math.ceil(lastFilteredRows.length / PAGE_SIZE) - 1);
+        const next = currentPage + delta;
+        if (next < 0 || next > maxPage) return false;
+        currentPage = next;
+        renderCurrentPage();
+        return false;
+      }
+
+      function renderCurrentPage() {
+        const rows = lastFilteredRows.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
         const tbody = document.querySelector("#getTableauDerogation tbody");
         tbody.innerHTML = "";
+        document.getElementById("paginateCurrentPage").textContent = String(currentPage + 1);
 
         if (rows.length === 0) {
           // Reproduit la ligne "Aucune donnée disponible dans le tableau"
           // que DataTables insère RÉELLEMENT dans <tbody> quand une
           // recherche/page ne renvoie aucun résultat (constaté en
-          // production le 2026-09-26 : la passe "En Cours" — ou toute
-          // recherche par numéro inexistant — produisait une ligne
-          // "fantôme" numero=null/etat=null que browser-client.ts filtre
-          // désormais explicitement, voir son commentaire).
+          // production le 2026-09-26 : une recherche par numéro inexistant
+          // produisait une ligne "fantôme" numero=null/etat=null que
+          // browser-client.ts filtre désormais explicitement, voir son
+          // commentaire).
           const emptyTr = document.createElement("tr");
           const emptyTd = document.createElement("td");
           emptyTd.colSpan = 10;

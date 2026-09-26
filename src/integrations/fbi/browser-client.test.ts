@@ -402,7 +402,7 @@ describe("BrowserFbiClient.fetchDerogationForMatch (gestion des dérogations, vo
     await client.closeSession(session);
   });
 
-  it("renvoie null quand aucune dérogation n'existe pour ce numéro (cas normal, pas une erreur) — traverse aussi la ligne fantôme DataTables 'Aucune donnée disponible' sur les DEUX passes sans planter ni la confondre avec une vraie dérogation", async () => {
+  it("renvoie null quand aucune dérogation n'existe pour ce numéro (cas normal, pas une erreur) — traverse aussi la ligne fantôme DataTables 'Aucune donnée disponible' sans planter ni la confondre avec une vraie dérogation", async () => {
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
     const session = await client.login({ username: "club1234", password: "secret" });
 
@@ -412,21 +412,6 @@ describe("BrowserFbiClient.fetchDerogationForMatch (gestion des dérogations, vo
     await client.closeSession(session);
   });
 
-  it("retombe sur une seconde passe 'En Cours' quand 'Tous les états' ne trouve rien pour ce numéro — 'ya le statut en cours qui est pas pris en compte' (retour du club, 2026-09-26, HTML source réel de la rencontre n°9820)", async () => {
-    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
-    const session = await client.login({ username: "club1234", password: "secret" });
-
-    // La fixture reproduit le comportement RÉEL constaté : "9820" (état
-    // "En Cours") n'apparaît QUE sous le filtre "EC", jamais sous "TT".
-    const derogation = await client.fetchDerogationForMatch(session, "9820");
-
-    expect(derogation).toMatchObject({ numero: "9820", etat: "En Cours" });
-    // Trouvée seulement à la seconde passe : le <select> reste sur "EC" au
-    // moment où la méthode rend la main (jamais remis sur "TT" après coup).
-    expect(await session.page.locator('select[name*="etat" i]').inputValue()).toBe("EC");
-
-    await client.closeSession(session);
-  });
 });
 
 describe("BrowserFbiClient.fetchAllDerogations ('je veux un bouton global qui check toutes les demandes, pas match par match', voir docs/FBI.md)", () => {
@@ -436,26 +421,33 @@ describe("BrowserFbiClient.fetchAllDerogations ('je veux un bouton global qui ch
 
     const derogations = await client.fetchAllDerogations(session);
 
-    // La fixture contient 4 rencontres : "1" et "9578" (Acceptée par
-    // l'organisme dirigeant), "9820" (En Cours) et "2659" (A Créer) — les
-    // trois premières doivent ressortir (TT retrouve les deux premières,
-    // EC retrouve "9820" — voir le test dédié ci-dessous), jamais "2659".
-    expect(derogations.map((d) => d.numero).sort()).toEqual(["1", "9578", "9820"]);
+    // La fixture contient 5 rencontres : "1"/"9578" (Acceptée par
+    // l'organisme dirigeant), "9820" (En Cours), "16" (Acceptée par les
+    // deux associations sportives) et "2659" (A Créer) — les quatre
+    // premières doivent ressortir sous "Tous les états", jamais "2659".
+    expect(derogations.map((d) => d.numero).sort()).toEqual(["1", "16", "9578", "9820"]);
     expect(derogations.every((d) => d.etat !== "A Créer")).toBe(true);
-    // Dernière passe exécutée : "EC" (TT puis EC, voir DEROGATION_ETAT_PASSES).
-    expect(await session.page.locator('select[name*="etat" i]').inputValue()).toBe("EC");
+    expect(await session.page.locator('select[name*="etat" i]').inputValue()).toBe("TT");
 
     await client.closeSession(session);
   });
 
-  it("retrouve aussi les dérogations 'En Cours' via une seconde passe — 'ya le statut en cours qui est pas pris en compte' (retour du club, 2026-09-26) : un lot connu de ~20 dérogations est retombé à 3 trouvées juste après le déploiement de l'extraction de détail, cause racine confirmée par le HTML source réel de la rencontre n°9820", async () => {
+  it("traverse TOUTES les pages de résultats sous UNE SEULE passe 'Tous les états' — 'si si il prend tout en compte le tous les états, c juste que ya 5 pages à prendre en compte' (correction du club, 2026-09-27, après un round intermédiaire qui avait ajouté à tort une passe par état alors que la vraie cause était une pagination incomplète, voir docs/FBI.md § 'Retour à une seule passe TT')", async () => {
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
     const session = await client.login({ username: "club1234", password: "secret" });
 
     const derogations = await client.fetchAllDerogations(session);
 
-    const enCours = derogations.find((d) => d.numero === "9820");
-    expect(enCours).toMatchObject({ etat: "En Cours", division: "PRF" });
+    // La fixture force 2 pages (PAGE_SIZE=2, 4 rencontres non-"A Créer") —
+    // les 4 doivent être trouvées, y compris celles de la 2ᵉ page ("9820"
+    // et "16"), jamais seulement celles de la 1ère.
+    expect(derogations.map((d) => d.numero).sort()).toEqual(["1", "16", "9578", "9820"]);
+
+    const diagnostics = client.getLastDerogationPassDiagnostics();
+    expect(diagnostics).toHaveLength(1);
+    // Aucune ligne fantôme ni page perdue en route : lignes brutes lues =
+    // lignes conservées = les 4 vraies dérogations, toutes pages confondues.
+    expect(diagnostics[0]).toMatchObject({ pass: "tousLesEtats", rawRowCount: 4, keptRowCount: 4 });
 
     await client.closeSession(session);
   });
@@ -466,10 +458,10 @@ describe("BrowserFbiClient.fetchAllDerogations ('je veux un bouton global qui ch
 
     const derogations = await client.fetchAllDerogations(session);
 
-    expect(derogations).toHaveLength(3);
+    expect(derogations).toHaveLength(4);
     for (const derogation of derogations) {
       // Le serveur de test STATIQUE route par CHEMIN seulement (query string
-      // ignorée) : les trois lignes renvoient donc la MÊME fixture de détail
+      // ignorée) : toutes les lignes renvoient donc la MÊME fixture de détail
       // (afficher-derogation.html) — suffisant pour prouver que le détail
       // est bien récupéré pour chaque ligne, sans dépendre d'un contenu
       // distinct par idDerogation.
