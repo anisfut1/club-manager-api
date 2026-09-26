@@ -59,6 +59,15 @@ export const MatchListItemDtoSchema = z
     scoreAway: z.number().nullable(),
     status: z.enum(["scheduled", "played", "postponed", "cancelled", "forfeit"]),
     emarqueStatus: z.string(),
+    /**
+     * Une dérogation FBI RÉELLEMENT "En Cours" existe pour ce match (jamais
+     * "A Créer", état de bruit sans vraie demande — voir docs/FBI.md côté
+     * club-manager-api, ni un état déjà tranché comme "Acceptée..."/
+     * "Refusée") — demande du club, 2026-09-26 : "faut matcher les dérog au
+     * calendrier, pour avoir un badge derog en cours sur les matchs
+     * concernés".
+     */
+    hasPendingDerogation: z.boolean(),
   })
   .openapi("MatchListItemDto");
 

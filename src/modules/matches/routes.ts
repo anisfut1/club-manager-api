@@ -84,6 +84,12 @@ matchesRouter.get("/", async (c) => {
     : { data: [] };
   const teamNameById = new Map((teams ?? []).map((t) => [t.id, t.name]));
 
+  const matchIds = (data ?? []).map((m) => m.id);
+  const { data: pendingDerogations } = matchIds.length
+    ? await supabase.from("fbi_derogation_checks").select("match_id").eq("club_id", club.id).eq("etat", "En Cours").in("match_id", matchIds)
+    : { data: [] };
+  const matchIdsWithPendingDerogation = new Set((pendingDerogations ?? []).map((r) => r.match_id));
+
   const matches: MatchListItemDto[] = (data ?? []).map((m) => ({
     id: m.id,
     numero: m.numero,
@@ -98,6 +104,7 @@ matchesRouter.get("/", async (c) => {
     scoreAway: m.score_away,
     status: m.status,
     emarqueStatus: EMARQUE_STATUS_LABELS[m.emarque_status] ?? m.emarque_status,
+    hasPendingDerogation: matchIdsWithPendingDerogation.has(m.id),
   }));
 
   return c.json({ matches, pagination: { limit, offset, total: count ?? matches.length } });

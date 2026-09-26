@@ -336,6 +336,130 @@ describe("GET /:clubId/derogations (voir docs/FBI.md)", () => {
     expect(body.derogations[0]).toMatchObject({ teamName: null });
   });
 
+  it("signale un conflit de créneau quand la date/heure DEMANDÉE chevauche le créneau (2h) d'un AUTRE match déjà prévu ('un créneau de match est de 2h')", async () => {
+    state.matches = [
+      {
+        id: "match-1",
+        club_id: CLUB_A.id,
+        numero: "1",
+        journee: null,
+        match_datetime: "2026-10-03T13:00:00.000Z",
+        is_home: true,
+        opponent_name: "Castelnau Basket - 2",
+        venue_raw_label: null,
+        score_home: null,
+        score_away: null,
+        status: "scheduled",
+        emarque_status: "not_applicable",
+        team_id: null,
+        competition_id: null,
+      },
+      {
+        // Déjà prévu 10/10/2026 15:00 heure de Paris (13:00 UTC, CEST) — son créneau va jusqu'à 17h.
+        id: "match-2",
+        club_id: CLUB_A.id,
+        numero: "23",
+        journee: null,
+        match_datetime: "2026-10-10T13:00:00.000Z",
+        is_home: true,
+        opponent_name: "FO PISCENOIS - 2",
+        venue_raw_label: null,
+        score_home: null,
+        score_away: null,
+        status: "scheduled",
+        emarque_status: "not_applicable",
+        team_id: null,
+        competition_id: null,
+      },
+    ];
+    state.fbiDerogationChecks = [
+      {
+        id: "check-1",
+        club_id: CLUB_A.id,
+        match_id: "match-1",
+        numero: "1",
+        etat: "En Cours",
+        date_depot: "19/08/2026 17:42",
+        date_derogation: null,
+        date_rencontre: "26/09/2026",
+        heure: "15:30",
+        domicile: "SPORT CLUB DE SETE BASKET - 1",
+        visiteur: "CASTELNAU BASKET - 2",
+        // 10/10/2026 16:00 — tombe dans le créneau 15h-17h de match-2.
+        date_rencontre_demandee: "10/10/2026",
+        heure_demandee: "16:00",
+        checked_at: "2026-09-26T16:00:00.000Z",
+      },
+    ];
+
+    const res = await request(`/${CLUB_A.id}/derogations`);
+    const body = await res.json();
+
+    expect(body.derogations[0]).toMatchObject({
+      scheduleConflict: { matchId: "match-2", numero: "23", opponentName: "FO PISCENOIS - 2", matchDatetime: "2026-10-10T13:00:00.000Z" },
+    });
+  });
+
+  it("jamais d'alerte de conflit pour une dérogation Refusée (la date demandée n'a jamais pris effet)", async () => {
+    state.matches = [
+      {
+        id: "match-1",
+        club_id: CLUB_A.id,
+        numero: "1",
+        journee: null,
+        match_datetime: "2026-10-03T13:00:00.000Z",
+        is_home: true,
+        opponent_name: "Castelnau Basket - 2",
+        venue_raw_label: null,
+        score_home: null,
+        score_away: null,
+        status: "scheduled",
+        emarque_status: "not_applicable",
+        team_id: null,
+        competition_id: null,
+      },
+      {
+        id: "match-2",
+        club_id: CLUB_A.id,
+        numero: "23",
+        journee: null,
+        match_datetime: "2026-10-10T13:00:00.000Z",
+        is_home: true,
+        opponent_name: "FO PISCENOIS - 2",
+        venue_raw_label: null,
+        score_home: null,
+        score_away: null,
+        status: "scheduled",
+        emarque_status: "not_applicable",
+        team_id: null,
+        competition_id: null,
+      },
+    ];
+    state.fbiDerogationChecks = [
+      {
+        id: "check-1",
+        club_id: CLUB_A.id,
+        match_id: "match-1",
+        numero: "1",
+        etat: "Refusée",
+        date_depot: "19/08/2026 17:42",
+        date_derogation: null,
+        date_rencontre: "26/09/2026",
+        heure: "15:30",
+        domicile: "SPORT CLUB DE SETE BASKET - 1",
+        visiteur: "CASTELNAU BASKET - 2",
+        date_rencontre_demandee: "10/10/2026",
+        heure_demandee: "16:00",
+        checked_at: "2026-09-26T16:00:00.000Z",
+      },
+    ];
+
+    const res = await request(`/${CLUB_A.id}/derogations`);
+    const body = await res.json();
+
+    expect(body.derogations[0]).toMatchObject({ scheduleConflict: null });
+  });
+
   it("un coach reçoit 403 (réservé au club_admin, cohérent avec la policy RLS de lecture)", async () => {
     state.roles = [{ membership_id: "membership-a1", role: "coach" }];
 

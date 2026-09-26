@@ -30,7 +30,7 @@ export function isValidTimeZone(timezone: string): boolean {
 }
 
 /** Convertit une date/heure "murale" (Y-M-D HH:mm:ss) EXPRIMÉE DANS `timezone` en instant UTC réel — tient compte du DST à cette date précise (double conversion, technique standard sans dépendance). */
-function zonedWallTimeToUtc(year: number, month: number, day: number, hour: number, minute: number, second: number, timezone: string): Date {
+export function zonedWallTimeToUtc(year: number, month: number, day: number, hour: number, minute: number, second: number, timezone: string): Date {
   const utcGuess = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
 
   const parts = new Intl.DateTimeFormat("en-US", {

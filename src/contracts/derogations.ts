@@ -42,6 +42,25 @@ export const DerogationStatusDtoSchema = z
 export type DerogationStatusDto = z.infer<typeof DerogationStatusDtoSchema>;
 
 /**
+ * L'AUTRE match du club (jamais celui de la dérogation elle-même) dont le
+ * créneau (2h, demande du club, 2026-09-26 : "un créneau de match est de
+ * 2h") chevauche la date/heure DEMANDÉE par cette dérogation — ex. un
+ * match déjà prévu à 15h "prend" le créneau 15h-17h, donc une demande de
+ * dérogation pour un AUTRE match à 16h y entre en conflit. `null` si aucun
+ * chevauchement détecté (voir `modules/derogations/schedule-conflict.ts`).
+ */
+export const ScheduleConflictDtoSchema = z
+  .object({
+    matchId: z.string().uuid(),
+    numero: z.string().nullable(),
+    opponentName: z.string().nullable(),
+    matchDatetime: z.string(),
+  })
+  .openapi("ScheduleConflictDto");
+
+export type ScheduleConflictDto = z.infer<typeof ScheduleConflictDtoSchema>;
+
+/**
  * Une ligne de `GET /v1/clubs/:clubId/derogations` — TOUTES les
  * dérogations connues du club en une fois (demande du club : "je veux un
  * bouton global qui check toutes les demandes, pas match par match"),
@@ -75,6 +94,7 @@ export const DerogationListItemDtoSchema = DerogationStatusDtoSchema.extend({
    * distingue pas les 4 équipes seniors du club entre elles, `teamName` si.
    */
   teamName: z.string().nullable(),
+  scheduleConflict: ScheduleConflictDtoSchema.nullable(),
 }).openapi("DerogationListItemDto");
 
 export type DerogationListItemDto = z.infer<typeof DerogationListItemDtoSchema>;
