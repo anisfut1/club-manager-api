@@ -1311,7 +1311,19 @@ export class BrowserFbiClient {
       }, []);
       if (matchIndices.length === 0) continue;
 
-      const bestIndex = matchIndices.reduce((best, current) => (compareDerogationDateDepot(normalized[current].dateDepot, normalized[best].dateDepot) >= 0 ? current : best));
+      // Priorité à "En Cours" (dossier réellement actionnable) sur tout
+      // état déjà tranché, MÊME avec un `dateDepot` plus ancien — demande
+      // du club, 2026-09-27 : "si ya accepté + en cours, c'est le en cours
+      // qui prend le dessus" (même règle que le badge de la liste des
+      // matchs et `GET .../matches/:matchId/derogation`). `dateDepot` ne
+      // départage plus qu'ENTRE deux lignes de même "niveau" (deux "En
+      // Cours", ou aucune des deux).
+      const bestIndex = matchIndices.reduce((best, current) => {
+        const bestEnCours = normalized[best].etat === "En Cours";
+        const currentEnCours = normalized[current].etat === "En Cours";
+        if (currentEnCours !== bestEnCours) return currentEnCours ? current : best;
+        return compareDerogationDateDepot(normalized[current].dateDepot, normalized[best].dateDepot) >= 0 ? current : best;
+      });
 
       const href = await this.derogationRowDetailHref(scope, bestIndex);
       const idDerogation = href ? this.parseIdDerogation(href, page.url()) : null;
