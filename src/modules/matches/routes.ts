@@ -9,6 +9,7 @@ import { sanitizeEmarqueError } from "../../integrations/emarque/sanitize-error.
 import type { QualityWarningDto } from "../../contracts/emarque.js";
 import { createServiceSupabaseClient } from "../../db/client.js";
 import { getFbiCredentials } from "../../integrations/fbi/credentials-store.js";
+import { compareDerogationDateDepot } from "../../integrations/fbi/derogation-row.js";
 
 export const matchesRouter = new Hono<AppEnv>();
 
@@ -243,9 +244,21 @@ matchesRouter.get("/:matchId", async (c) => {
  * une — bug confirmé par le club, 2026-09-27 : "ya une derog mais quand je
  * clique c ecrit aucune derog en cours" (match n°5009 : deux lignes réelles,
  * "En Cours" ET "Acceptée par l'organisme dirigeant"). Ce widget reste un
- * résumé compact (pas la liste complète, voir GET .../derogations pour ça)
- * — priorité à une dérogation RÉELLEMENT "En Cours" (jamais "A Créer", état
- * de bruit), sinon la plus récemment vérifiée.
+ * résumé compact (pas la liste complète, voir GET .../derogations pour ça).
+ *
+ * Round 2 du même bug (toujours le 2026-09-27, "jai pas le motif le
+ * demandeur etc") : un premier correctif priorisait une dérogation
+ * RÉELLEMENT "En Cours" — mais sur la rencontre n°15, la ligne "En Cours"
+ * en base n'a JAMAIS eu son détail récupéré (`demandeur`/`motif`/etc tous
+ * `null`), alors qu'une AUTRE ligne pour la MÊME rencontre, "Acceptée par
+ * l'organisme dirigeant", a le détail complet — et `heureDemandee: "17:00"`
+ * correspond bien à l'heure RÉELLE du match affichée par ailleurs sur cette
+ * fiche, confirmant que c'est la ligne à jour, "En Cours" n'étant qu'un
+ * reliquat. Priorité désormais à la complétude du DÉTAIL (une ligne avec
+ * `demandeur`/`motif`/etc renseignés vaut mieux qu'un état "actif" mais
+ * vide), puis à `dateDepot` (date de dépôt RÉELLE côté FBI, la plus fiable
+ * pour départager deux lignes détaillées — jamais `checked_at`, qui ne
+ * reflète que l'heure de NOTRE vérification), puis à `checked_at`.
  */
 matchesRouter.get("/:matchId/derogation", async (c) => {
   const { club } = c.get("club");
@@ -262,7 +275,12 @@ matchesRouter.get("/:matchId/derogation", async (c) => {
     .eq("match_id", matchId)
     .order("checked_at", { ascending: false });
 
-  const data = (rows ?? []).find((r) => r.etat === "En Cours") ?? (rows ?? [])[0] ?? null;
+  const hasDetail = (row: { demandeur: string | null; motif: string | null; date_rencontre_demandee: string | null; heure_demandee: string | null; adversaire: string | null; date_reponse: string | null; acceptation: string | null; motif_refus: string | null }): boolean =>
+    Boolean(row.demandeur || row.motif || row.date_rencontre_demandee || row.heure_demandee || row.adversaire || row.date_reponse || row.acceptation || row.motif_refus);
+
+  const detailedRows = (rows ?? []).filter(hasDetail);
+  const candidates = detailedRows.length > 0 ? detailedRows : (rows ?? []);
+  const data = [...candidates].sort((a, b) => compareDerogationDateDepot(b.date_depot, a.date_depot) || b.checked_at.localeCompare(a.checked_at))[0] ?? null;
 
   const derogation: DerogationStatusDto | null = data
     ? {
