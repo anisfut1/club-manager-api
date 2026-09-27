@@ -29,6 +29,26 @@ const EMARQUE_STATUS_LABELS: Record<string, string> = {
   needs_review: "needs_review",
 };
 
+type DerogationStatusCategory = "en_cours" | "acceptee" | "refusee";
+
+/**
+ * "acceptée" recouvre les DEUX libellés FBI réels ("...organisme
+ * dirigeant" / "...deux associations sportives", voir docs/FBI.md) —
+ * jamais "A Créer" (état de bruit sans vraie demande) ni un état inconnu :
+ * `null` dans les deux cas, jamais une couleur devinée.
+ */
+const ACCEPTED_DEROGATION_ETATS = new Set(["Acceptée par l'organisme dirigeant", "Acceptée par les deux associations sportives"]);
+
+function categorizeDerogationEtat(etat: string | null): DerogationStatusCategory | null {
+  if (etat === "En Cours") return "en_cours";
+  if (etat && ACCEPTED_DEROGATION_ETATS.has(etat)) return "acceptee";
+  if (etat === "Refusée") return "refusee";
+  return null;
+}
+
+/** "en_cours" > "acceptee" > "refusee" — demande du club, 2026-09-27 : "si ya accepté + en cours, c'est le en cours qui prend le dessus" (un match peut avoir plusieurs dérogations distinctes, § "82 vs 51"). */
+const DEROGATION_STATUS_PRIORITY: Record<DerogationStatusCategory, number> = { en_cours: 0, acceptee: 1, refusee: 2 };
+
 /**
  * GET /v1/clubs/:clubId/matches — filtres et pagination (gap 7 de la
  * demande, voir `contracts/matches.ts#MatchesQueryDtoSchema`).
@@ -86,10 +106,18 @@ matchesRouter.get("/", async (c) => {
   const teamNameById = new Map((teams ?? []).map((t) => [t.id, t.name]));
 
   const matchIds = (data ?? []).map((m) => m.id);
-  const { data: pendingDerogations } = matchIds.length
-    ? await supabase.from("fbi_derogation_checks").select("match_id").eq("club_id", club.id).eq("etat", "En Cours").in("match_id", matchIds)
+  const { data: derogationEtats } = matchIds.length
+    ? await supabase.from("fbi_derogation_checks").select("match_id, etat").eq("club_id", club.id).in("match_id", matchIds)
     : { data: [] };
-  const matchIdsWithPendingDerogation = new Set((pendingDerogations ?? []).map((r) => r.match_id));
+  const derogationStatusByMatchId = new Map<string, DerogationStatusCategory>();
+  for (const row of derogationEtats ?? []) {
+    const category = categorizeDerogationEtat(row.etat);
+    if (!category) continue;
+    const existing = derogationStatusByMatchId.get(row.match_id);
+    if (!existing || DEROGATION_STATUS_PRIORITY[category] < DEROGATION_STATUS_PRIORITY[existing]) {
+      derogationStatusByMatchId.set(row.match_id, category);
+    }
+  }
 
   const matches: MatchListItemDto[] = (data ?? []).map((m) => ({
     id: m.id,
@@ -105,7 +133,7 @@ matchesRouter.get("/", async (c) => {
     scoreAway: m.score_away,
     status: m.status,
     emarqueStatus: EMARQUE_STATUS_LABELS[m.emarque_status] ?? m.emarque_status,
-    hasPendingDerogation: matchIdsWithPendingDerogation.has(m.id),
+    derogationStatus: derogationStatusByMatchId.get(m.id) ?? null,
   }));
 
   return c.json({ matches, pagination: { limit, offset, total: count ?? matches.length } });

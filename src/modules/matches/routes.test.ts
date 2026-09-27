@@ -125,22 +125,46 @@ describe("GET /v1/clubs/:clubId/matches — filtres (gap 7 de la demande)", () =
     expect(res.status).toBe(400);
   });
 
-  it("hasPendingDerogation: true UNIQUEMENT pour une dérogation RÉELLEMENT \"En Cours\" — jamais \"A Créer\" (état de bruit, voir docs/FBI.md), jamais un état déjà tranché (demande du club : \"badge derog en cours sur les matchs concernés\")", async () => {
-    state.matches = [match({ id: "match-en-cours" }), match({ id: "match-a-creer" }), match({ id: "match-acceptee" }), match({ id: "match-sans-derog" })];
+  it("derogationStatus : catégorise chaque état FBI réel connu pour un badge coloré (demande du club : \"acceptée = vert en cours = orange refusée = rouge\"), jamais \"A Créer\" (état de bruit, voir docs/FBI.md) ni un état inconnu", async () => {
+    state.matches = [
+      match({ id: "match-en-cours" }),
+      match({ id: "match-a-creer" }),
+      match({ id: "match-acceptee-organisme" }),
+      match({ id: "match-acceptee-deux-assos" }),
+      match({ id: "match-refusee" }),
+      match({ id: "match-sans-derog" }),
+    ];
     state.fbiDerogationChecks = [
       { id: "check-1", club_id: CLUB_A.id, match_id: "match-en-cours", numero: "1", etat: "En Cours", date_depot: null, date_derogation: null, date_rencontre: null, heure: null, domicile: null, visiteur: null, checked_at: "2026-09-26T16:00:00.000Z" },
       { id: "check-2", club_id: CLUB_A.id, match_id: "match-a-creer", numero: "2", etat: "A Créer", date_depot: null, date_derogation: null, date_rencontre: null, heure: null, domicile: null, visiteur: null, checked_at: "2026-09-26T16:00:00.000Z" },
-      { id: "check-3", club_id: CLUB_A.id, match_id: "match-acceptee", numero: "3", etat: "Acceptée par l'organisme dirigeant", date_depot: null, date_derogation: null, date_rencontre: null, heure: null, domicile: null, visiteur: null, checked_at: "2026-09-26T16:00:00.000Z" },
+      { id: "check-3", club_id: CLUB_A.id, match_id: "match-acceptee-organisme", numero: "3", etat: "Acceptée par l'organisme dirigeant", date_depot: null, date_derogation: null, date_rencontre: null, heure: null, domicile: null, visiteur: null, checked_at: "2026-09-26T16:00:00.000Z" },
+      { id: "check-4", club_id: CLUB_A.id, match_id: "match-acceptee-deux-assos", numero: "4", etat: "Acceptée par les deux associations sportives", date_depot: null, date_derogation: null, date_rencontre: null, heure: null, domicile: null, visiteur: null, checked_at: "2026-09-26T16:00:00.000Z" },
+      { id: "check-5", club_id: CLUB_A.id, match_id: "match-refusee", numero: "5", etat: "Refusée", date_depot: null, date_derogation: null, date_rencontre: null, heure: null, domicile: null, visiteur: null, checked_at: "2026-09-26T16:00:00.000Z" },
     ];
 
     const res = await request("");
     const body = await res.json();
-    const hasPendingById = new Map(body.matches.map((m: { id: string; hasPendingDerogation: boolean }) => [m.id, m.hasPendingDerogation]));
+    const statusById = new Map(body.matches.map((m: { id: string; derogationStatus: string | null }) => [m.id, m.derogationStatus]));
 
-    expect(hasPendingById.get("match-en-cours")).toBe(true);
-    expect(hasPendingById.get("match-a-creer")).toBe(false);
-    expect(hasPendingById.get("match-acceptee")).toBe(false);
-    expect(hasPendingById.get("match-sans-derog")).toBe(false);
+    expect(statusById.get("match-en-cours")).toBe("en_cours");
+    expect(statusById.get("match-a-creer")).toBeNull();
+    expect(statusById.get("match-acceptee-organisme")).toBe("acceptee");
+    expect(statusById.get("match-acceptee-deux-assos")).toBe("acceptee");
+    expect(statusById.get("match-refusee")).toBe("refusee");
+    expect(statusById.get("match-sans-derog")).toBeNull();
+  });
+
+  it("derogationStatus : \"en_cours\" l'emporte quand une même rencontre a plusieurs dérogations distinctes (demande du club : \"si ya accepté + en cours, c'est le en cours qui prend le dessus\")", async () => {
+    state.matches = [match({ id: "match-1" })];
+    state.fbiDerogationChecks = [
+      { id: "check-acceptee", club_id: CLUB_A.id, match_id: "match-1", numero: "1", etat: "Acceptée par l'organisme dirigeant", date_depot: null, date_derogation: null, date_rencontre: null, heure: null, domicile: null, visiteur: null, checked_at: "2026-09-26T16:00:00.000Z" },
+      { id: "check-en-cours", club_id: CLUB_A.id, match_id: "match-1", numero: "1", etat: "En Cours", date_depot: null, date_derogation: null, date_rencontre: null, heure: null, domicile: null, visiteur: null, checked_at: "2026-09-26T16:00:00.000Z" },
+    ];
+
+    const res = await request("");
+    const body = await res.json();
+
+    expect(body.matches.find((m: { id: string }) => m.id === "match-1")?.derogationStatus).toBe("en_cours");
   });
 });
 
