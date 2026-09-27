@@ -279,14 +279,20 @@ matchesRouter.get("/:matchId", async (c) => {
  * RÉELLEMENT "En Cours" — mais sur la rencontre n°15, la ligne "En Cours"
  * en base n'a JAMAIS eu son détail récupéré (`demandeur`/`motif`/etc tous
  * `null`), alors qu'une AUTRE ligne pour la MÊME rencontre, "Acceptée par
- * l'organisme dirigeant", a le détail complet — et `heureDemandee: "17:00"`
- * correspond bien à l'heure RÉELLE du match affichée par ailleurs sur cette
- * fiche, confirmant que c'est la ligne à jour, "En Cours" n'étant qu'un
- * reliquat. Priorité désormais à la complétude du DÉTAIL (une ligne avec
- * `demandeur`/`motif`/etc renseignés vaut mieux qu'un état "actif" mais
- * vide), puis à `dateDepot` (date de dépôt RÉELLE côté FBI, la plus fiable
- * pour départager deux lignes détaillées — jamais `checked_at`, qui ne
- * reflète que l'heure de NOTRE vérification), puis à `checked_at`.
+ * l'organisme dirigeant", a le détail complet. Priorité passée à la
+ * complétude du DÉTAIL plutôt qu'à l'état.
+ *
+ * Round 3 (même jour) : le club revient sur ce choix — "c pas la en cours
+ * qui a pris le dessus" : "En Cours" doit rester PRIORITAIRE sur tout état
+ * déjà tranché, même sans détail, cohérent avec le badge coloré de la
+ * liste des matchs (`derogationStatus`, "si ya accepté + en cours, c'est
+ * le en cours qui prend le dessus"). La complétude du détail ne départage
+ * plus qu'EN SECOND lieu : entre plusieurs lignes "En Cours" s'il y en a
+ * plusieurs, ou entre les lignes déjà tranchées quand AUCUNE n'est "En
+ * Cours" (c'est là que le round 2 reste utile — départager Acceptée vs
+ * Refusée par leur détail). Départage final par `dateDepot` (date de dépôt
+ * RÉELLE côté FBI, jamais `checked_at` qui ne reflète que l'heure de NOTRE
+ * vérification), puis `checked_at`.
  */
 matchesRouter.get("/:matchId/derogation", async (c) => {
   const { club } = c.get("club");
@@ -306,8 +312,10 @@ matchesRouter.get("/:matchId/derogation", async (c) => {
   const hasDetail = (row: { demandeur: string | null; motif: string | null; date_rencontre_demandee: string | null; heure_demandee: string | null; adversaire: string | null; date_reponse: string | null; acceptation: string | null; motif_refus: string | null }): boolean =>
     Boolean(row.demandeur || row.motif || row.date_rencontre_demandee || row.heure_demandee || row.adversaire || row.date_reponse || row.acceptation || row.motif_refus);
 
-  const detailedRows = (rows ?? []).filter(hasDetail);
-  const candidates = detailedRows.length > 0 ? detailedRows : (rows ?? []);
+  const enCoursRows = (rows ?? []).filter((r) => r.etat === "En Cours");
+  const pool = enCoursRows.length > 0 ? enCoursRows : (rows ?? []);
+  const detailedRows = pool.filter(hasDetail);
+  const candidates = detailedRows.length > 0 ? detailedRows : pool;
   const data = [...candidates].sort((a, b) => compareDerogationDateDepot(b.date_depot, a.date_depot) || b.checked_at.localeCompare(a.checked_at))[0] ?? null;
 
   const derogation: DerogationStatusDto | null = data
