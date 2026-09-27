@@ -213,6 +213,83 @@ describe("GET /v1/clubs/:clubId/matches/:matchId/derogation (voir docs/FBI.md)",
     const body = await res.json();
     expect(body.derogation).toMatchObject({ numero: "1", etat: "A Créer", dateRencontre: "26/09/2026", heure: "15:30", checkedAt: "2026-09-25T16:00:00.000Z" });
   });
+
+  it("PLUSIEURS lignes pour la même rencontre (§ \"82 vs 51\", jusqu'à 8 dérogations distinctes) -> renvoie celle RÉELLEMENT \"En Cours\", jamais null (bug confirmé par le club, 2026-09-27 : \"ya une derog mais quand je clique c ecrit aucune derog en cours\" — `.maybeSingle()` échouait silencieusement dès qu'une 2e ligne existait)", async () => {
+    state.matches = [match({ id: "match-1" })];
+    state.fbiDerogationChecks = [
+      {
+        id: "check-acceptee",
+        club_id: CLUB_A.id,
+        match_id: "match-1",
+        numero: "5009",
+        etat: "Acceptée par l'organisme dirigeant",
+        date_depot: null,
+        date_derogation: null,
+        date_rencontre: "26/09/2026",
+        heure: "15:30",
+        domicile: "SPORT CLUB DE SETE BASKET - 1",
+        visiteur: "CASTELNAU BASKET - 2",
+        checked_at: "2026-09-26T22:17:27.000Z",
+      },
+      {
+        id: "check-en-cours",
+        club_id: CLUB_A.id,
+        match_id: "match-1",
+        numero: "5009",
+        etat: "En Cours",
+        date_depot: null,
+        date_derogation: null,
+        date_rencontre: "26/09/2026",
+        heure: "15:30",
+        domicile: "SPORT CLUB DE SETE BASKET - 1",
+        visiteur: "CASTELNAU BASKET - 2",
+        checked_at: "2026-09-26T22:17:27.000Z",
+      },
+    ];
+
+    const res = await request("/match-1/derogation");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.derogation).toMatchObject({ numero: "5009", etat: "En Cours" });
+  });
+
+  it("plusieurs lignes SANS aucune \"En Cours\" -> renvoie la plus récemment vérifiée (jamais null)", async () => {
+    state.matches = [match({ id: "match-1" })];
+    state.fbiDerogationChecks = [
+      {
+        id: "check-ancienne",
+        club_id: CLUB_A.id,
+        match_id: "match-1",
+        numero: "16",
+        etat: "Refusée",
+        date_depot: null,
+        date_derogation: null,
+        date_rencontre: null,
+        heure: null,
+        domicile: null,
+        visiteur: null,
+        checked_at: "2026-09-20T10:00:00.000Z",
+      },
+      {
+        id: "check-recente",
+        club_id: CLUB_A.id,
+        match_id: "match-1",
+        numero: "16",
+        etat: "Acceptée par l'organisme dirigeant",
+        date_depot: null,
+        date_derogation: null,
+        date_rencontre: null,
+        heure: null,
+        domicile: null,
+        visiteur: null,
+        checked_at: "2026-09-26T22:17:27.000Z",
+      },
+    ];
+
+    const res = await request("/match-1/derogation");
+    const body = await res.json();
+    expect(body.derogation).toMatchObject({ etat: "Acceptée par l'organisme dirigeant", checkedAt: "2026-09-26T22:17:27.000Z" });
+  });
 });
 
 describe("POST /v1/clubs/:clubId/matches/:matchId/derogation/check (club_admin, voir docs/FBI.md)", () => {

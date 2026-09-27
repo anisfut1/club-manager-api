@@ -234,13 +234,25 @@ matchesRouter.get("/:matchId", async (c) => {
  * vérification n'a encore été lancée, OU que la dernière vérification n'a
  * trouvé aucune dérogation pour ce match — les deux cas sont normaux,
  * jamais une erreur (la grande majorité des matchs n'ont aucune dérogation).
+ *
+ * Une rencontre peut avoir PLUSIEURS lignes `fbi_derogation_checks` (§ "82
+ * vs 51", docs/FBI.md, 2026-09-27 — jusqu'à 8 dérogations distinctes pour
+ * la même rencontre) : `.maybeSingle()` échouait silencieusement dès qu'une
+ * 2ᵉ ligne existait (erreur PostgREST ignorée par `const { data } = ...`),
+ * affichant "aucune dérogation connue" alors qu'il y en avait bel et bien
+ * une — bug confirmé par le club, 2026-09-27 : "ya une derog mais quand je
+ * clique c ecrit aucune derog en cours" (match n°5009 : deux lignes réelles,
+ * "En Cours" ET "Acceptée par l'organisme dirigeant"). Ce widget reste un
+ * résumé compact (pas la liste complète, voir GET .../derogations pour ça)
+ * — priorité à une dérogation RÉELLEMENT "En Cours" (jamais "A Créer", état
+ * de bruit), sinon la plus récemment vérifiée.
  */
 matchesRouter.get("/:matchId/derogation", async (c) => {
   const { club } = c.get("club");
   const matchId = c.req.param("matchId");
   if (!matchId) throw badRequest("Paramètre de route :matchId manquant.");
 
-  const { data } = await c
+  const { data: rows } = await c
     .get("supabase")
     .from("fbi_derogation_checks")
     .select(
@@ -248,7 +260,9 @@ matchesRouter.get("/:matchId/derogation", async (c) => {
     )
     .eq("club_id", club.id)
     .eq("match_id", matchId)
-    .maybeSingle();
+    .order("checked_at", { ascending: false });
+
+  const data = (rows ?? []).find((r) => r.etat === "En Cours") ?? (rows ?? [])[0] ?? null;
 
   const derogation: DerogationStatusDto | null = data
     ? {
