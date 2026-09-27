@@ -556,6 +556,73 @@ describe("BrowserFbiClient.fetchAllDerogations ('je veux un bouton global qui ch
   });
 });
 
+describe("BrowserFbiClient.respondToDerogation (ÉCRIT réellement sur FBI — demande du club, 2026-09-27 : \"je veux le faire via loutil\")", () => {
+  // Forme DÉCODÉE (jamais `%3D%3D` littéral) : `respondToDerogation` re-encode
+  // lui-même via `URLSearchParams.set`, même contrat que `parseIdDerogation`
+  // (browser-client.ts) qui décode déjà via `.searchParams.get`.
+  const REPONSE_ATTENDUE_ID = "BvBUvSPeq6Ta6wZoQpDvSg==";
+
+  beforeEach(() => {
+    // Cas où le club DOIT répondre (demandeur = l'adversaire) — distinct de
+    // afficher-derogation.html (déjà servie par défaut), voir la doc de la
+    // fixture pour le détail réel fourni par le club (rencontre 9538).
+    server.setRoute({ path: "/afficherDerogation.fbi", contentType: "text/html", body: fixture("afficher-derogation-reponse-attendue.html") });
+  });
+
+  it("accepte : sélectionne 'O', clique Enregistrer, détecte le succès par la navigation vers rechercherDerogation.fbi (retourArriere())", async () => {
+    server.setRoute({ path: "/enregistrerDerogation.fbi", method: "POST", contentType: "text/plain", body: "" });
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    const result = await client.respondToDerogation(session, REPONSE_ATTENDUE_ID, "accepted", null);
+
+    expect(result).toEqual({ outcome: "success" });
+    expect(session.page.url()).toContain("rechercherDerogation.fbi");
+    await client.closeSession(session);
+  });
+
+  it("refuse : remplit le motif de refus, sélectionne 'N', même détection de succès", async () => {
+    server.setRoute({ path: "/enregistrerDerogation.fbi", method: "POST", contentType: "text/plain", body: "" });
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    const result = await client.respondToDerogation(session, REPONSE_ATTENDUE_ID, "refused", "Gymnase indisponible ce jour-là.");
+
+    expect(result).toEqual({ outcome: "success" });
+    await client.closeSession(session);
+  });
+
+  it("remonte le VRAI message d'erreur FBI (jamais un texte générique deviné) quand la page reste sur place et affiche <ul class=\"errorMessage\">", async () => {
+    server.setRoute({
+      path: "/enregistrerDerogation.fbi",
+      method: "POST",
+      contentType: "text/html",
+      body: '<ul class="errorMessage"><li>Le motif de refus est obligatoire.</li></ul>',
+    });
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    const result = await client.respondToDerogation(session, REPONSE_ATTENDUE_ID, "refused", "x");
+
+    expect(result).toMatchObject({ outcome: "error", message: expect.stringContaining("Le motif de refus est obligatoire.") });
+    await client.closeSession(session);
+  });
+
+  it("renvoie 'unknown' (jamais 'success' sans preuve) quand le champ de décision est introuvable — ex. la dérogation n'attend plus de réponse du club", async () => {
+    // Réutilise le cas "club demandeur" (affichage lecture seule, pas de
+    // <select> de décision) — même situation réelle qu'une dérogation déjà
+    // répondue, ou dont le club est lui-même le demandeur.
+    server.setRoute({ path: "/afficherDerogation.fbi", contentType: "text/html", body: fixture("afficher-derogation.html") });
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    const result = await client.respondToDerogation(session, "1k+JhfgiN4lc", "accepted", null);
+
+    expect(result.outcome).toBe("unknown");
+    await client.closeSession(session);
+  });
+});
+
 describe("BrowserFbiClient.downloadDocument", () => {
   it("télécharge le contenu via le contexte authentifié, sans passer par le système de fichiers", async () => {
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });

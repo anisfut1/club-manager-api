@@ -4,7 +4,7 @@ import { FbiError } from "./errors.js";
 import * as selectors from "./selectors.js";
 import { normalizeScheduleRow } from "./schedule-row.js";
 import { normalizeDerogationRow, compareDerogationDateDepot } from "./derogation-row.js";
-import type { FbiDerogationDetailFields, FbiDerogationRow, FbiScheduleRow } from "./types.js";
+import type { DerogationResponseDecision, DerogationResponseOutcome, FbiDerogationDetailFields, FbiDerogationRow, FbiScheduleRow } from "./types.js";
 import { logInfo } from "../../logger.js";
 
 /**
@@ -1548,6 +1548,109 @@ export class BrowserFbiClient {
     } finally {
       if (detailPage) await detailPage.close().catch(() => {});
     }
+  }
+
+  /**
+   * ÉCRIT réellement sur FBI — soumet Accepter/Refuser pour une dérogation
+   * "En Cours" attendant la réponse du club (voir `action-required.ts`).
+   * "voici les boutons a utiliser pour accetper ou refuser" (demande du
+   * club, 2026-09-27, HTML source réel de `afficherDerogation.fbi` fourni
+   * pour la rencontre 9538) : le champ réel n'est PAS `input#acceptation`
+   * (ça, c'est l'affichage EN LECTURE SEULE utilisé côté demandeur, déjà
+   * lu par `selectors.derogationDetailFields`) mais un
+   * `<select name="derogationForm.derogationReponseAdversaireBean.acceptation">`
+   * ("P"=NC / "N"=Refusée / "O"=Acceptée), avec
+   * `<textarea name="....motifRefus">` ACTIVABLE (jamais `readonly` ici,
+   * contrairement à l'affichage) pour le motif de refus. Ciblé par `name`
+   * exact, jamais par un id générique — les deux formes (lecture seule vs
+   * réponse attendue) coexistent potentiellement sur des pages structurées
+   * autrement selon l'état réel côté FBI.
+   *
+   * Le clic "Enregistrer" (`enregistrerDerogationAjax()`, JS réel de la
+   * page) sérialise le formulaire et POST en AJAX vers
+   * `enregistrerDerogation.fbi` ; en cas de succès la page NAVIGUE vers
+   * `rechercherDerogation.fbi` (`retourArriere()`) — jamais un simple
+   * changement de DOM sur place. Détecté ici par un changement d'URL après
+   * le clic, jamais deviné : en l'absence de navigation ET d'erreur
+   * visible dans le délai imparti, retourne `unknown` (jamais `success`
+   * sans preuve, vu l'enjeu réel d'une soumission FFBB non annulable
+   * depuis cet outil).
+   */
+  async respondToDerogation(
+    session: BrowserFbiSession,
+    idDerogation: string,
+    decision: DerogationResponseDecision,
+    motifRefus: string | null,
+  ): Promise<DerogationResponseOutcome> {
+    const { page } = session;
+
+    const url = new URL("afficherDerogation.fbi", `${this.baseUrl}/`);
+    url.searchParams.set("idDerogation", idDerogation);
+
+    try {
+      await page.goto(url.toString(), { waitUntil: "domcontentloaded" });
+      await this.settle(page);
+    } catch (error) {
+      throw new FbiError(`Page de dérogation FBI injoignable pour idDerogation=${idDerogation}.`, "NAVIGATION_FAILED", error);
+    }
+
+    const marker = page.locator("input#demandeurLibelle");
+    if ((await marker.count().catch(() => 0)) === 0) {
+      return { outcome: "unknown", message: "Page de détail FBI introuvable ou de forme inattendue pour cette dérogation (idDerogation peut-être périmé)." };
+    }
+
+    const acceptationSelect = page.locator('select[name="derogationForm.derogationReponseAdversaireBean.acceptation"]').first();
+    if ((await acceptationSelect.count().catch(() => 0)) === 0) {
+      return {
+        outcome: "unknown",
+        message: "Champ de décision introuvable sur la page FBI — cette dérogation n'attend peut-être plus de réponse du club (déjà répondue, ou c'est le club qui est demandeur).",
+      };
+    }
+
+    try {
+      await acceptationSelect.selectOption({ value: decision === "accepted" ? "O" : "N" });
+
+      if (decision === "refused") {
+        const motifField = page.locator('textarea[name="derogationForm.derogationReponseAdversaireBean.motifRefus"]').first();
+        if ((await motifField.count().catch(() => 0)) === 0) {
+          return { outcome: "unknown", message: "Champ motif de refus introuvable sur la page FBI." };
+        }
+        await motifField.fill(motifRefus ?? "");
+      }
+    } catch (error) {
+      return { outcome: "unknown", message: `Impossible de renseigner la décision sur le formulaire FBI : ${error instanceof Error ? error.message : String(error)}` };
+    }
+
+    const saveButton = page.locator("button.boutonEnregistrer").first();
+    if ((await saveButton.count().catch(() => 0)) === 0) {
+      return { outcome: "unknown", message: "Bouton d'enregistrement introuvable sur la page FBI." };
+    }
+
+    const beforeUrl = page.url();
+    try {
+      await saveButton.click();
+    } catch (error) {
+      return { outcome: "unknown", message: `Le clic sur "Enregistrer" a échoué : ${error instanceof Error ? error.message : String(error)}` };
+    }
+
+    const navigatedAway = await page
+      .waitForURL((candidate) => candidate.toString() !== beforeUrl, { timeout: 20_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (navigatedAway) return { outcome: "success" };
+
+    // Pas de navigation : `enregistrerDerogationAjax()` (JS réel de la
+    // page) appelle `afficherErreur(request)` sur échec, dont le contenu
+    // contient littéralement `<ul class="errorMessage">` (vérifié dans le
+    // check JS du bouton "précédente/suivante" de la même page) — cherché
+    // ici dans le DOM après le clic, jamais un texte d'erreur deviné.
+    const errorLocator = page.locator("ul.errorMessage").first();
+    if ((await errorLocator.count().catch(() => 0)) > 0) {
+      const text = (await errorLocator.innerText().catch(() => "")).trim();
+      return { outcome: "error", message: text.length > 0 ? text : "FBI a rejeté l'enregistrement (message d'erreur vide)." };
+    }
+
+    return { outcome: "unknown", message: "Aucune confirmation ni erreur détectée après l'enregistrement — à vérifier manuellement sur FBI avant de réessayer." };
   }
 
   /**

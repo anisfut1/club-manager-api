@@ -3486,3 +3486,82 @@ du détail (une ligne avec du contenu réel vaut mieux qu'un état "actif"
 mais vide), départagée par `date_depot` (date de dépôt RÉELLE côté FBI),
 jamais par l'état seul ni par `checked_at` (qui ne reflète que l'heure de
 NOTRE vérification).
+
+## Réponse RÉELLE à une dérogation (accepter/refuser) — la phase 1 se termine
+
+Demande du club, 2026-09-27 : **"maintenant pour une rencontre en cours
+qui attend une validation ou refus de notre part, je veux le faire via
+loutil."** Revient explicitement sur le choix de phase 1 ("Gestion des
+dérogations (lecture seule, phase 1)" ci-dessus) — la consultation seule
+ne suffit plus, le club veut répondre RÉELLEMENT (accepter/refuser) aux
+demandes de l'adversaire directement depuis cet outil, sans repasser par
+FBI.
+
+**Toujours pas une décision anodine** : ça ÉCRIT sur FBI/FFBB — une action
+réelle et engageante envers un tiers (le club adverse, potentiellement
+l'organisme dirigeant), jamais annulable depuis cet outil une fois
+confirmée par FBI. Construit avec deux garde-fous que la phase 1 n'avait
+pas besoin d'avoir :
+1. Une confirmation explicite côté SCSB avant tout envoi (jamais un simple
+   clic direct sur "Accepter"/"Refuser").
+2. Une trace d'audit systématique (`fbi_derogation_responses` — qui, quand,
+   quelle décision, ce que FBI a RÉELLEMENT renvoyé), écrite AVANT de
+   retourner le résultat à l'appelant, succès ou échec.
+
+**"si action besoin de ma part, faut un badge action requise"** — une
+dérogation "En Cours" n'attend pas TOUJOURS une décision du club : si LUI
+est demandeur, il attend l'adversaire (rien à faire). `demandeur`
+("Domicile"/"Visiteur") est un jargon FBI relatif à la rencontre, jamais
+comparable au nom d'équipe brut (fuzzy, non fiable) — comparé à `isHome`
+(fiable, déjà connu via la synchro FFBB) dans `modules/derogations/action-required.ts`,
+exposé côté API comme `actionRequired` sur `DerogationStatusDto`/
+`DerogationListItemDto`. `false` par défaut si le côté du club n'a pas pu
+être déterminé — jamais deviné pour une action irréversible.
+
+**HTML source réel fourni par le club** (rencontre 9538, division DM2,
+2026-09-27) pour le cas "réponse attendue" — DIFFÉRENT du HTML déjà connu
+(rencontre 15, § plus haut) qui montrait la section "Réponse de
+l'adversaire" en LECTURE SEULE (le club y est demandeur, donc en attente) :
+- Champ de décision : `<select name="derogationForm.derogationReponseAdversaireBean.acceptation">`
+  avec options `P`=NC (défaut) / `N`=Refusée / `O`=Acceptée — PAS
+  `input#acceptation` (ça, c'est l'affichage lecture seule, déjà lu par
+  `selectors.derogationDetailFields`, un champ DIFFÉRENT qui coexiste sur
+  la même page).
+- Motif de refus : `<textarea name="derogationForm.derogationReponseAdversaireBean.motifRefus">`,
+  activable (jamais `readonly` dans ce cas).
+- Bouton "Enregistrer" (`button.boutonEnregistrer`) déclenche
+  `enregistrerDerogationAjax()` (JS réel de la page) : sérialise le
+  formulaire (`$("#afficherDerogation").serialize()` — les champs
+  `disabled` de la section "Demande de dérogation" ne sont donc jamais
+  soumis), POST vers `enregistrerDerogation.fbi`. Succès → navigation vers
+  `rechercherDerogation.fbi` (`retourArriere()`) ; échec → `afficherErreur(request)`
+  avec un contenu contenant `<ul class="errorMessage">` (jamais un message
+  générique inventé côté applicatif).
+
+**Détection du résultat** (`BrowserFbiClient.respondToDerogation`) :
+navigation loin de la page = succès ; `ul.errorMessage` présent sans
+navigation = échec (message RÉEL remonté tel quel) ; NI L'UN NI L'AUTRE
+dans le délai imparti = `unknown`, JAMAIS traité comme un succès sans
+preuve — l'admin doit alors vérifier manuellement sur FBI avant de
+réessayer. `afficherErreur`/`postAjax` sont des fonctions JS PARTAGÉES
+(fichier externe, jamais vues en clair) : leur comportement exact n'est
+donc déduit que de ce qui est OBSERVABLE (navigation ou absence), jamais
+deviné plus finement.
+
+**Architecture volontairement SYNCHRONE** (`respondToDerogationForClub`,
+`POST .../derogations/:derogationId/respond` et
+`POST .../matches/:matchId/derogation/respond`) — contrairement à
+`check_derogation`/`check_all_derogations` qui empilent un job `fbi_jobs`
+traité séparément. Une action ponctuelle et volontaire où l'admin attend
+une confirmation immédiate ne doit JAMAIS retomber dans l'ambiguïté "le
+job est-il déjà passé ?" déjà vécue le jour même avec la famine de la file
+`fbi_jobs` (voir migration `20260927020000_fbi_jobs_priority_by_type.sql`
+et son commit) — login FBI, soumission, et (si succès) un rafraîchissement
+immédiat de `fbi_derogation_checks` via `fetchDerogationForMatch` dans LA
+MÊME session, le tout dans une seule requête HTTP.
+
+`actionRequired` revalidé CÔTÉ SERVEUR dans `respondToDerogationForClub`
+(jamais confiance dans le client) : le bouton ne doit exister côté SCSB
+que quand c'est vrai, mais une requête directe à cette route sans repasser
+par l'UI ne doit jamais pouvoir soumettre une réponse pour une dérogation
+qui n'attend pas celle du club.

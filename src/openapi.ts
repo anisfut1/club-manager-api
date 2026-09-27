@@ -12,7 +12,7 @@ import {
   PatchFfbbIntegrationDtoSchema,
 } from "./contracts/integrations.js";
 import { MatchDocumentDtoSchema } from "./contracts/documents.js";
-import { DerogationStatusDtoSchema, DerogationListItemDtoSchema } from "./contracts/derogations.js";
+import { DerogationStatusDtoSchema, DerogationListItemDtoSchema, RespondToDerogationDtoSchema, RespondToDerogationResultDtoSchema } from "./contracts/derogations.js";
 import { IssueDtoSchema } from "./contracts/issues.js";
 import { JobStatusDtoSchema } from "./contracts/jobs.js";
 import { PlatformClubDtoSchema, CreateClubDtoSchema } from "./contracts/platform.js";
@@ -45,6 +45,7 @@ function jsonResponse(description: string, schema: z.ZodTypeAny) {
 
 const clubIdParam = z.object({ clubId: z.string().openapi({ description: "UUID ou slug du club" }) });
 const clubAndMatchIdParams = clubIdParam.extend({ matchId: z.string().uuid() });
+const clubAndDerogationIdParams = clubIdParam.extend({ derogationId: z.string().uuid() });
 const clubAndJobParams = z.object({ jobId: z.string().uuid() });
 const clubAndMatchIssueParams = clubIdParam.extend({ matchId: z.string().uuid() });
 
@@ -268,6 +269,25 @@ registry.registerPath({
   security: bearerAuth,
   request: { params: clubIdParam },
   responses: { 200: jsonResponse("Toutes les dérogations connues du club", z.object({ derogations: z.array(DerogationListItemDtoSchema) })), ...errorResponses },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/clubs/{clubId}/derogations/{derogationId}/respond",
+  security: bearerAuth,
+  // ÉCRIT réellement sur FBI/FFBB (accepter/refuser) — demande du club,
+  // 2026-09-27 : "je veux le faire via loutil". Synchrone (jamais via
+  // fbi_jobs), voir la doc de `respondToDerogationForClub`.
+  request: { params: clubAndDerogationIdParams, body: { content: { "application/json": { schema: RespondToDerogationDtoSchema } } } },
+  responses: { 200: jsonResponse("Résultat RÉEL renvoyé par FBI (success/error/unknown)", RespondToDerogationResultDtoSchema), ...errorResponses, ...validationResponses },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/clubs/{clubId}/matches/{matchId}/derogation/respond",
+  security: bearerAuth,
+  request: { params: clubAndMatchIdParams, body: { content: { "application/json": { schema: RespondToDerogationDtoSchema } } } },
+  responses: { 200: jsonResponse("Résultat RÉEL renvoyé par FBI (success/error/unknown)", RespondToDerogationResultDtoSchema), ...errorResponses, ...validationResponses },
 });
 
 registry.registerPath({

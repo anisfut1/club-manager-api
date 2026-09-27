@@ -149,4 +149,32 @@ export interface FbiAutomationClient<TSession> {
    * SCSB). Gère elle-même la pagination.
    */
   fetchAllDerogations(session: TSession): Promise<FbiDerogationRow[]>;
+  /**
+   * ÉCRIT réellement sur FBI (contrairement à tout le reste de cette
+   * interface) — soumet la réponse du club à une dérogation "En Cours"
+   * pour laquelle c'est à LUI de décider (voir
+   * `modules/derogations/action-required.ts`) : accepte ou refuse la
+   * date/heure/salle proposée par l'adversaire. "je veux le faire via
+   * loutil" (demande du club, 2026-09-27) — action réelle, engageante
+   * auprès de la FFBB, jamais annulable depuis cet outil une fois
+   * confirmée par FBI. `motifRefus` ignoré si `decision === "accepted"`.
+   */
+  respondToDerogation(session: TSession, idDerogation: string, decision: DerogationResponseDecision, motifRefus: string | null): Promise<DerogationResponseOutcome>;
 }
+
+export type DerogationResponseDecision = "accepted" | "refused";
+
+/**
+ * Résultat d'une soumission réelle à FBI (`respondToDerogation`) :
+ * - `success` : FBI a confirmé l'enregistrement (navigation loin de la page
+ *   de détail après le clic "Enregistrer", même comportement que
+ *   `retourArriere()` observé dans le VRAI HTML fourni par le club).
+ * - `error` : FBI a explicitement refusé (message d'erreur RÉEL affiché
+ *   par la page, jamais un message générique deviné).
+ * - `unknown` : ni confirmation ni erreur détectée dans le délai imparti
+ *   (page/formulaire absent, champ introuvable, timeout) — traité comme un
+ *   ÉCHEC côté appelant (jamais supposé réussi sans preuve), avec un
+ *   message expliquant ce qui a été constaté, pour vérification manuelle
+ *   sur FBI.
+ */
+export type DerogationResponseOutcome = { outcome: "success" } | { outcome: "error"; message: string } | { outcome: "unknown"; message: string };

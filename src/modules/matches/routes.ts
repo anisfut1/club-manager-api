@@ -3,7 +3,9 @@ import type { AppEnv } from "../../auth/context.js";
 import { requireAuth, requireClubMembership, requireClubRole } from "../../auth/middleware.js";
 import { badRequest, conflict, notFound } from "../../api-error.js";
 import { MatchesQueryDtoSchema, type MatchListItemDto, type MatchDetailsDto } from "../../contracts/matches.js";
-import type { DerogationStatusDto } from "../../contracts/derogations.js";
+import { RespondToDerogationDtoSchema, type DerogationStatusDto } from "../../contracts/derogations.js";
+import { isDerogationActionRequired } from "../derogations/action-required.js";
+import { respondToDerogationForClub } from "../derogations/respond-derogation.js";
 import { computePeriodRange } from "../../util/timezone.js";
 import { sanitizeEmarqueError } from "../../integrations/emarque/sanitize-error.js";
 import type { QualityWarningDto } from "../../contracts/emarque.js";
@@ -303,11 +305,13 @@ matchesRouter.get("/:matchId/derogation", async (c) => {
     .get("supabase")
     .from("fbi_derogation_checks")
     .select(
-      "numero, etat, date_depot, date_derogation, date_rencontre, heure, domicile, visiteur, demandeur, motif, date_rencontre_demandee, heure_demandee, adversaire, date_reponse, acceptation, motif_refus, checked_at",
+      "id, numero, etat, date_depot, date_derogation, date_rencontre, heure, domicile, visiteur, demandeur, motif, date_rencontre_demandee, heure_demandee, adversaire, date_reponse, acceptation, motif_refus, checked_at",
     )
     .eq("club_id", club.id)
     .eq("match_id", matchId)
     .order("checked_at", { ascending: false });
+
+  const { data: match } = await c.get("supabase").from("matches").select("is_home").eq("id", matchId).eq("club_id", club.id).maybeSingle();
 
   const hasDetail = (row: { demandeur: string | null; motif: string | null; date_rencontre_demandee: string | null; heure_demandee: string | null; adversaire: string | null; date_reponse: string | null; acceptation: string | null; motif_refus: string | null }): boolean =>
     Boolean(row.demandeur || row.motif || row.date_rencontre_demandee || row.heure_demandee || row.adversaire || row.date_reponse || row.acceptation || row.motif_refus);
@@ -320,6 +324,8 @@ matchesRouter.get("/:matchId/derogation", async (c) => {
 
   const derogation: DerogationStatusDto | null = data
     ? {
+        id: data.id,
+        actionRequired: isDerogationActionRequired({ etat: data.etat, demandeur: data.demandeur, isHome: match?.is_home ?? null }),
         numero: data.numero,
         etat: data.etat,
         dateDepot: data.date_depot,
@@ -341,6 +347,54 @@ matchesRouter.get("/:matchId/derogation", async (c) => {
     : null;
 
   return c.json({ derogation });
+});
+
+/**
+ * POST /v1/clubs/:clubId/matches/:matchId/derogation/respond — ÉCRIT
+ * réellement sur FBI/FFBB (accepter/refuser), demande du club, 2026-09-27 :
+ * "je veux le faire via loutil". Résout la MÊME dérogation que le widget
+ * `GET .../derogation` ci-dessus vient d'afficher (même sélection —
+ * priorité "En Cours", voir sa doc), pour que le bouton de la fiche match
+ * agisse bien sur ce que l'admin vient de lire à l'écran.
+ */
+matchesRouter.post("/:matchId/derogation/respond", requireClubRole("club_admin"), async (c) => {
+  const { club } = c.get("club");
+  const user = c.get("user");
+  const matchId = c.req.param("matchId");
+  if (!matchId) throw badRequest("Paramètre de route :matchId manquant.");
+
+  const body = RespondToDerogationDtoSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!body.success) throw badRequest(body.error.issues[0]?.message ?? "Corps de requête invalide.");
+
+  const { data: rows } = await c
+    .get("supabase")
+    .from("fbi_derogation_checks")
+    .select("id, etat, date_depot, demandeur, motif, date_rencontre_demandee, heure_demandee, adversaire, date_reponse, acceptation, motif_refus, checked_at")
+    .eq("club_id", club.id)
+    .eq("match_id", matchId)
+    .order("checked_at", { ascending: false });
+
+  const hasDetail = (row: { demandeur: string | null; motif: string | null; date_rencontre_demandee: string | null; heure_demandee: string | null; adversaire: string | null; date_reponse: string | null; acceptation: string | null; motif_refus: string | null }): boolean =>
+    Boolean(row.demandeur || row.motif || row.date_rencontre_demandee || row.heure_demandee || row.adversaire || row.date_reponse || row.acceptation || row.motif_refus);
+
+  const enCoursRows = (rows ?? []).filter((r) => r.etat === "En Cours");
+  const pool = enCoursRows.length > 0 ? enCoursRows : (rows ?? []);
+  const detailedRows = pool.filter(hasDetail);
+  const candidates = detailedRows.length > 0 ? detailedRows : pool;
+  const data = [...candidates].sort((a, b) => compareDerogationDateDepot(b.date_depot, a.date_depot) || b.checked_at.localeCompare(a.checked_at))[0] ?? null;
+
+  if (!data) throw notFound("Aucune dérogation connue pour ce match.");
+
+  const serviceSupabase = createServiceSupabaseClient();
+  const result = await respondToDerogationForClub(serviceSupabase, {
+    clubId: club.id,
+    derogationCheckId: data.id,
+    decision: body.data.decision,
+    motifRefus: body.data.motifRefus ?? null,
+    submittedBy: user.id,
+  });
+
+  return c.json(result);
 });
 
 /**

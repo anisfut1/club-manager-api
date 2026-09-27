@@ -166,6 +166,7 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
           club_id: job.club_id,
           match_id: matchId,
           fbi_row_key: fbiRowKey,
+          id_derogation: derogation.idDerogation,
           numero: derogation.numero,
           etat: derogation.etat,
           date_depot: derogation.dateDepot,

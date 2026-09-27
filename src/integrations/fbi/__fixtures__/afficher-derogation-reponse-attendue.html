@@ -1,0 +1,91 @@
+<html>
+  <body>
+    <h1>Détail de la dérogation</h1>
+    <!--
+      Reproduit le HTML SOURCE réel de afficherDerogation.fbi fourni par le
+      club le 2026-09-27 pour la rencontre 9538 (division DM2) — CAS OÙ LE
+      CLUB DOIT RÉPONDRE (demandeur = l'adversaire), distinct de
+      afficher-derogation.html (cas où le club EST le demandeur, section
+      "Réponse de l'adversaire" en lecture seule). Ici le champ de décision
+      est un VRAI <select> ACTIVABLE (id/name réels, jamais #acceptation qui
+      désigne le champ d'AFFICHAGE en lecture seule) : "P"=NC / "N"=Refusée /
+      "O"=Acceptée, avec <textarea name="...motifRefus"> lui aussi activable
+      (jamais readonly ici, contrairement à l'affichage).
+
+      Bouton "Enregistrer" et `enregistrerDerogationAjax()` reproduits
+      fidèlement (POST vers enregistrerDerogation.fbi, navigation vers
+      rechercherDerogation.fbi en cas de succès [retourArriere()], sinon
+      insertion d'un <ul class="errorMessage"> — jamais deviné, mêmes noms
+      de fonction/attributs que le VRAI JS de la page, seule la requête
+      réseau elle-même est simulée par ce test server.
+    -->
+    <form id="afficherDerogation">
+      <input type="hidden" id="idDerogation" value="BvBUvSPeq6Ta6wZoQpDvSg%3D%3D" />
+
+      <div class="row sousTitre"><p>Généralités</p></div>
+      <input type="text" id="rencontreEquipeDomicile" value="MONTPELLIER UNIVERSITE CLUB - 1" disabled="disabled" />
+      <input type="text" id="rencontreEquipeVisiteur" value="IE - SPORT CLUB DE SETE BASKET - 2" disabled="disabled" />
+      <input type="text" id="rencontreDateRencontre" value="06/12/2026" disabled="disabled" />
+      <input type="text" id="rencontreHeure" value="18:00" disabled="disabled" />
+
+      <div class="row sousTitre"><p>Demande de dérogation</p></div>
+      <input type="text" id="demandeurLibelle" value="Domicile" disabled="disabled" />
+      <input type="text" id="dateDepot" value="04/12/2026 09:10" disabled="disabled" />
+      <input type="text" id="horaireHour" value="17:00" disabled="disabled" />
+      <textarea id="motif" readonly="readonly">Nous n'avons pas de gymnase disponible pour jouer les dimanches matin.</textarea>
+
+      <div class="row sousTitre"><p>Réponse de l'adversaire</p></div>
+      <input type="text" name="derogationForm.derogationReponseAdversaireBean.adversaire" value="SPORT CLUB DE SETE BASKET" disabled="disabled" id="adversaire" class="form-control form-control-sm" />
+
+      <select name="derogationForm.derogationReponseAdversaireBean.acceptation" id="afficherDerogation_derogationForm_derogationReponseAdversaireBean_acceptation">
+        <option value="P" selected="selected">NC</option>
+        <option value="N">Refusée</option>
+        <option value="O">Acceptée</option>
+      </select>
+
+      <textarea name="derogationForm.derogationReponseAdversaireBean.motifRefus" rows="3" id="motifRefus" class="form-control form-control-sm"></textarea>
+
+      <div class="card-footer">
+        <button class="btn boutonEnregistrer" type="button" onclick="afficherAjaxLoaderButton();return enregistrerDerogationAjax();">Enregistrer</button>
+      </div>
+    </form>
+
+    <script>
+      function afficherAjaxLoaderButton() {}
+
+      function retourArriere() {
+        window.location.assign("rechercherDerogation.fbi");
+      }
+
+      function afficherErreur(message) {
+        const container = document.createElement("div");
+        container.innerHTML = message;
+        document.body.appendChild(container);
+      }
+
+      // Reproduit `$("#afficherDerogation").serialize()` (jQuery réel de la
+      // page) suffisamment pour ce test : lit acceptation/motifRefus tels
+      // que remplis par Playwright, poste au serveur de test, agit sur la
+      // réponse EXACTEMENT comme le vrai `enregistrerDerogationAjax()`.
+      function enregistrerDerogationAjax() {
+        const acceptation = document.querySelector('select[name="derogationForm.derogationReponseAdversaireBean.acceptation"]').value;
+        const motifRefus = document.querySelector('textarea[name="derogationForm.derogationReponseAdversaireBean.motifRefus"]').value;
+
+        fetch("enregistrerDerogation.fbi", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: "acceptation=" + encodeURIComponent(acceptation) + "&motifRefus=" + encodeURIComponent(motifRefus),
+        })
+          .then((response) => response.text())
+          .then((text) => {
+            if (text === "") {
+              retourArriere();
+            } else {
+              afficherErreur(text);
+            }
+          });
+        return false;
+      }
+    </script>
+  </body>
+</html>

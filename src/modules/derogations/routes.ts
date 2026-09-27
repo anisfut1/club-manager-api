@@ -1,8 +1,13 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../auth/context.js";
 import { requireAuth, requireClubMembership, requireClubRole } from "../../auth/middleware.js";
+import { badRequest } from "../../api-error.js";
 import type { DerogationListItemDto } from "../../contracts/derogations.js";
+import { RespondToDerogationDtoSchema } from "../../contracts/derogations.js";
+import { createServiceSupabaseClient } from "../../db/client.js";
 import { findScheduleConflict, type OtherMatchSlot } from "./schedule-conflict.js";
+import { isDerogationActionRequired } from "./action-required.js";
+import { respondToDerogationForClub } from "./respond-derogation.js";
 
 /** Refusée : la date/heure demandée n'a jamais pris effet, jamais un vrai conflit de créneau à signaler. */
 const ETATS_SANS_ALERTE_CONFLIT = new Set(["Refusée"]);
@@ -112,6 +117,7 @@ derogationsRouter.get("/", requireClubRole("club_admin"), async (c) => {
       categoryLabel: match?.competition_id ? categoryLabelByCompetitionId.get(match.competition_id) ?? null : null,
       teamName: match?.team_id ? teamNameById.get(match.team_id) ?? null : null,
       scheduleConflict,
+      actionRequired: isDerogationActionRequired({ etat: row.etat, demandeur: row.demandeur, isHome: match?.is_home ?? null }),
       etat: row.etat,
       dateDepot: row.date_depot,
       dateDerogation: row.date_derogation,
@@ -132,4 +138,33 @@ derogationsRouter.get("/", requireClubRole("club_admin"), async (c) => {
   });
 
   return c.json({ derogations });
+});
+
+/**
+ * POST /v1/clubs/:clubId/derogations/:derogationId/respond — ÉCRIT
+ * réellement sur FBI/FFBB (accepter/refuser), demande du club, 2026-09-27 :
+ * "je veux le faire via loutil". `club_admin` uniquement (même verrou que
+ * la lecture ci-dessus et que `.../matches/:matchId/derogation/check`).
+ * SYNCHRONE — voir la doc de `respondToDerogationForClub` pour pourquoi
+ * (jamais via `fbi_jobs`, contrairement à `check_derogation`).
+ */
+derogationsRouter.post("/:derogationId/respond", requireClubRole("club_admin"), async (c) => {
+  const { club } = c.get("club");
+  const user = c.get("user");
+  const derogationId = c.req.param("derogationId");
+  if (!derogationId) throw badRequest("Paramètre de route :derogationId manquant.");
+
+  const body = RespondToDerogationDtoSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!body.success) throw badRequest(body.error.issues[0]?.message ?? "Corps de requête invalide.");
+
+  const serviceSupabase = createServiceSupabaseClient();
+  const result = await respondToDerogationForClub(serviceSupabase, {
+    clubId: club.id,
+    derogationCheckId: derogationId,
+    decision: body.data.decision,
+    motifRefus: body.data.motifRefus ?? null,
+    submittedBy: user.id,
+  });
+
+  return c.json(result);
 });

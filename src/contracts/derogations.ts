@@ -2,11 +2,19 @@ import { z } from "./zod.js";
 
 /**
  * Dernier état CONNU (via FBI, `rechercherDerogation.fbi`) de la
- * dérogation d'un match — LECTURE SEULE (demande du club, voir
- * docs/FBI.md : "faut qu'on gere les derog depuis l'outil", phase 1
- * volontairement limitée à la consultation). Toutes les valeurs restent au
- * format BRUT FBI (texte), jamais parsées — le format exact n'a été
- * observé que sur une capture d'écran, pas confirmé pour tous les états.
+ * dérogation d'un match — consultation seule (voir docs/FBI.md : "faut
+ * qu'on gere les derog depuis l'outil", phase 1). Toutes les valeurs
+ * restent au format BRUT FBI (texte), jamais parsées — le format exact n'a
+ * été observé que sur une capture d'écran, pas confirmé pour tous les
+ * états.
+ *
+ * Depuis 2026-09-27 ("je veux le faire via loutil... voici les boutons a
+ * utiliser pour accetper ou refuser"), une dérogation "En Cours" PEUT être
+ * répondue réellement (accepter/refuser) via
+ * `POST .../derogations/:derogationId/respond` — voir `actionRequired` et
+ * `respond-derogation.ts`. Écrit réellement sur FBI/FFBB, jamais annulable
+ * depuis cet outil ; tout le reste de cette lecture reste consultation
+ * seule.
  *
  * `demandeur`/`motif`/`dateRencontreDemandee`/`heureDemandee`/`adversaire`/
  * `dateReponse`/`acceptation`/`motifRefus` viennent de la page de DÉTAIL
@@ -19,6 +27,13 @@ import { z } from "./zod.js";
  */
 export const DerogationStatusDtoSchema = z
   .object({
+    /**
+     * Identifiant de la ligne `fbi_derogation_checks` correspondante —
+     * `null` quand aucune dérogation n'est connue pour ce match (voir
+     * `GET .../matches/:matchId/derogation`). Nécessaire pour
+     * `POST .../derogations/:derogationId/respond`.
+     */
+    id: z.string().uuid().nullable(),
     numero: z.string().nullable(),
     etat: z.string().nullable(),
     dateDepot: z.string().nullable(),
@@ -36,6 +51,16 @@ export const DerogationStatusDtoSchema = z
     acceptation: z.string().nullable(),
     motifRefus: z.string().nullable(),
     checkedAt: z.string(),
+    /**
+     * `true` si cette dérogation "En Cours" attend une décision DU CLUB
+     * (accepter/refuser), jamais l'inverse (voir
+     * `modules/derogations/action-required.ts`) — demande du club,
+     * 2026-09-27 : "sur la derog si action besoin de ma part, faut un
+     * badge action requise". Toujours `false` si `etat` n'est pas "En
+     * Cours", ou si le côté du club sur ce match n'a pas pu être déterminé
+     * (jamais deviné vu l'enjeu réel d'une action irréversible).
+     */
+    actionRequired: z.boolean(),
   })
   .openapi("DerogationStatusDto");
 
@@ -79,7 +104,9 @@ export const DerogationListItemDtoSchema = DerogationStatusDtoSchema.extend({
    * Identifiant de CETTE ligne `fbi_derogation_checks` — jamais `matchId`
    * comme clé (§ "82 vs 51", docs/FBI.md, 2026-09-27) : une rencontre peut
    * légitimement avoir PLUSIEURS dérogations distinctes, `matchId` seul ne
-   * les distingue pas.
+   * les distingue pas. Non-nullable ici (contrairement au `id` hérité de
+   * `DerogationStatusDtoSchema`) : une ligne de cette liste vient TOUJOURS
+   * d'une vraie ligne `fbi_derogation_checks`.
    */
   id: z.string().uuid(),
   matchId: z.string().uuid(),
@@ -105,3 +132,38 @@ export const DerogationListItemDtoSchema = DerogationStatusDtoSchema.extend({
 }).openapi("DerogationListItemDto");
 
 export type DerogationListItemDto = z.infer<typeof DerogationListItemDtoSchema>;
+
+/**
+ * Corps de `POST .../derogations/:derogationId/respond` — ÉCRIT réellement
+ * sur FBI/FFBB (demande du club, 2026-09-27 : "je veux le faire via
+ * loutil"). `motifRefus` obligatoire et non vide quand `decision ===
+ * "refused"` ("Si jamais on refuse, laisser un champ pour remplir le
+ * motif") ; ignoré/absent sinon.
+ */
+export const RespondToDerogationDtoSchema = z
+  .object({
+    decision: z.enum(["accepted", "refused"]),
+    motifRefus: z.string().trim().min(1).nullable().optional(),
+  })
+  .refine((body) => body.decision !== "refused" || Boolean(body.motifRefus && body.motifRefus.length > 0), {
+    message: "Un motif de refus est obligatoire pour refuser une dérogation.",
+    path: ["motifRefus"],
+  })
+  .openapi("RespondToDerogationDto");
+
+export type RespondToDerogationDto = z.infer<typeof RespondToDerogationDtoSchema>;
+
+/**
+ * Résultat RÉEL d'une soumission à FBI — `outcome: "unknown"` n'est jamais
+ * traité comme un succès côté appelant (voir `BrowserFbiClient.respondToDerogation`) :
+ * l'admin doit alors vérifier manuellement sur FBI avant de réessayer,
+ * jamais recliquer à l'aveugle.
+ */
+export const RespondToDerogationResultDtoSchema = z
+  .object({
+    outcome: z.enum(["success", "error", "unknown"]),
+    message: z.string().nullable(),
+  })
+  .openapi("RespondToDerogationResultDto");
+
+export type RespondToDerogationResultDto = z.infer<typeof RespondToDerogationResultDtoSchema>;

@@ -599,6 +599,7 @@ export interface Database {
           club_id: string;
           match_id: string;
           fbi_row_key: string;
+          id_derogation: string | null;
           numero: string | null;
           etat: string | null;
           date_depot: string | null;
@@ -624,6 +625,7 @@ export interface Database {
           club_id: string;
           match_id: string;
           fbi_row_key: string;
+          id_derogation?: string | null;
           numero?: string | null;
           etat?: string | null;
           date_depot?: string | null;
@@ -643,6 +645,35 @@ export interface Database {
           checked_at?: string;
           created_at?: string;
           updated_at?: string;
+        }
+      >;
+
+      fbi_derogation_responses: Table<
+        {
+          id: string;
+          club_id: string;
+          match_id: string;
+          fbi_row_key: string;
+          id_derogation: string;
+          decision: "accepted" | "refused";
+          motif_refus: string | null;
+          submitted_by: string | null;
+          outcome: "success" | "error" | "unknown";
+          fbi_message: string | null;
+          created_at: string;
+        },
+        {
+          id?: string;
+          club_id: string;
+          match_id: string;
+          fbi_row_key: string;
+          id_derogation: string;
+          decision: "accepted" | "refused";
+          motif_refus?: string | null;
+          submitted_by?: string | null;
+          outcome: "success" | "error" | "unknown";
+          fbi_message?: string | null;
+          created_at?: string;
         }
       >;
 
