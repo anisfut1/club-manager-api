@@ -1031,6 +1031,25 @@ export class BrowserFbiClient {
    * index dans le tableau normalisé/filtré — la ligne fantôme DataTables
    * ("Aucune donnée disponible...") ET les lignes "A Créer" comptent
    * quand même dans l'index DOM de la page courante.
+   *
+   * Href/idDerogation collectés PENDANT la pagination (lecture DOM rapide,
+   * jamais de navigation), le détail lui-même récupéré dans une PASSE
+   * SÉPARÉE une fois toutes les pages parcourues — demande du club,
+   * 2026-09-27 : "la ligne en cours devrait aussi avoir son détail". Avant
+   * ce correctif, le détail était fetché ligne par ligne DANS L'ORDRE DU
+   * TABLEAU FBI ; si `detailDeadlineAt` était atteint en cours de route, les
+   * lignes restantes perdaient leur détail au hasard de leur position dans
+   * le tableau — constaté en production sur la rencontre n°15 : sa ligne
+   * "En Cours" (la plus actionable, un dossier encore ouvert) n'avait
+   * jamais eu son détail, pendant qu'une autre ligne déjà tranchée
+   * ("Acceptée par l'organisme dirigeant") l'avait. La passe séparée
+   * trie désormais les hrefs par PRIORITÉ avant de consommer le budget :
+   * "En Cours" (dossier actionnable) d'abord, le reste ensuite — si le
+   * budget doit sacrifier des lignes, ce sont les moins actionables qui
+   * perdent leur détail en premier, jamais un tirage dépendant de l'ordre
+   * FBI. `fetchDerogationDetailByHref` ouvre un onglet indépendant pour
+   * chaque détail (jamais de dépendance à l'état de navigation de `page`),
+   * ce qui rend cette séparation sûre.
    */
   private async collectAllDerogationPages(
     page: Page,
@@ -1047,7 +1066,7 @@ export class BrowserFbiClient {
     const lengthSelect = await this.tryMaximizeResultsPageLength(page);
 
     const MAX_PAGES = 50;
-    const collected: FbiDerogationRow[] = [];
+    const baseRows: { row: FbiDerogationRow; href: string | null }[] = [];
     let pageCount = 0;
     let rawRowCount = 0;
 
@@ -1084,9 +1103,7 @@ export class BrowserFbiClient {
           const href = await this.derogationRowDetailHref(scope, domIndex);
           const idDerogation = href ? this.parseIdDerogation(href, page.url()) : null;
           const rowWithId: FbiDerogationRow = { ...normalizedRow, idDerogation };
-
-          const detail = href && Date.now() < detailDeadlineAt ? await this.fetchDerogationDetailByHref(page, href).catch(() => null) : null;
-          collected.push(detail ? { ...rowWithId, ...detail } : rowWithId);
+          baseRows.push({ row: rowWithId, href });
         }
       }
 
@@ -1108,6 +1125,25 @@ export class BrowserFbiClient {
       currentRows = advanced;
       currentSignature = JSON.stringify(advanced);
     }
+
+    // "En Cours" (dossier réellement actionnable) traité en premier — voir
+    // la doc de cette méthode. `stable` : `Array.prototype.sort` est stable
+    // depuis longtemps en V8/Node, l'ordre FBI d'origine est préservé au
+    // sein d'un même niveau de priorité.
+    const detailPriority = (row: FbiDerogationRow): number => (row.etat === "En Cours" ? 0 : 1);
+    const orderedForDetail = [...baseRows].sort((a, b) => detailPriority(a.row) - detailPriority(b.row));
+
+    const detailByHref = new Map<string, FbiDerogationDetailFields | null>();
+    for (const { href } of orderedForDetail) {
+      if (!href || detailByHref.has(href)) continue;
+      if (Date.now() >= detailDeadlineAt) break;
+      detailByHref.set(href, await this.fetchDerogationDetailByHref(page, href).catch(() => null));
+    }
+
+    const collected = baseRows.map(({ row, href }) => {
+      const detail = href ? (detailByHref.get(href) ?? null) : null;
+      return detail ? { ...row, ...detail } : row;
+    });
 
     return { rows: collected, pageCount, rawRowCount, lengthSelect, rawRowSample, pageTitleAtFirstRead };
   }

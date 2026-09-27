@@ -3441,3 +3441,48 @@ chez l'adversaire, jamais dans une salle du club : `derogations/routes.ts`
 ne compare désormais que les matchs à DOMICILE entre eux (même
 raisonnement que `venue-conflicts.ts`), et ne calcule même plus l'alerte
 pour la dérogation d'un match à l'extérieur.
+
+## "aucune dérogation connue" puis "jai pas le motif" — deux rounds le même jour (2026-09-27)
+
+Round 1 : le club signale un badge "Dérog en cours" sur un match dont la
+fiche détail affiche "aucune dérogation connue". Cause confirmée en base
+(rencontre n°5009) : DEUX lignes `fbi_derogation_checks` réelles pour la
+même rencontre ("En Cours" et "Acceptée par l'organisme dirigeant", même
+`checked_at`, `fbi_row_key` distincts — § "82 vs 51"). `GET .../matches/
+:matchId/derogation` utilisait encore `.maybeSingle()` (hypothèse
+pré-migration d'une seule ligne par match) : PostgREST rejette cet appel
+dès 2+ lignes, l'erreur était silencieusement ignorée (`const { data } =
+...`), donnant `derogation: null`. Corrigé une première fois en
+priorisant une ligne RÉELLEMENT "En Cours".
+
+Round 2, le club revient aussitôt : "mais la ligne en cours devrait aussi
+avoir son détail". Le premier correctif avait résolu le `null` mais
+choisi la MAUVAISE ligne sur une autre rencontre réelle (n°15) : sa ligne
+"En Cours" n'avait JAMAIS eu son détail récupéré (`demandeur`/`motif`/etc
+tous `null`), alors qu'une autre ligne pour la même rencontre, "Acceptée
+par l'organisme dirigeant", avait le détail complet — et son
+`heureDemandee: "17:00"` correspondait bien à l'heure RÉELLE affichée
+ailleurs sur la fiche match, confirmant qu'elle seule reflétait l'état
+réel, "En Cours" n'étant qu'un reliquat sans détail jamais récupéré.
+
+Root cause identifiée avec le client : `collectAllDerogationPages`
+fetchait le détail ligne par ligne, DANS L'ORDRE DU TABLEAU FBI, borné par
+`derogationDetailBudgetMs`. Si le budget s'épuisait en cours de route, les
+lignes restantes perdaient leur détail au hasard de leur POSITION dans le
+tableau — sans lien avec leur importance réelle. Corrigé : href/
+idDerogation collectés pendant la pagination (lecture DOM, jamais de
+navigation), le détail lui-même récupéré dans une passe séparée APRÈS
+avoir parcouru toutes les pages, triée par priorité — "En Cours" (dossier
+réellement actionnable) d'abord, le reste ensuite. Si le budget doit
+sacrifier des lignes, ce sont désormais les moins actionables qui perdent
+leur détail en premier, jamais un tirage dépendant de l'ordre FBI. Séparer
+la collecte du détail de la pagination est sûr : `fetchDerogationDetailByHref`
+ouvre un onglet indépendant par ligne, sans dépendance à l'état de
+navigation de la page principale.
+
+Côté `GET .../matches/:matchId/derogation` : la sélection de "quelle
+ligne afficher" quand plusieurs existent priorise désormais la COMPLÉTUDE
+du détail (une ligne avec du contenu réel vaut mieux qu'un état "actif"
+mais vide), départagée par `date_depot` (date de dépôt RÉELLE côté FBI),
+jamais par l'état seul ni par `checked_at` (qui ne reflète que l'heure de
+NOTRE vérification).
