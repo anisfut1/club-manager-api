@@ -40,3 +40,50 @@ export async function assertNoActiveFbiJob(supabase: DbClient, clubId: string): 
     throw conflict("Une vérification FBI est déjà en cours pour ce club (job en arrière-plan) — réessaie dans quelques instants.", "FBI_SESSION_ACTIVE");
   }
 }
+
+/**
+ * `fbi_jobs_unique_pending_reconcile_schedule` (migration
+ * `20260925120000_fbi_schedule_reconciliation.sql`) empêche définitivement
+ * un DEUXIÈME job `reconcile_schedule` actif (`pending`/`claimed`/`running`)
+ * pour un même club — mais, contrairement à `claim_next_fbi_job(_for_club)`
+ * et `assertNoActiveFbiJob` ci-dessus, cette contrainte n'a AUCUNE fenêtre
+ * de fraîcheur : un job qui reste bloqué en `pending` (jamais réclamé par
+ * aucun worker/cron) bloque `POST .../fbi/reconcile-schedule` INDÉFINIMENT,
+ * contrairement au cas `claimed`/`running` déjà couvert. Constaté en
+ * production le 2026-09-28 : un job `reconcile_schedule` empilé à 03:18
+ * jamais traité (aucun appel `process-jobs` déclenché derrière) bloquait le
+ * bouton "Vérifier le calendrier (FFBB vs FBI)" avec "Un rapprochement
+ * calendrier FBI est déjà en attente ou en cours pour ce club." des heures
+ * plus tard, alors même que le bouton, une fois cliqué, appelle justement
+ * `process-jobs` juste après — donc un job encore `pending` après le seuil
+ * de fraîcheur n'est jamais une vraie course bénigne, seulement un job
+ * jamais traité.
+ *
+ * Appelée AVANT l'`insert` dans la route, pour les 2 cas (comme
+ * `claim_next_fbi_job` couvre déjà `claimed`/`running` mais jamais
+ * `pending`) : marque `failed` tout job `reconcile_schedule` de ce club
+ * bloqué au-delà du seuil de fraîcheur, qu'il soit encore `pending`
+ * (référence `scheduled_at`) ou `claimed`/`running` (référence
+ * `claimed_at`, même seuil que `assertNoActiveFbiJob`). Le job fantôme
+ * reste en base en `failed` (trace d'audit), jamais supprimé.
+ */
+export async function reclaimStaleReconcileScheduleJob(supabase: DbClient, clubId: string): Promise<void> {
+  const staleSince = new Date(Date.now() - STALE_JOB_THRESHOLD_MINUTES * 60_000).toISOString();
+  const lastError = "Job récupéré automatiquement : resté bloqué au-delà du seuil de fraîcheur (10 min) sans jamais être réclamé/terminé par un worker.";
+
+  await supabase
+    .from("fbi_jobs")
+    .update({ status: "failed", finished_at: new Date().toISOString(), last_error: lastError })
+    .eq("club_id", clubId)
+    .eq("type", "reconcile_schedule")
+    .eq("status", "pending")
+    .lt("scheduled_at", staleSince);
+
+  await supabase
+    .from("fbi_jobs")
+    .update({ status: "failed", finished_at: new Date().toISOString(), last_error: lastError })
+    .eq("club_id", clubId)
+    .eq("type", "reconcile_schedule")
+    .in("status", ["claimed", "running"])
+    .lt("claimed_at", staleSince);
+}

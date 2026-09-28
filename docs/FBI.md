@@ -3671,3 +3671,63 @@ journalisée dans `fbi_derogation_creations` (migration
 `fbi_derogation_responses` (action réelle et engageante, jamais annulable
 depuis cet outil). Même verrou anti-session-concurrente
 (`assertNoActiveFbiJob`) que les deux autres actions synchrones.
+
+## Job `reconcile_schedule` bloqué indéfiniment — "corrige stp"
+
+Constaté en production le 2026-09-28 : un job `reconcile_schedule` empilé
+à 03:18 (`fbi_jobs`, `status: pending`) n'a jamais été réclamé par aucun
+worker/cron — aucun appel `.../fbi/process-jobs` ne s'est enchaîné derrière
+cet insert ce jour-là. Des heures plus tard, le bouton "Vérifier le
+calendrier (FFBB vs FBI)" échouait systématiquement avec "Un rapprochement
+calendrier FBI est déjà en attente ou en cours pour ce club." — la
+contrainte `fbi_jobs_unique_pending_reconcile_schedule` (migration
+`20260925120000_fbi_schedule_reconciliation.sql`) interdit un DEUXIÈME job
+`reconcile_schedule` actif (`pending`/`claimed`/`running`) pour ce club,
+SANS AUCUNE fenêtre de fraîcheur — contrairement à `claim_next_fbi_job(_for_club)`
+et `assertNoActiveFbiJob` (fenêtre de 10 min, voir plus haut) qui ignorent
+déjà un job `claimed`/`running` trop vieux pour être un vrai traitement en
+cours. Le cas `pending` (jamais réclamé du tout) n'était couvert par
+AUCUNE de ces deux protections : un job resté `pending` bloquait ce club
+INDÉFINIMENT, sans jamais expirer.
+
+**Corrigé** (`reclaimStaleReconcileScheduleJob`,
+`modules/derogations/fbi-session-lock.ts`, appelée juste avant l'`insert`
+dans `POST .../fbi/reconcile-schedule`) : marque `failed` tout job
+`reconcile_schedule` de ce club bloqué au-delà du même seuil de fraîcheur
+de 10 minutes, qu'il soit encore `pending` (référence `scheduled_at`) ou
+`claimed`/`running` (référence `claimed_at`, déjà couvert ailleurs mais
+reproduit ici pour que cette route seule suffise). Le job fantôme reste en
+base en `failed` (trace d'audit), jamais supprimé. Un job `pending` après
+10 minutes n'est jamais une course bénigne ici : le bouton qui déclenche
+cet insert appelle justement `process-jobs` juste après dans le même clic
+— un job encore `pending` passé ce délai n'a donc pu être traité par
+personne.
+
+Nettoyage immédiat appliqué en production le 2026-09-28 (SQL direct,
+avant ce correctif) : job `ffbdb1f1-6fff-4548-ada0-164ced80a0df` marqué
+`failed`, et `matches.match_datetime` du match 15 (BU13MN23, U13 M vs MEZE
+LOUPIAN) corrigé à `2026-10-03T11:00:00Z` (13h Europe/Paris, confirmé par
+une recherche FBI directe — la dérogation acceptée avait bien changé
+l'heure sur FBI, mais le rapprochement calendrier bloqué depuis des heures
+n'avait jamais pu répercuter ce changement dans `matches`).
+
+## Timeout client sur `POST .../integrations/ffbb/sync` — "Synchronisation impossible"
+
+Bug séparé constaté le même jour : le bouton "Relancer maintenant"
+affichait "Synchronisation impossible. Réessaie." (message de repli côté
+SCSB pour toute exception qui n'est pas une `ApiError` — donc un timeout
+client, jamais une vraie erreur métier renvoyée par l'API) alors que
+`sync_runs.status` passait bien à `success` côté serveur. `syncFfbb`
+(`integrations/ffbb/sync.ts`) traite chaque match du club un par un
+(lecture + upsert + historique, plusieurs aller-retours Postgres par
+match) — largement au-delà des 20s de timeout par défaut du client HTTP
+SCSB (`src/lib/api/client.ts`) dès que le club a plusieurs centaines de
+matchs sur la saison. Même classe de bug déjà corrigée une première fois
+pour `.../fbi/process-jobs` (voir son commentaire dans `src/lib/api/integrations.ts`
+côté SCSB).
+
+**Corrigé côté SCSB uniquement** (`triggerFfbbSync`, `src/lib/api/integrations.ts`) :
+`timeoutMs: 280_000`, même valeur et même marge sous `maxDuration: 300`
+(vercel.json) que `processFbiJobs`/`checkAllDerogations`. Aucun changement
+requis côté club-manager-api — la route elle-même a toujours réussi, seul
+le client abandonnait trop tôt.

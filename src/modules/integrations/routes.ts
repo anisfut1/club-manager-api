@@ -12,6 +12,7 @@ import { syncFfbb } from "../../integrations/ffbb/sync.js";
 import { claimNextJobForClub } from "../../jobs/claim.js";
 import { processJobBatch } from "../../jobs/process-batch.js";
 import { checkAllDerogationsForClubSync } from "../derogations/check-all-derogations-sync.js";
+import { reclaimStaleReconcileScheduleJob } from "../derogations/fbi-session-lock.js";
 import { getEnv } from "../../config/env.js";
 import { logError } from "../../logger.js";
 import {
@@ -322,6 +323,12 @@ integrationsRouter.post("/fbi/reconcile-schedule", requireClubRole("club_admin")
 
   const credentials = await getFbiCredentials(serviceSupabase, club.id);
   if (!credentials) throw conflict("Configure d'abord un identifiant/mot de passe FBI avant de lancer un rapprochement calendrier.", "FBI_NOT_CONFIGURED");
+
+  // Récupère tout job `reconcile_schedule` fantôme (pending/claimed/running
+  // bloqué au-delà de 10 min) avant l'insert — sinon `fbi_jobs_unique_
+  // pending_reconcile_schedule` bloque ce club indéfiniment, voir
+  // reclaimStaleReconcileScheduleJob.
+  await reclaimStaleReconcileScheduleJob(serviceSupabase, club.id);
 
   const { error } = await serviceSupabase.from("fbi_jobs").insert({ club_id: club.id, type: "reconcile_schedule" });
 

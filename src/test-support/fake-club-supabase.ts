@@ -182,6 +182,10 @@ export interface FakeFbiJobRow {
   match_id: string | null;
   type: string;
   status: string;
+  scheduled_at?: string;
+  claimed_at?: string | null;
+  finished_at?: string | null;
+  last_error?: string | null;
 }
 
 export interface FakeClubSupabaseState {
@@ -475,8 +479,44 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
       if (hasConflict) return Promise.resolve({ error: { code: "23505", message: "duplicate key value violates unique constraint" } });
 
       fbiJobCounter += 1;
-      state.fbiJobs.push({ id: `fbi-job-${fbiJobCounter}`, club_id: payload.club_id, match_id: matchId, type: payload.type, status: "pending" });
+      state.fbiJobs.push({ id: `fbi-job-${fbiJobCounter}`, club_id: payload.club_id, match_id: matchId, type: payload.type, status: "pending", scheduled_at: new Date().toISOString() });
       return Promise.resolve({ error: null });
+    },
+    // `.update(patch).eq(...).in(...).lt(...)`, thenable sans `.select()` —
+    // même contrat que `licenciesTable.update`, voir reclaimStaleReconcileScheduleJob
+    // (modules/derogations/fbi-session-lock.ts) qui l'appelle ainsi.
+    update: (patch: Partial<FakeFbiJobRow>) => {
+      const filters: { col: string; value: unknown; op: "eq" | "in" | "lt" }[] = [];
+      const applyAndCollect = () => {
+        const rows = state.fbiJobs.filter((j) =>
+          filters.every((f) => {
+            const fieldValue = (j as unknown as Record<string, unknown>)[f.col];
+            if (f.op === "in") return (f.value as unknown[]).includes(fieldValue);
+            if (f.op === "lt") return typeof fieldValue === "string" && fieldValue < (f.value as string);
+            return fieldValue === f.value;
+          }),
+        );
+        rows.forEach((r) => Object.assign(r, patch));
+        return rows;
+      };
+      const api = {
+        eq(col: string, value: unknown) {
+          filters.push({ col, value, op: "eq" });
+          return api;
+        },
+        in(col: string, values: unknown[]) {
+          filters.push({ col, value: values, op: "in" });
+          return api;
+        },
+        lt(col: string, value: unknown) {
+          filters.push({ col, value, op: "lt" });
+          return api;
+        },
+        then(onFulfilled: (value: { data: FakeFbiJobRow[]; error: null }) => unknown) {
+          return Promise.resolve({ data: applyAndCollect(), error: null }).then(onFulfilled);
+        },
+      };
+      return api;
     },
   };
   const syncRunsTable = { select: (_cols?: string) => queryable(state.syncRuns) };
