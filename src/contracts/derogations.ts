@@ -167,3 +167,76 @@ export const RespondToDerogationResultDtoSchema = z
   .openapi("RespondToDerogationResultDto");
 
 export type RespondToDerogationResultDto = z.infer<typeof RespondToDerogationResultDtoSchema>;
+
+/**
+ * Corps de `POST .../matches/:matchId/derogation/create` — ÉCRIT réellement
+ * sur FBI/FFBB (demande du club, 2026-09-28 : "on a vu comment accepter ou
+ * refuser une dérog, mtn faut en créer une... on remplit et choisi le
+ * motif, et on envoie de la meme facon que pour accpter ou refuser").
+ *
+ * Reflète UNIQUEMENT les champs RÉELS confirmés par le HTML source du
+ * formulaire de création fourni par le club le 2026-09-28 (rencontre 16,
+ * Plateau BU18MN1) que ce backend sait remplir — voir
+ * `DerogationCreationRequest` (integrations/fbi/types.ts). La modification
+ * de SALLE (case "modifierSalle", recherche via une modale FBI dont la
+ * mécanique réelle n'a jamais été observée) n'est volontairement PAS
+ * exposée ici — jamais un sélecteur deviné sans preuve directe.
+ *
+ * `dateDerogation`/`horaire` obligatoires et au format FBI réel quand la
+ * case correspondante est cochée (`modifierDate`/`modifierHoraire`), jamais
+ * quand elle ne l'est pas. `inverserRencontre`/`inverserEquipe` mutuellement
+ * exclusives (même règle que le JS réel de la page FBI, revalidée ici
+ * côté serveur). Au moins une case doit être cochée — une dérogation sans
+ * aucune modification demandée n'a pas de sens.
+ */
+export const CreateDerogationDtoSchema = z
+  .object({
+    motif: z.string().trim().min(1, "Le motif de la demande est obligatoire."),
+    modifierDate: z.boolean(),
+    dateDerogation: z
+      .string()
+      .regex(/^\d{2}\/\d{2}\/\d{4}$/, "Date invalide (JJ/MM/AAAA attendu).")
+      .nullable()
+      .optional(),
+    modifierHoraire: z.boolean(),
+    horaire: z
+      .string()
+      .regex(/^\d{2}:\d{2}$/, "Horaire invalide (HH:MM attendu).")
+      .nullable()
+      .optional(),
+    inverserRencontre: z.boolean(),
+    inverserEquipe: z.boolean(),
+  })
+  .refine((body) => !body.modifierDate || Boolean(body.dateDerogation), {
+    message: "La date de dérogation est obligatoire quand « Modifier la date » est coché.",
+    path: ["dateDerogation"],
+  })
+  .refine((body) => !body.modifierHoraire || Boolean(body.horaire), {
+    message: "L'horaire est obligatoire quand « Modifier l'horaire » est coché.",
+    path: ["horaire"],
+  })
+  .refine((body) => !(body.inverserRencontre && body.inverserEquipe), {
+    message: "« Inverser la rencontre » et « Inverser seulement les équipes » sont mutuellement exclusives.",
+    path: ["inverserEquipe"],
+  })
+  .refine((body) => body.modifierDate || body.modifierHoraire || body.inverserRencontre || body.inverserEquipe, {
+    message: "Coche au moins une modification (date, horaire, ou inversion) pour créer une dérogation.",
+    path: ["modifierDate"],
+  })
+  .openapi("CreateDerogationDto");
+
+export type CreateDerogationDto = z.infer<typeof CreateDerogationDtoSchema>;
+
+/**
+ * Résultat RÉEL d'une création — même contrat que
+ * `RespondToDerogationResultDtoSchema` (`outcome: "unknown"` jamais traité
+ * comme un succès côté appelant).
+ */
+export const CreateDerogationResultDtoSchema = z
+  .object({
+    outcome: z.enum(["success", "error", "unknown"]),
+    message: z.string().nullable(),
+  })
+  .openapi("CreateDerogationResultDto");
+
+export type CreateDerogationResultDto = z.infer<typeof CreateDerogationResultDtoSchema>;

@@ -677,6 +677,41 @@ export interface Database {
         }
       >;
 
+      fbi_derogation_creations: Table<
+        {
+          id: string;
+          club_id: string;
+          match_id: string;
+          motif: string;
+          modifier_date: boolean;
+          date_derogation: string | null;
+          modifier_horaire: boolean;
+          horaire: string | null;
+          inverser_rencontre: boolean;
+          inverser_equipe: boolean;
+          submitted_by: string | null;
+          outcome: "success" | "error" | "unknown";
+          fbi_message: string | null;
+          created_at: string;
+        },
+        {
+          id?: string;
+          club_id: string;
+          match_id: string;
+          motif: string;
+          modifier_date?: boolean;
+          date_derogation?: string | null;
+          modifier_horaire?: boolean;
+          horaire?: string | null;
+          inverser_rencontre?: boolean;
+          inverser_equipe?: boolean;
+          submitted_by?: string | null;
+          outcome: "success" | "error" | "unknown";
+          fbi_message?: string | null;
+          created_at?: string;
+        }
+      >;
+
       emarque_imports: Table<
         {
           id: string;

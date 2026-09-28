@@ -3,9 +3,10 @@ import type { AppEnv } from "../../auth/context.js";
 import { requireAuth, requireClubMembership, requireClubRole } from "../../auth/middleware.js";
 import { badRequest, notFound } from "../../api-error.js";
 import { MatchesQueryDtoSchema, type MatchListItemDto, type MatchDetailsDto } from "../../contracts/matches.js";
-import { RespondToDerogationDtoSchema, type DerogationStatusDto } from "../../contracts/derogations.js";
+import { CreateDerogationDtoSchema, RespondToDerogationDtoSchema, type DerogationStatusDto } from "../../contracts/derogations.js";
 import { isDerogationActionRequired } from "../derogations/action-required.js";
 import { respondToDerogationForClub } from "../derogations/respond-derogation.js";
+import { createDerogationForClub } from "../derogations/create-derogation.js";
 import { computePeriodRange } from "../../util/timezone.js";
 import { sanitizeEmarqueError } from "../../integrations/emarque/sanitize-error.js";
 import type { QualityWarningDto } from "../../contracts/emarque.js";
@@ -414,6 +415,41 @@ matchesRouter.post("/:matchId/derogation/check", requireClubRole("club_admin"), 
 
   const serviceSupabase = createServiceSupabaseClient();
   const result = await checkDerogationForMatchSync(serviceSupabase, { clubId: club.id, matchId });
+
+  return c.json(result);
+});
+
+/**
+ * POST /v1/clubs/:clubId/matches/:matchId/derogation/create — ÉCRIT
+ * réellement sur FBI/FFBB : crée une NOUVELLE demande de dérogation pour ce
+ * match (demande du club, 2026-09-28 : "sur chaque rencontre faut un bouton
+ * 'Créer une dérogation'... on remplit et choisi le motif, et on envoie de
+ * la meme facon que pour accpter ou refuser"). `club_admin` uniquement
+ * (même verrou que `.../respond`). SYNCHRONE — voir la doc de
+ * `createDerogationForClub`.
+ */
+matchesRouter.post("/:matchId/derogation/create", requireClubRole("club_admin"), async (c) => {
+  const { club } = c.get("club");
+  const user = c.get("user");
+  const matchId = c.req.param("matchId");
+  if (!matchId) throw badRequest("Paramètre de route :matchId manquant.");
+
+  const body = CreateDerogationDtoSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!body.success) throw badRequest(body.error.issues[0]?.message ?? "Corps de requête invalide.");
+
+  const serviceSupabase = createServiceSupabaseClient();
+  const result = await createDerogationForClub(serviceSupabase, {
+    clubId: club.id,
+    matchId,
+    motif: body.data.motif,
+    modifierDate: body.data.modifierDate,
+    dateDerogation: body.data.dateDerogation ?? null,
+    modifierHoraire: body.data.modifierHoraire,
+    horaire: body.data.horaire ?? null,
+    inverserRencontre: body.data.inverserRencontre,
+    inverserEquipe: body.data.inverserEquipe,
+    submittedBy: user.id,
+  });
 
   return c.json(result);
 });

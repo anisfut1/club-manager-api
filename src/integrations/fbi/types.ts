@@ -160,9 +160,56 @@ export interface FbiAutomationClient<TSession> {
    * confirmée par FBI. `motifRefus` ignoré si `decision === "accepted"`.
    */
   respondToDerogation(session: TSession, idDerogation: string, decision: DerogationResponseDecision, motifRefus: string | null): Promise<DerogationResponseOutcome>;
+  /**
+   * ÉCRIT réellement sur FBI — crée une NOUVELLE demande de dérogation pour
+   * une rencontre qui n'en a encore aucune ("A Créer" côté FBI), demande du
+   * club, 2026-09-28 : "on a vu comment accepter ou refuser une dérog, mtn
+   * faut en créer une". Recherche d'abord la rencontre par numéro (+
+   * division si connue) parmi les rencontres à l'état "A Créer" — même
+   * principe que `fetchDerogationForMatch`, jamais une URL de création
+   * construite à la main (l'`idRencontre` réel n'est JAMAIS le numéro de
+   * rencontre, voir `createDerogation` côté BrowserFbiClient). `null` si
+   * aucune rencontre "A Créer" ne correspond (une dérogation existe peut-
+   * être déjà pour ce match, ou le numéro/la division ne correspond à
+   * rien) — jamais une erreur, l'appelant décide comment le signaler.
+   */
+  createDerogation(session: TSession, matchNumber: string, division: string | null, request: DerogationCreationRequest): Promise<DerogationResponseOutcome | null>;
 }
 
 export type DerogationResponseDecision = "accepted" | "refused";
+
+/**
+ * Corps du formulaire RÉEL de création d'une dérogation
+ * (`afficherDerogation.fbi?idDerogation=0&idRencontre=<jeton>`, HTML source
+ * réel fourni par le club le 2026-09-28 pour la rencontre 16/BU18MN1) —
+ * demande du club : "on a vu comment accepter ou refuser une dérog, mtn
+ * faut en créer une... on remplit et choisi le motif, et on envoie de la
+ * meme facon que pour accpter ou refuser".
+ *
+ * Champs confirmés par ce HTML réel : cases `modifierDate`/`modifierHoraire`
+ * (chacune affiche son champ associé via `afficherComposant()`, JS réel de
+ * la page) et `inverserRencontre`/`inverserEquipe` (mutuellement exclusives
+ * CÔTÉ FBI, son propre JS décoche l'une quand l'autre est cochée). La
+ * modification de SALLE (case `modifierSalle`, recherche via une MODALE
+ * `rechercherModaleSalle()`) N'EST PAS supportée ici — sa mécanique réelle
+ * (contenu de la modale, chargé en AJAX) n'a jamais été observée, jamais
+ * deviné un sélecteur sans preuve directe (voir AGENTS.md/docs/FBI.md).
+ *
+ * `dateDerogation` au format FBI réel `"DD/MM/YYYY"` (voir
+ * `rencontreDateRencontre` sur la même page), `horaire` au format
+ * `"HH:mm"` (voir `rencontreHeure`) — jamais reformatés ici, la validation
+ * de forme vit dans `contracts/derogations.ts` (zod), cette interface ne
+ * fait que porter des chaînes déjà valides.
+ */
+export interface DerogationCreationRequest {
+  motif: string;
+  modifierDate: boolean;
+  dateDerogation: string | null;
+  modifierHoraire: boolean;
+  horaire: string | null;
+  inverserRencontre: boolean;
+  inverserEquipe: boolean;
+}
 
 /**
  * Résultat d'une soumission réelle à FBI (`respondToDerogation`) :

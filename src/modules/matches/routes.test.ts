@@ -19,6 +19,9 @@ vi.mock("../../db/client.js", () => ({
 const { mockCheckDerogationForMatchSync } = vi.hoisted(() => ({ mockCheckDerogationForMatchSync: vi.fn() }));
 vi.mock("../derogations/check-derogation-sync.js", () => ({ checkDerogationForMatchSync: mockCheckDerogationForMatchSync }));
 
+const { mockCreateDerogationForClub } = vi.hoisted(() => ({ mockCreateDerogationForClub: vi.fn() }));
+vi.mock("../derogations/create-derogation.js", () => ({ createDerogationForClub: mockCreateDerogationForClub }));
+
 const { app } = await import("../../app.js");
 
 const CLUB_A = {
@@ -443,5 +446,71 @@ describe("POST /v1/clubs/:clubId/matches/:matchId/derogation/check (club_admin, 
 
     const res = await request("/match-inexistant/derogation/check", { method: "POST" });
     expect(res.status).toBe(404);
+  });
+});
+
+describe("POST /v1/clubs/:clubId/matches/:matchId/derogation/create (club_admin) — ÉCRIT réellement sur FBI, demande du club 2026-09-28 : \"mtn faut en créer une\"", () => {
+  beforeEach(() => {
+    state.roles = [{ membership_id: "membership-a1", role: "club_admin" }];
+  });
+
+  const validBody = {
+    motif: "Indisponibilité du gymnase.",
+    modifierDate: true,
+    dateDerogation: "07/11/2026",
+    modifierHoraire: false,
+    inverserRencontre: false,
+    inverserEquipe: false,
+  };
+
+  it("délègue à createDerogationForClub (scopé club+match) et renvoie son résultat immédiatement", async () => {
+    mockCreateDerogationForClub.mockResolvedValueOnce({ outcome: "success", message: null });
+
+    const res = await request("/match-1/derogation/create", { method: "POST", body: JSON.stringify(validBody) });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ outcome: "success", message: null });
+    expect(mockCreateDerogationForClub).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ clubId: CLUB_A.id, matchId: "match-1", motif: validBody.motif, modifierDate: true, dateDerogation: "07/11/2026" }),
+    );
+  });
+
+  it("400 quand le motif est vide (validation zod, jamais atteint createDerogationForClub)", async () => {
+    const res = await request("/match-1/derogation/create", { method: "POST", body: JSON.stringify({ ...validBody, motif: "  " }) });
+    expect(res.status).toBe(400);
+    expect(mockCreateDerogationForClub).not.toHaveBeenCalled();
+  });
+
+  it("400 quand aucune case n'est cochée (date/horaire/inversion — validation zod)", async () => {
+    const res = await request(
+      "/match-1/derogation/create",
+      { method: "POST", body: JSON.stringify({ motif: "x", modifierDate: false, modifierHoraire: false, inverserRencontre: false, inverserEquipe: false }) },
+    );
+    expect(res.status).toBe(400);
+    expect(mockCreateDerogationForClub).not.toHaveBeenCalled();
+  });
+
+  it("400 quand inverserRencontre et inverserEquipe sont toutes deux cochées (mutuellement exclusives)", async () => {
+    const res = await request(
+      "/match-1/derogation/create",
+      { method: "POST", body: JSON.stringify({ motif: "x", modifierDate: false, modifierHoraire: false, inverserRencontre: true, inverserEquipe: true }) },
+    );
+    expect(res.status).toBe(400);
+    expect(mockCreateDerogationForClub).not.toHaveBeenCalled();
+  });
+
+  it("refuse (403) à un membre non club_admin", async () => {
+    state.roles = [{ membership_id: "membership-a1", role: "joueur" }];
+
+    const res = await request("/match-1/derogation/create", { method: "POST", body: JSON.stringify(validBody) });
+    expect(res.status).toBe(403);
+    expect(mockCreateDerogationForClub).not.toHaveBeenCalled();
+  });
+
+  it("propage le statut d'erreur (ex. 409 FBI non configuré) renvoyé par createDerogationForClub", async () => {
+    mockCreateDerogationForClub.mockRejectedValueOnce(conflict("Configure d'abord un identifiant/mot de passe FBI avant de créer une dérogation.", "FBI_NOT_CONFIGURED"));
+
+    const res = await request("/match-1/derogation/create", { method: "POST", body: JSON.stringify(validBody) });
+    expect(res.status).toBe(409);
   });
 });

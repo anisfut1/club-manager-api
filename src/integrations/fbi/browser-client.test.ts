@@ -631,6 +631,100 @@ describe("BrowserFbiClient.respondToDerogation (ÉCRIT réellement sur FBI — d
   });
 });
 
+describe("BrowserFbiClient.createDerogation (ÉCRIT réellement sur FBI — création, demande du club 2026-09-28 : \"mtn faut en créer une\")", () => {
+  beforeEach(() => {
+    server.setRoute({ path: "/afficherDerogation.fbi", contentType: "text/html", body: fixture("afficher-derogation-creation.html") });
+  });
+
+  it("recherche la rencontre à l'état 'A Créer' (jamais 'tousLesEtats', qui l'exclut), remplit le motif/la date, clique Enregistrer, détecte le succès par la navigation vers rechercherDerogation.fbi", async () => {
+    server.setRoute({ path: "/enregistrerDerogation.fbi", method: "POST", contentType: "text/plain", body: "" });
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    // "2659" (division "PRF") est la SEULE ligne "A Créer" de la fixture
+    // rechercher-derogation.html — voir sa doc.
+    const result = await client.createDerogation(session, "2659", "PRF", {
+      motif: "Indisponibilité du gymnase.",
+      modifierDate: true,
+      dateDerogation: "07/11/2026",
+      modifierHoraire: false,
+      horaire: null,
+      inverserRencontre: false,
+      inverserEquipe: false,
+    });
+
+    expect(result).toEqual({ outcome: "success" });
+    expect(session.page.url()).toContain("rechercherDerogation.fbi");
+    await client.closeSession(session);
+  });
+
+  it("renvoie null quand aucune rencontre 'A Créer' ne correspond au numéro (jamais un outcome fabriqué)", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    const result = await client.createDerogation(session, "999999", null, {
+      motif: "Motif.",
+      modifierDate: false,
+      dateDerogation: null,
+      modifierHoraire: false,
+      horaire: null,
+      inverserRencontre: false,
+      inverserEquipe: false,
+    });
+
+    expect(result).toBeNull();
+    await client.closeSession(session);
+  });
+
+  it("renvoie null quand le numéro correspond mais pas la division (désambiguïsation, même principe que fetchDerogationForMatch)", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    const result = await client.createDerogation(session, "2659", "AUTRE_DIVISION", {
+      motif: "Motif.",
+      modifierDate: false,
+      dateDerogation: null,
+      modifierHoraire: false,
+      horaire: null,
+      inverserRencontre: false,
+      inverserEquipe: false,
+    });
+
+    expect(result).toBeNull();
+    await client.closeSession(session);
+  });
+
+  it(
+    "remonte le VRAI message d'erreur FBI quand la page reste sur place et affiche <ul class=\"errorMessage\">",
+    async () => {
+      server.setRoute({
+        path: "/enregistrerDerogation.fbi",
+        method: "POST",
+        contentType: "text/html",
+        body: '<ul class="errorMessage"><li>Le motif est obligatoire.</li></ul>',
+      });
+      const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+      const session = await client.login({ username: "club1234", password: "secret" });
+
+      const result = await client.createDerogation(session, "2659", "PRF", {
+        motif: "",
+        modifierDate: false,
+        dateDerogation: null,
+        modifierHoraire: false,
+        horaire: null,
+        inverserRencontre: false,
+        inverserEquipe: false,
+      });
+
+      expect(result).toMatchObject({ outcome: "error", message: expect.stringContaining("Le motif est obligatoire.") });
+      await client.closeSession(session);
+    },
+    // Même raison que respondToDerogation : attend RÉELLEMENT les 45s de
+    // `waitForURL` avant de retomber sur la détection d'erreur.
+    60_000,
+  );
+});
+
 describe("BrowserFbiClient.downloadDocument", () => {
   it("télécharge le contenu via le contexte authentifié, sans passer par le système de fichiers", async () => {
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });

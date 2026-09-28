@@ -1,7 +1,16 @@
 import * as cheerio from "cheerio";
 import { SimpleCookieJar } from "./cookie-jar.js";
 import { FbiError } from "./errors.js";
-import type { DerogationResponseDecision, DerogationResponseOutcome, EmarqueDocumentRef, FbiAutomationClient, FbiCredentialsInput, FbiDerogationRow, FbiScheduleRow } from "./types.js";
+import type {
+  DerogationCreationRequest,
+  DerogationResponseDecision,
+  DerogationResponseOutcome,
+  EmarqueDocumentRef,
+  FbiAutomationClient,
+  FbiCredentialsInput,
+  FbiDerogationRow,
+  FbiScheduleRow,
+} from "./types.js";
 
 /**
  * HttpFbiClient — client HTTP direct pour FBI (pas de navigateur, voir
@@ -350,6 +359,19 @@ export class HttpFbiClient implements FbiAutomationClient<HttpFbiSession> {
   ): Promise<DerogationResponseOutcome> {
     throw new FbiError(
       "Réponse à une dérogation FBI non confirmée en HTTP direct. Voir docs/FBI_AUTHENTICATED_SPIKE.md.",
+      "DEROGATION_SEARCH_ENDPOINT_NOT_CONFIRMED",
+    );
+  }
+
+  /** NON IMPLÉMENTÉ EN HTTP DIRECT — `BrowserFbiClient` est la seule stratégie fonctionnelle pour créer une dérogation (voir sa doc). */
+  async createDerogation(
+    _session: HttpFbiSession,
+    _matchNumber: string,
+    _division: string | null,
+    _request: DerogationCreationRequest,
+  ): Promise<DerogationResponseOutcome | null> {
+    throw new FbiError(
+      "Création d'une dérogation FBI non confirmée en HTTP direct. Voir docs/FBI_AUTHENTICATED_SPIKE.md.",
       "DEROGATION_SEARCH_ENDPOINT_NOT_CONFIRMED",
     );
   }

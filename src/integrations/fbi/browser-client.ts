@@ -4,7 +4,7 @@ import { FbiError } from "./errors.js";
 import * as selectors from "./selectors.js";
 import { normalizeScheduleRow } from "./schedule-row.js";
 import { normalizeDerogationRow, compareDerogationDateDepot } from "./derogation-row.js";
-import type { DerogationResponseDecision, DerogationResponseOutcome, FbiDerogationDetailFields, FbiDerogationRow, FbiScheduleRow } from "./types.js";
+import type { DerogationCreationRequest, DerogationResponseDecision, DerogationResponseOutcome, FbiDerogationDetailFields, FbiDerogationRow, FbiScheduleRow } from "./types.js";
 import { logInfo } from "../../logger.js";
 
 /**
@@ -1660,17 +1660,166 @@ export class BrowserFbiClient {
   }
 
   /**
-   * Rejoint l'écran de recherche des dérogations et réinitialise "Etat de
-   * la dérogation" sur "Tous les états (sauf à créer)" PAR LIBELLÉ (voir
+   * ÉCRIT réellement sur FBI — crée une NOUVELLE demande de dérogation pour
+   * une rencontre "A Créer" (aucune dérogation active pour l'instant), voir
+   * `DerogationCreationRequest` (types.ts) pour le détail des champs
+   * supportés et ceux volontairement NON supportés (salle, pièce jointe —
+   * leur mécanique réelle n'a jamais été observée, jamais deviné un
+   * sélecteur sans preuve directe).
+   *
+   * "on cherche la rencontre concernée" (demande du club, 2026-09-28) :
+   * recherche d'abord la ligne "A Créer" de cette rencontre sur
+   * `rechercherDerogation.fbi` (état forcé sur "CREER", voir
+   * `navigateToDerogationSearchScreen`) — même désambiguïsation par
+   * `division` que `fetchDerogationForMatch`, même raison (un numéro de
+   * rencontre n'est pas unique au club). `null` si aucune ligne "A Créer"
+   * ne correspond (une dérogation existe peut-être déjà pour ce match, ou
+   * le numéro/la division ne correspond à rien) : l'appelant
+   * (`create-derogation.ts`) décide comment le signaler, jamais un
+   * `outcome` fabriqué ici pour un cas qui n'a même pas atteint le
+   * formulaire réel.
+   *
+   * Navigue ENSUITE vers le `href` de cette ligne (jamais une URL de
+   * création construite à la main — voir la doc de l'interface) : FBI y
+   * affiche directement le formulaire de création (`input#creation`
+   * value="true", HTML source réel fourni par le club le 2026-09-28 pour
+   * la rencontre 16/BU18MN1). Mêmes champs RÉELS que ce HTML (jamais
+   * devinés) : `#modifierDate` → `#afficherDerogation_derogationForm_derogationDemandeBean_dateDerogation`,
+   * `#modifierHoraire` → `#horaireHour`, `#inverserRencontre`/
+   * `#inverserEquipe` (mutuellement exclusives côté JS réel de la page —
+   * revalidé côté serveur AVANT cet appel par `create-derogation.ts`,
+   * jamais supposé côté client seul), `#motif`. Même bouton
+   * d'enregistrement et même détection de résultat (navigation loin de la
+   * page = succès, `ul.errorMessage` = erreur, ni l'un ni l'autre dans le
+   * délai imparti = `unknown`) que `respondToDerogation` — voir sa doc
+   * pour le raisonnement complet (45s, jamais un succès supposé sans
+   * preuve).
+   */
+  async createDerogation(
+    session: BrowserFbiSession,
+    matchNumber: string,
+    division: string | null,
+    request: DerogationCreationRequest,
+  ): Promise<DerogationResponseOutcome | null> {
+    const { page } = session;
+
+    await this.navigateToDerogationSearchScreen(page, "creer");
+
+    const numeroInput = await selectors.matchNumberSearchInput(page);
+    if (!numeroInput) {
+      throw new FbiError(
+        `Champ "Numéro de rencontre" introuvable sur l'écran de recherche des dérogations (${this.baseUrl}/rechercherDerogation.fbi).`,
+        "NAVIGATION_FAILED",
+      );
+    }
+
+    const { scope } = await this.resolveDerogationScope(page);
+    const preSubmitSignature = JSON.stringify(await selectors.resultsTableGenericRows(scope).catch(() => null));
+
+    try {
+      await numeroInput.fill(matchNumber);
+      const submit = selectors.searchSubmitControl(page).first();
+      if ((await submit.count().catch(() => 0)) > 0) await submit.click();
+      else await numeroInput.press("Enter");
+      await this.settle(page);
+      await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+      await this.waitForDerogationTableRefresh(scope, preSubmitSignature);
+    } catch (error) {
+      throw new FbiError(
+        `Recherche de la rencontre à créer échouée pour ${matchNumber} : ${error instanceof Error ? error.message : String(error)}`,
+        "NAVIGATION_FAILED",
+        error,
+      );
+    }
+
+    const rows = await selectors.resultsTableGenericRows(scope);
+    if (!rows || rows.length === 0) return null;
+
+    const normalized = rows.map(normalizeDerogationRow);
+    const matchIndex = normalized.findIndex((row) => row.numero === matchNumber && (division === null || row.division === division));
+    if (matchIndex === -1) return null;
+
+    const href = await this.derogationRowDetailHref(scope, matchIndex);
+    if (!href) {
+      return { outcome: "unknown", message: "Lien vers le formulaire de création introuvable sur la ligne « A Créer » de cette rencontre." };
+    }
+
+    try {
+      await page.goto(new URL(href, page.url()).toString(), { waitUntil: "domcontentloaded" });
+      await this.settle(page);
+    } catch (error) {
+      throw new FbiError(`Formulaire de création de dérogation FBI injoignable pour la rencontre ${matchNumber}.`, "NAVIGATION_FAILED", error);
+    }
+
+    const creationMarker = page.locator("input#creation");
+    if ((await creationMarker.count().catch(() => 0)) === 0 || (await creationMarker.getAttribute("value").catch(() => null)) !== "true") {
+      return { outcome: "unknown", message: "Page de création de dérogation FBI introuvable ou de forme inattendue pour cette rencontre." };
+    }
+
+    try {
+      if (request.modifierDate) {
+        await page.locator("#modifierDate").check();
+        await page.locator("#afficherDerogation_derogationForm_derogationDemandeBean_dateDerogation").fill(request.dateDerogation ?? "");
+      }
+
+      if (request.modifierHoraire) {
+        await page.locator("#modifierHoraire").check();
+        await page.locator("#horaireHour").fill(request.horaire ?? "");
+      }
+
+      if (request.inverserRencontre) await page.locator("#inverserRencontre").check();
+      if (request.inverserEquipe) await page.locator("#inverserEquipe").check();
+
+      await page.locator("#motif").fill(request.motif);
+    } catch (error) {
+      return { outcome: "unknown", message: `Impossible de renseigner le formulaire de création FBI : ${error instanceof Error ? error.message : String(error)}` };
+    }
+
+    const saveButton = page.locator("button.boutonEnregistrer").first();
+    if ((await saveButton.count().catch(() => 0)) === 0) {
+      return { outcome: "unknown", message: "Bouton d'enregistrement introuvable sur le formulaire de création FBI." };
+    }
+
+    const beforeUrl = page.url();
+    try {
+      await saveButton.click();
+    } catch (error) {
+      return { outcome: "unknown", message: `Le clic sur "Enregistrer" a échoué : ${error instanceof Error ? error.message : String(error)}` };
+    }
+
+    // 45s — même raisonnement que `respondToDerogation` (constaté en
+    // production le 2026-09-28) : `enregistrerDerogationAjax()` peut
+    // dépasser 20s, jamais une preuve que la navigation n'arrive pas.
+    const navigatedAway = await page
+      .waitForURL((candidate) => candidate.toString() !== beforeUrl, { timeout: 45_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (navigatedAway) return { outcome: "success" };
+
+    const errorLocator = page.locator("ul.errorMessage").first();
+    if ((await errorLocator.count().catch(() => 0)) > 0) {
+      const text = (await errorLocator.innerText().catch(() => "")).trim();
+      return { outcome: "error", message: text.length > 0 ? text : "FBI a rejeté la création de la dérogation (message d'erreur vide)." };
+    }
+
+    return { outcome: "unknown", message: "Aucune confirmation ni erreur détectée après l'enregistrement — à vérifier manuellement sur FBI avant de réessayer." };
+  }
+
+  /**
+   * Rejoint l'écran de recherche des dérogations et règle "Etat de la
+   * dérogation" sur `etat` — `"tousLesEtats"` (défaut, PAR LIBELLÉ, voir
    * ci-dessous, jamais par position — un précédent correctif sélectionnait
    * à tort le premier `<option>`, "A Créer" dans la vraie liste, ce qui
-   * aurait masqué toutes les vraies demandes en cours). Best effort,
-   * jamais bloquant. Partagé par `fetchDerogationForMatch` et
-   * `fetchAllDerogations` (voir la doc de `DEROGATION_ETAT_PASSES`, §
-   * "Retour à une seule passe TT" — une seule passe suffit, `TT` couvre
-   * bien tous les états réels, une pagination robuste est ce qui manquait).
+   * aurait masqué toutes les vraies demandes en cours) pour
+   * `fetchDerogationForMatch`/`fetchAllDerogations` (voir la doc de
+   * `DEROGATION_ETAT_PASSES`, § "Retour à une seule passe TT"), ou
+   * `"creer"` (PAR VALEUR EXACTE, `value="CREER"`, confirmée réelle — voir
+   * ci-dessous) pour `createDerogation` (demande du club, 2026-09-28 : "on
+   * a vu comment accepter ou refuser une dérog, mtn faut en créer une" —
+   * une rencontre sans dérogation active n'existe QUE sous cet état). Best
+   * effort, jamais bloquant.
    */
-  private async navigateToDerogationSearchScreen(page: Page): Promise<void> {
+  private async navigateToDerogationSearchScreen(page: Page, etat: "tousLesEtats" | "creer" = "tousLesEtats"): Promise<void> {
     const targetUrl = `${this.baseUrl}/rechercherDerogation.fbi`;
 
     try {
@@ -1681,15 +1830,13 @@ export class BrowserFbiClient {
     }
 
     /**
-     * Sélectionne "Tous les états (sauf à créer)" — confirmé par capture
-     * d'écran ET par le HTML source réel de `rechercherDerogation.fbi`
-     * fourni par le club le 2026-09-25 : les 6 options réelles sont "A
-     * Créer" (value="CREER") | "En Cours" (value="EC") | "Acceptée par
-     * les deux associations sportives" (value="ACCEPT") | "Acceptée par
-     * l'organisme dirigeant" (value="ORGCREACC") | "Refusée"
-     * (value="ORGCREREF") | "Tous les états (sauf à créer)" (value="TT",
-     * `selected="selected"` par défaut) — valeurs jamais devinées, lues
-     * dynamiquement ci-dessous, jamais codées en dur.
+     * Confirmé par capture d'écran ET par le HTML source réel de
+     * `rechercherDerogation.fbi` fourni par le club le 2026-09-25 : les 6
+     * options réelles sont "A Créer" (value="CREER") | "En Cours"
+     * (value="EC") | "Acceptée par les deux associations sportives"
+     * (value="ACCEPT") | "Acceptée par l'organisme dirigeant"
+     * (value="ORGCREACC") | "Refusée" (value="ORGCREREF") | "Tous les
+     * états (sauf à créer)" (value="TT", `selected="selected"` par défaut).
      *
      * **Bug corrigé le 2026-09-25 (deuxième round, HTML réel fourni par le
      * club après un premier test en production qui ne renvoyait QUE des
@@ -1705,30 +1852,38 @@ export class BrowserFbiClient {
      * (best effort), laissant le filtre à son état de fait au moment du
      * chargement de page, jamais explicitement forcé sur "Tous les
      * états". Recherché par le LIBELLÉ visible de l'option ("tous les
-     * états"), jamais par position — un tout premier correctif (avant
-     * celui-ci) sélectionnait à tort le PREMIER `<option>` ("A Créer"
-     * dans la vraie liste), ce qui aurait restreint chaque recherche à
-     * cet unique état au lieu de toutes les VRAIES demandes en cours ("A
-     * Créer" désigne une rencontre sans dérogation active, pas une
-     * demande — l'exclure est le comportement voulu pour "vérifier
-     * toutes les demandes", jamais un oubli).
+     * états") pour `"tousLesEtats"`, jamais par position — un tout premier
+     * correctif (avant celui-ci) sélectionnait à tort le PREMIER
+     * `<option>` ("A Créer" dans la vraie liste), ce qui aurait restreint
+     * chaque recherche à cet unique état au lieu de toutes les VRAIES
+     * demandes en cours ("A Créer" désigne une rencontre sans dérogation
+     * active, pas une demande — l'exclure est le comportement voulu pour
+     * "vérifier toutes les demandes", jamais un oubli). `"creer"` cherche
+     * au contraire PRÉCISÉMENT cet état, par sa valeur RÉELLE confirmée
+     * (`value="CREER"`, jamais devinée) — jamais par libellé (un libellé
+     * `"A Créer"` matcherait aussi de façon inattendue une variante future
+     * du texte, la valeur d'option reste le contrat stable).
      */
-    const labelPattern = /tous les [ée]tats/i;
-
     try {
       const etatSelect = page.locator('select[name*="etat" i]').first();
-      if ((await etatSelect.count().catch(() => 0)) > 0) {
-        const options = etatSelect.locator("option");
-        const optionCount = await options.count().catch(() => 0);
+      if ((await etatSelect.count().catch(() => 0)) === 0) return;
 
-        for (let i = 0; i < optionCount; i += 1) {
-          const label = ((await options.nth(i).textContent().catch(() => "")) ?? "").trim();
-          if (!labelPattern.test(label)) continue;
+      if (etat === "creer") {
+        await etatSelect.selectOption({ value: "CREER" }).catch(() => {});
+        return;
+      }
 
-          const value = await options.nth(i).getAttribute("value").catch(() => null);
-          await etatSelect.selectOption(value !== null ? { value } : { label }).catch(() => {});
-          break;
-        }
+      const labelPattern = /tous les [ée]tats/i;
+      const options = etatSelect.locator("option");
+      const optionCount = await options.count().catch(() => 0);
+
+      for (let i = 0; i < optionCount; i += 1) {
+        const label = ((await options.nth(i).textContent().catch(() => "")) ?? "").trim();
+        if (!labelPattern.test(label)) continue;
+
+        const value = await options.nth(i).getAttribute("value").catch(() => null);
+        await etatSelect.selectOption(value !== null ? { value } : { label }).catch(() => {});
+        break;
       }
     } catch {
       // Best effort — voir la note ci-dessus.

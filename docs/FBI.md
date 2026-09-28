@@ -3615,3 +3615,59 @@ vécu en production (voir ProcessFbiJobsButton.tsx, incident du
 explicitement qu'aucun job `fbi_jobs` n'est `claimed`/`running` pour le
 club avant de lancer Playwright — sinon 409 ("réessaie dans quelques
 instants") plutôt qu'une deuxième connexion FBI concurrente.
+
+## Création RÉELLE d'une dérogation — "mtn faut en créer une"
+
+Demande du club, 2026-09-28, immédiatement après la phase 1 (accepter/
+refuser) ci-dessus : **"on a vu comment accepter ou refuser une dérog, mtn
+faut en créer une. (sur chaque rencontre faut un bouton "Créer une
+dérogation") On va dans dérog > état : à créer > on cherche la rencontre
+concernée > on remplit et choisi le motif, et on envoie de la meme facon
+que pour accpter ou refuser"** — accompagnée du HTML source réel du
+formulaire de création (`afficherDerogation.fbi?idDerogation=0&idRencontre=<jeton>`,
+rencontre 16, Plateau BU18MN1 Poule A du 11/10/2026).
+
+**Flux implémenté** (`BrowserFbiClient.createDerogation`, `modules/derogations/create-derogation.ts`,
+`POST .../matches/:matchId/derogation/create`) : "on cherche la rencontre
+concernée" est fait CÔTÉ SERVEUR, à partir du `matchId` déjà connu — jamais
+une recherche manuelle côté UI. Recherche la ligne "A Créer" de cette
+rencontre sur `rechercherDerogation.fbi` (état forcé sur `value="CREER"`,
+JAMAIS `"TT"` qui l'exclut explicitement, voir plus haut), même
+désambiguïsation par division que `fetchDerogationForMatch` (un numéro de
+rencontre n'est pas unique au club). Navigue ensuite vers le `href` RÉEL
+de cette ligne (jamais une URL de création construite à la main) : FBI y
+affiche directement le formulaire de création pré-rempli. `null` renvoyé
+par `createDerogation` si aucune ligne "A Créer" ne correspond (dérogation
+déjà existante, ou numéro/division ne correspondant à rien) — traité comme
+`outcome: "error"` côté `create-derogation.ts`, jamais une exception dure.
+
+Champs RÉELS du formulaire supportés (jamais devinés, confirmés par le
+HTML source fourni) : cases `#modifierDate`/`#modifierHoraire` (chacune
+affiche son champ associé via `afficherComposant()`, JS réel de la page —
+masqué par défaut), `#inverserRencontre`/`#inverserEquipe` (mutuellement
+exclusives côté JS réel de la page ET revalidées côté serveur avant
+l'appel Playwright, `CreateDerogationDtoSchema.refine()`), `#motif`
+(obligatoire). Même bouton d'enregistrement et même détection de résultat
+(navigation loin de la page = succès, `ul.errorMessage` = erreur, ni l'un
+ni l'autre en 45s = `unknown`, jamais un succès supposé sans preuve) que
+`respondToDerogation`.
+
+**Volontairement PAS supporté : modification de SALLE**
+(`#modifierSalle`). Le champ salle du formulaire réel n'est pas un champ
+texte libre mais un bouton ouvrant une MODALE chargée en AJAX
+(`rechercherModaleSalle()` → `rechercherSalleModaleAjax.fbi`, résultat
+injecté dans `#rechercheSalleModaleCorps` puis sélectionné via
+`retourSalleModale(idSalle, nomSalle)`) — sa mécanique réelle (contenu de
+la modale, structure de la liste/recherche de salles) n'a jamais été
+observée sur du HTML réel. Même règle que tout le reste de cette
+intégration (AGENTS.md) : jamais un sélecteur deviné sans preuve directe.
+Si ce besoin se confirme, il faudra d'abord obtenir le HTML réel de cette
+modale (ex. capture réseau du club en ouvrant "Modifier la salle" sur le
+vrai FBI) avant de l'implémenter.
+
+Audit : chaque tentative de création (succès, erreur, `unknown`) est
+journalisée dans `fbi_derogation_creations` (migration
+`20260928000000_fbi_derogation_create.sql`) — même raisonnement que
+`fbi_derogation_responses` (action réelle et engageante, jamais annulable
+depuis cet outil). Même verrou anti-session-concurrente
+(`assertNoActiveFbiJob`) que les deux autres actions synchrones.

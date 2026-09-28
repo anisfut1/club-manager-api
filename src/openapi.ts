@@ -12,7 +12,14 @@ import {
   PatchFfbbIntegrationDtoSchema,
 } from "./contracts/integrations.js";
 import { MatchDocumentDtoSchema } from "./contracts/documents.js";
-import { DerogationStatusDtoSchema, DerogationListItemDtoSchema, RespondToDerogationDtoSchema, RespondToDerogationResultDtoSchema } from "./contracts/derogations.js";
+import {
+  DerogationStatusDtoSchema,
+  DerogationListItemDtoSchema,
+  RespondToDerogationDtoSchema,
+  RespondToDerogationResultDtoSchema,
+  CreateDerogationDtoSchema,
+  CreateDerogationResultDtoSchema,
+} from "./contracts/derogations.js";
 import { IssueDtoSchema } from "./contracts/issues.js";
 import { JobStatusDtoSchema } from "./contracts/jobs.js";
 import { PlatformClubDtoSchema, CreateClubDtoSchema } from "./contracts/platform.js";
@@ -294,6 +301,17 @@ registry.registerPath({
   security: bearerAuth,
   request: { params: clubAndMatchIdParams, body: { content: { "application/json": { schema: RespondToDerogationDtoSchema } } } },
   responses: { 200: jsonResponse("Résultat RÉEL renvoyé par FBI (success/error/unknown)", RespondToDerogationResultDtoSchema), ...errorResponses, ...validationResponses },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/clubs/{clubId}/matches/{matchId}/derogation/create",
+  security: bearerAuth,
+  // ÉCRIT réellement sur FBI/FFBB (crée une nouvelle dérogation) — demande
+  // du club, 2026-09-28 : "mtn faut en créer une". Synchrone, voir la doc
+  // de `createDerogationForClub`.
+  request: { params: clubAndMatchIdParams, body: { content: { "application/json": { schema: CreateDerogationDtoSchema } } } },
+  responses: { 200: jsonResponse("Résultat RÉEL renvoyé par FBI (success/error/unknown)", CreateDerogationResultDtoSchema), ...errorResponses, ...validationResponses },
 });
 
 registry.registerPath({

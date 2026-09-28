@@ -1,0 +1,127 @@
+<html>
+  <body>
+    <h1>Création d'une demande de dérogation</h1>
+    <!--
+      Reproduit le HTML SOURCE réel de afficherDerogation.fbi fourni par le
+      club le 2026-09-28 pour la rencontre 16 (Plateau BU18MN1 Poule A, du
+      11/10/2026) — cas de CRÉATION d'une dérogation (`idDerogation` caché à
+      "0", `input#creation` à "true"), distinct des deux autres fixtures
+      afficher-derogation*.html (consultation/réponse à une dérogation
+      EXISTANTE). Demande du club, 2026-09-28 : "on a vu comment accepter ou
+      refuser une dérog, mtn faut en créer une... on remplit et choisi le
+      motif, et on envoie de la meme facon que pour accpter ou refuser".
+
+      Champs/ids/name RÉELS reproduits fidèlement (jamais devinés) :
+      - `#modifierDate`/`#modifierHoraire` : cases à cocher qui affichent
+        leur champ associé via `afficherComposant(id, id2)` (JS réel de la
+        page, `onclick` littéral) — masqués par défaut (`style="display:none"`
+        sur les divs, comme le vrai FBI au chargement).
+      - `#inverserRencontre`/`#inverserEquipe` : mutuellement exclusives
+        côté JS réel (repris ici à l'identique).
+      - `#motif` : textarea libre, jamais readonly ici (contrairement à
+        l'affichage d'une dérogation existante).
+      - Bouton "Enregistrer"/`enregistrerDerogationAjax()` : même mécanique
+        que les autres fixtures afficher-derogation*.html (POST vers
+        enregistrerDerogation.fbi, navigation vers rechercherDerogation.fbi
+        en cas de succès [retourArriere()], sinon <ul class="errorMessage">).
+    -->
+    <form id="afficherDerogation" name="afficherDerogation" action="/fbi/enregistrerDerogation.fbi" method="post">
+      <input type="hidden" name="derogationForm.creation" value="true" id="creation" />
+      <input type="hidden" name="derogationForm.derogationDemandeBean.idDerogation" value="0" id="idDerogation" />
+
+      <div class="row sousTitre"><p>Généralités</p></div>
+      <input type="text" id="rencontreDivision" value="BU18MN1" disabled="disabled" />
+      <input type="text" id="rencontrePoule" value="A" disabled="disabled" />
+      <input type="text" id="rencontreNumero" value="16" disabled="disabled" />
+      <input type="text" id="rencontreEquipeDomicile" value="SPORT CLUB DE SETE BASKET - 1" disabled="disabled" />
+      <input type="text" id="rencontreEquipeVisiteur" value="LE CRES BASKET - 1" disabled="disabled" />
+      <input type="text" id="rencontreSalle" value="GYMNASE MAURICE CLAVEL - SETE" disabled="disabled" />
+      <input type="text" id="rencontreDateRencontre" value="27/09/2026" disabled="disabled" />
+      <input type="text" id="rencontreDateDerogation" value="11/10/2026" disabled="disabled" />
+      <input type="text" id="rencontreHeure" value="14:00" disabled="disabled" />
+
+      <div class="row sousTitre"><p>Demande de dérogation</p></div>
+
+      <input type="checkbox" name="derogationForm.derogationDemandeBean.modifierDate" value="true" id="modifierDate" class="modifierDate fbi-checkbox" onclick="return afficherComposant('modifierDate','dateDerogation');" />
+      <div id="dateDerogation" style="display:none">
+        <input type="text" name="derogationForm.derogationDemandeBean.dateDerogation" value="" id="afficherDerogation_derogationForm_derogationDemandeBean_dateDerogation" class="datePicker form-control form-control-sm" />
+      </div>
+
+      <input type="checkbox" name="derogationForm.derogationDemandeBean.modifierHoraire" value="true" id="modifierHoraire" class="modifierHoraire fbi-checkbox" onclick="return afficherComposant('modifierHoraire','horaire');" />
+      <div id="horaire" style="display:none">
+        <input type="text" name="derogationForm.derogationDemandeBean.horaire" value="" id="horaireHour" class="form-control form-control-sm" onblur="formatHeure('horaireHour')" />
+      </div>
+
+      <input type="checkbox" name="derogationForm.derogationDemandeBean.modifierSalle" value="true" id="modifierSalle" class="modifierSalle fbi-checkbox" onclick="return afficherComposant('modifierSalle','salle');" />
+      <div id="salle" style="display:none">
+        <input type="hidden" name="derogationForm.derogationDemandeBean.idSalle" value="" id="idSalle" />
+        <input type="text" name="derogationForm.derogationDemandeBean.libelleSalle" value="" disabled="disabled" id="nomSalle" class="form-control form-control-sm" />
+      </div>
+
+      <input type="checkbox" name="derogationForm.derogationDemandeBean.inverserRencontre" value="true" id="inverserRencontre" class="fbi-checkbox" />
+      <input type="checkbox" name="derogationForm.derogationDemandeBean.inverserEquipe" value="true" id="inverserEquipe" class="fbi-checkbox" />
+
+      <textarea name="derogationForm.derogationDemandeBean.motif" rows="3" id="motif" class="form-control form-control-sm"></textarea>
+
+      <div class="card-footer">
+        <button class="btn boutonEnregistrer" type="button" onclick="afficherAjaxLoaderButton();return enregistrerDerogationAjax();">Enregistrer</button>
+      </div>
+    </form>
+
+    <script>
+      function afficherAjaxLoaderButton() {}
+
+      function retourArriere() {
+        window.location.assign("rechercherDerogation.fbi");
+      }
+
+      function afficherErreur(message) {
+        const container = document.createElement("div");
+        container.innerHTML = message;
+        document.body.appendChild(container);
+      }
+
+      // Reproduit `afficherComposant(id, id2)` (JS réel de la page) :
+      // affiche/masque le champ associé selon l'état de la case cochée.
+      function afficherComposant(id, id2) {
+        const checkbox = document.getElementById(id);
+        const target = document.getElementById(id2);
+        target.style.display = checkbox.checked ? "" : "none";
+        return true;
+      }
+
+      // Même exclusion mutuelle que le vrai JS de la page.
+      document.getElementById("inverserEquipe").addEventListener("change", function () {
+        if (this.checked) document.getElementById("inverserRencontre").checked = false;
+      });
+      document.getElementById("inverserRencontre").addEventListener("change", function () {
+        if (this.checked) document.getElementById("inverserEquipe").checked = false;
+      });
+
+      // Reproduit `$("#afficherDerogation").serialize()` suffisamment pour
+      // ce test : lit les champs tels que remplis par Playwright, poste au
+      // serveur de test, agit sur la réponse EXACTEMENT comme le vrai
+      // `enregistrerDerogationAjax()`.
+      function enregistrerDerogationAjax() {
+        const motif = document.getElementById("motif").value;
+        const dateDerogation = document.getElementById("afficherDerogation_derogationForm_derogationDemandeBean_dateDerogation").value;
+        const horaire = document.getElementById("horaireHour").value;
+
+        fetch("enregistrerDerogation.fbi", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: "motif=" + encodeURIComponent(motif) + "&dateDerogation=" + encodeURIComponent(dateDerogation) + "&horaire=" + encodeURIComponent(horaire),
+        })
+          .then((response) => response.text())
+          .then((text) => {
+            if (text === "") {
+              retourArriere();
+            } else {
+              afficherErreur(text);
+            }
+          });
+        return false;
+      }
+    </script>
+  </body>
+</html>
