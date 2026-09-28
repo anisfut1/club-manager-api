@@ -184,3 +184,39 @@ Les 8 licenciés déjà auto-provisionnés (voir plus haut) avant cette
 migration n'avaient pas de `ffbb_licence_id` : enrichis manuellement en base
 (par correspondance sur `license_number`) lors de l'import initial de
 l'export du club, jamais par un backfill deviné dans le code applicatif.
+
+## Répartition automatique par équipe — "on a une info pour commencer"
+
+Demande du club, 2026-09-28, immédiatement après l'import initial (tous les
+licenciés se sont retrouvés "Sans équipe") : **"c super par contre ils sont
+tous sans équipe, alors qu'on a une info pour commencer déjà a les mettre
+dans les équipes, si ya 2 equipes pour 1 catégorie, met tous dans 1 seule
+pour linstant"**.
+
+`POST /v1/clubs/:clubId/licencies/auto-assign-teams` (`club_admin`) traite
+TOUS les licenciés sans équipe (`team_id is null`) du club en un seul appel
+— voir `modules/licencies/auto-assign-teams.ts` pour l'algorithme complet
+(`resolveTeamForLicencie`, fonction PURE et testée) :
+
+1. Catégorie FFBB (`licencies.category_label`) comparée aux catégories
+   RÉELLES des équipes actives du club (`teams.category`) — jamais un
+   identifiant d'équipe codé en dur, entièrement dérivé des données. Une
+   catégorie jeune manquante (ex. le club n'a pas d'équipe "U9") est
+   rattachée à l'équipe existante la plus proche PAR LE HAUT (surclassement,
+   pratique réelle d'un petit club), borné à 2 ans d'écart maximum — au-delà
+   (ex. U5/U7 face à une équipe U11 seulement), le licencié reste SANS
+   équipe plutôt qu'un rattachement trompeur.
+2. U19/U20/U21 (ou "Seniors" directement) basculent vers l'équipe Seniors
+   si le club en a une — trop âgés pour toute équipe jeune.
+3. Sexe (`licencies.sexe`) préféré quand plusieurs équipes existent pour la
+   même catégorie (ex. "Seniors 1" F et "Seniors 1 M" distinctes, voir
+   `util/team-name.ts`) — jamais un mélange aveugle.
+4. **"si ya 2 equipes pour 1 catégorie, met tous dans 1 seule pour
+   linstant"** : parmi les équipes restantes (même catégorie, même sexe si
+   possible), la plus petite `numeroEquipe` est choisie systématiquement —
+   déterministe, jamais un tirage différent d'une exécution à l'autre.
+
+Reste un point de DÉPART, jamais une vérité définitive : un licencié déjà
+affecté (même approximativement) n'est JAMAIS réécrit par cette route, et
+le glisser-déposer (`PATCH .../profile`, page /joueurs côté SCSB) reste le
+moyen de corriger un rattachement approximatif au cas par cas.

@@ -33,6 +33,7 @@ import {
   UpdateLicencieProfileDtoSchema,
   ImportLicenciesDtoSchema,
   ImportLicenciesResultDtoSchema,
+  AutoAssignTeamsResultDtoSchema,
 } from "./contracts/licencies.js";
 
 /**
@@ -404,6 +405,16 @@ registry.registerPath({
   // doc de la route (routes.ts) pour le dédoublonnage par ffbbLicenceId.
   request: { params: clubIdParam, body: { content: { "application/json": { schema: ImportLicenciesDtoSchema } } } },
   responses: { 200: jsonResponse("Import terminé (total/inserted/skipped)", ImportLicenciesResultDtoSchema), ...errorResponses, ...validationResponses },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/clubs/{clubId}/licencies/auto-assign-teams",
+  security: bearerAuth,
+  // Répartition automatique best-effort des licenciés sans équipe,
+  // club_admin uniquement — voir auto-assign-teams.ts pour l'algorithme.
+  request: { params: clubIdParam },
+  responses: { 200: jsonResponse("Répartition terminée (total/assigned/skipped)", AutoAssignTeamsResultDtoSchema), ...errorResponses },
 });
 
 registry.registerPath({

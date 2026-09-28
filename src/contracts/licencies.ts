@@ -172,3 +172,23 @@ export const ImportLicenciesResultDtoSchema = z
   .openapi("ImportLicenciesResultDto");
 
 export type ImportLicenciesResultDto = z.infer<typeof ImportLicenciesResultDtoSchema>;
+
+/**
+ * POST /v1/clubs/:clubId/licencies/auto-assign-teams (club_admin) —
+ * répartition automatique best-effort des licenciés SANS équipe vers une
+ * équipe du club, à partir de la catégorie/du sexe FFBB connus (voir
+ * `modules/licencies/auto-assign-teams.ts`). Demande du club, 2026-09-28 :
+ * "ils sont tous sans équipe, alors qu'on a une info pour commencer déjà a
+ * les mettre dans les équipes, si ya 2 equipes pour 1 catégorie, met tous
+ * dans 1 seule pour linstant". Aucun corps de requête — agit sur TOUS les
+ * licenciés sans équipe du club en un seul appel.
+ */
+export const AutoAssignTeamsResultDtoSchema = z
+  .object({
+    total: z.number(),
+    assigned: z.number(),
+    skipped: z.number(),
+  })
+  .openapi("AutoAssignTeamsResultDto");
+
+export type AutoAssignTeamsResultDto = z.infer<typeof AutoAssignTeamsResultDtoSchema>;

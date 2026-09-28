@@ -243,3 +243,37 @@ describe("POST /v1/clubs/:clubId/licencies/import (club_admin) — import en mas
     expect(state.licencies).toHaveLength(0);
   });
 });
+
+describe("POST /v1/clubs/:clubId/licencies/auto-assign-teams (club_admin) — répartition automatique best-effort", () => {
+  it("affecte les licenciés sans équipe selon leur catégorie/sexe, ignore ceux déjà affectés, renvoie total/assigned/skipped", async () => {
+    state.teams = [
+      { id: "team-u11-m", club_id: CLUB_A.id, name: "U11 1", category: "U11", sexe: "M", numero_equipe: "1", active: true },
+      { id: "team-se-f", club_id: CLUB_A.id, name: "Seniors 1", category: "SE", sexe: "F", numero_equipe: "1", active: true },
+    ];
+    state.licencies = [
+      licencie({ id: "l1", category_label: "U11", sexe: "M", team_id: null }),
+      licencie({ id: "l2", category_label: "Seniors", sexe: "F", team_id: null }),
+      // Déjà affecté — jamais réécrit par ce best-effort.
+      licencie({ id: "l3", category_label: "U11", sexe: "M", team_id: "team-existing" }),
+      // Catégorie inconnue (trop jeune, aucune équipe correspondante) — compté en skipped.
+      licencie({ id: "l4", category_label: "U5", sexe: "M", team_id: null }),
+    ];
+
+    const res = await request("/auto-assign-teams", { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ total: 3, assigned: 2, skipped: 1 });
+    expect(state.licencies.find((l) => l.id === "l1")?.team_id).toBe("team-u11-m");
+    expect(state.licencies.find((l) => l.id === "l2")?.team_id).toBe("team-se-f");
+    expect(state.licencies.find((l) => l.id === "l3")?.team_id).toBe("team-existing");
+    expect(state.licencies.find((l) => l.id === "l4")?.team_id).toBeNull();
+  });
+
+  it("refuse (403) à un membre non club_admin", async () => {
+    currentUserId = "user-plain";
+    state.licencies = [licencie({ id: "l1", category_label: "U11", sexe: "M", team_id: null })];
+
+    const res = await request("/auto-assign-teams", { method: "POST" });
+    expect(res.status).toBe(403);
+    expect(state.licencies[0].team_id).toBeNull();
+  });
+});

@@ -12,9 +12,11 @@ import {
   type LicencieProfileDto,
   type LicenciesListDto,
   type ImportLicenciesResultDto,
+  type AutoAssignTeamsResultDto,
 } from "../../contracts/licencies.js";
 import { rejectedFieldsFor, resolveLicencieEditPermission } from "./profile-fields.js";
 import { requireClubRole } from "../../auth/middleware.js";
+import { autoAssignTeamsForClub } from "./auto-assign-teams.js";
 
 export const licenciesRouter = new Hono<AppEnv>();
 
@@ -330,5 +332,26 @@ licenciesRouter.post("/import", requireClubRole("club_admin"), async (c) => {
     inserted: toInsert.length,
     skipped: body.data.licencies.length - toInsert.length,
   };
+  return c.json(result);
+});
+
+/**
+ * POST /v1/clubs/:clubId/licencies/auto-assign-teams — répartition
+ * automatique best-effort des licenciés SANS équipe (demande du club,
+ * 2026-09-28 : "ils sont tous sans équipe, alors qu'on a une info pour
+ * commencer déjà a les mettre dans les équipes, si ya 2 equipes pour 1
+ * catégorie, met tous dans 1 seule pour linstant"). `club_admin`
+ * uniquement — même verrou que l'import et que `teamId` en écriture via
+ * `PATCH .../profile`. Voir `auto-assign-teams.ts` pour l'algorithme
+ * (jamais un identifiant d'équipe deviné, toujours dérivé des catégories
+ * réelles) — reste un point de DÉPART modifiable ensuite par glisser-
+ * déposer, jamais une vérité définitive.
+ */
+licenciesRouter.post("/auto-assign-teams", requireClubRole("club_admin"), async (c) => {
+  const { club } = c.get("club");
+
+  const serviceSupabase = createServiceSupabaseClient();
+  const result: AutoAssignTeamsResultDto = await autoAssignTeamsForClub(serviceSupabase, { clubId: club.id });
+
   return c.json(result);
 });

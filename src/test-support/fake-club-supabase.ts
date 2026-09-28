@@ -517,18 +517,37 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
       return Promise.resolve({ data: inserted, error: null });
     },
     update: (patch: Partial<FakeLicencieRow>) => {
-      const filters: { col: string; value: unknown }[] = [];
+      const filters: { col: string; value: unknown; op: "eq" | "in" }[] = [];
+      const applyAndCollect = () => {
+        const rows = state.licencies.filter((l) =>
+          filters.every((f) => {
+            const fieldValue = (l as unknown as Record<string, unknown>)[f.col];
+            return f.op === "in" ? (f.value as unknown[]).includes(fieldValue) : fieldValue === f.value;
+          }),
+        );
+        rows.forEach((r) => Object.assign(r, patch));
+        return rows;
+      };
       const api = {
         eq(col: string, value: unknown) {
-          filters.push({ col, value });
+          filters.push({ col, value, op: "eq" });
+          return api;
+        },
+        in(col: string, values: unknown[]) {
+          filters.push({ col, value: values, op: "in" });
           return api;
         },
         select() {
-          const rows = state.licencies.filter((l) => filters.every((f) => (l as unknown as Record<string, unknown>)[f.col] === f.value));
-          rows.forEach((r) => Object.assign(r, patch));
+          const rows = applyAndCollect();
           return {
             single: () => (rows[0] ? Promise.resolve({ data: rows[0], error: null }) : Promise.resolve({ data: null, error: { message: "not found" } })),
           };
+        },
+        // Thenable : `await ...update(patch).eq(...).in(...)` SANS `.select()`
+        // (voir `autoAssignTeamsForClub`) — applique les filtres accumulés et
+        // résout directement, même contrat que `queryable().then()`.
+        then(onFulfilled: (value: { data: FakeLicencieRow[]; error: null }) => unknown) {
+          return Promise.resolve({ data: applyAndCollect(), error: null }).then(onFulfilled);
         },
       };
       return api;
