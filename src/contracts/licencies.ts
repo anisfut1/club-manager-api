@@ -20,6 +20,12 @@ export const LicencieDtoSchema = z
     /** Équipe de ce·tte licencié·e (demande du club, docs/TEAMS.md) — `null` si non rattaché·e. Admin-only en écriture (voir UpdateLicencieProfileDtoSchema). */
     teamId: z.string().uuid().nullable(),
     active: z.boolean(),
+    /** "N° national" FFBB (export rechercherLicence.fbi) — clé de dédoublonnage des imports, `null` pour un licencié auto-provisionné avant l'import (voir docs/LICENCIES.md). */
+    ffbbLicenceId: z.string().nullable(),
+    /** Catégorie FFBB au moment du dernier import — affichage seulement (aide au glisser-déposer vers la bonne équipe), jamais une source de vérité pour teamId. */
+    categoryLabel: z.string().nullable(),
+    /** Sexe FFBB — affichage seulement, même donnée que TeamDto.sexe (désambiguïse un nom d'équipe/catégorie ambigu). */
+    sexe: z.enum(["M", "F"]).nullable(),
   })
   .openapi("LicencieDto");
 
@@ -118,3 +124,51 @@ export const UpdateLicencieProfileDtoSchema = z
   .openapi("UpdateLicencieProfileDto");
 
 export type UpdateLicencieProfileDto = z.infer<typeof UpdateLicencieProfileDtoSchema>;
+
+/**
+ * POST /v1/clubs/:clubId/licencies/import (club_admin) — import en masse
+ * depuis un export FBI ("rechercherLicence.fbi", critère "Validé"), demande
+ * du club, 2026-09-28 : "Voici la liste des licenciés, ajoute les tous
+ * stp, a lavenir yen aura dautres, faudra ignorer les doublons dans les
+ * exports". Une ligne = une personne physique de l'export — jamais
+ * transformée ici (le parsing du fichier XLSX/CSV réel se fait côté
+ * SCSB, ce backend ne reçoit que du JSON déjà normalisé).
+ *
+ * `ffbbLicenceId` ("N° national") obligatoire : LA clé de dédoublonnage
+ * (voir migration `20260928020000_licencies_ffbb_import.sql`) — sans elle,
+ * un import répété créerait des doublons à chaque exécution, exactement ce
+ * que le club a demandé d'éviter.
+ */
+export const ImportLicencieRowDtoSchema = z.object({
+  ffbbLicenceId: z.string().trim().min(1, "ffbbLicenceId (N° national) est obligatoire."),
+  licenseNumber: z.string().trim().min(1).nullable().optional(),
+  firstName: z.string().trim().min(1, "Le prénom est obligatoire."),
+  lastName: z.string().trim().min(1, "Le nom est obligatoire."),
+  birthDate: z.string().date("birthDate doit être au format AAAA-MM-JJ.").nullable().optional(),
+  categoryLabel: z.string().trim().min(1).nullable().optional(),
+  sexe: z.enum(["M", "F"]).nullable().optional(),
+});
+
+export type ImportLicencieRowDto = z.infer<typeof ImportLicencieRowDtoSchema>;
+
+export const ImportLicenciesDtoSchema = z
+  .object({
+    // Bornée : un import est un geste ponctuel déclenché par un admin, un
+    // fichier de plusieurs milliers de lignes évoque une erreur (mauvais
+    // fichier, export non filtré) plutôt qu'un roster de club réel.
+    licencies: z.array(ImportLicencieRowDtoSchema).min(1, "Au moins un licencié à importer.").max(2000, "2000 licenciés maximum par import."),
+  })
+  .openapi("ImportLicenciesDto");
+
+export type ImportLicenciesDto = z.infer<typeof ImportLicenciesDtoSchema>;
+
+/** Résultat de l'import — `skipped` (doublons, déjà connus par `ffbbLicenceId`) jamais traité comme une erreur, voir la demande du club ci-dessus. */
+export const ImportLicenciesResultDtoSchema = z
+  .object({
+    total: z.number(),
+    inserted: z.number(),
+    skipped: z.number(),
+  })
+  .openapi("ImportLicenciesResultDto");
+
+export type ImportLicenciesResultDto = z.infer<typeof ImportLicenciesResultDtoSchema>;

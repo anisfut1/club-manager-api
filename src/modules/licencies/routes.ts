@@ -6,19 +6,22 @@ import { badRequest, forbidden, notFound } from "../../api-error.js";
 import { isClubAdmin } from "../../tenancy/roles.js";
 import {
   UpdateLicencieProfileDtoSchema,
+  ImportLicenciesDtoSchema,
   type LicencieDto,
   type LicencieMatchDto,
   type LicencieProfileDto,
   type LicenciesListDto,
+  type ImportLicenciesResultDto,
 } from "../../contracts/licencies.js";
 import { rejectedFieldsFor, resolveLicencieEditPermission } from "./profile-fields.js";
+import { requireClubRole } from "../../auth/middleware.js";
 
 export const licenciesRouter = new Hono<AppEnv>();
 
 licenciesRouter.use("*", requireAuth);
 licenciesRouter.use("*", requireClubMembership);
 
-const LICENCIE_COLUMNS = "id, club_id, first_name, last_name, license_number, birth_date, email, phone, photo_url, team_id, active";
+const LICENCIE_COLUMNS = "id, club_id, first_name, last_name, license_number, birth_date, email, phone, photo_url, team_id, active, ffbb_licence_id, category_label, sexe";
 
 interface LicencieRow {
   id: string;
@@ -32,6 +35,9 @@ interface LicencieRow {
   photo_url: string | null;
   team_id: string | null;
   active: boolean;
+  ffbb_licence_id: string | null;
+  category_label: string | null;
+  sexe: "M" | "F" | null;
 }
 
 function mapLicencieRow(row: LicencieRow): LicencieDto {
@@ -47,6 +53,9 @@ function mapLicencieRow(row: LicencieRow): LicencieDto {
     photoUrl: row.photo_url,
     teamId: row.team_id,
     active: row.active,
+    ffbbLicenceId: row.ffbb_licence_id,
+    categoryLabel: row.category_label,
+    sexe: row.sexe,
   };
 }
 
@@ -239,4 +248,87 @@ licenciesRouter.patch("/:licencieId/profile", async (c) => {
   if (error) throw new Error(`Mise à jour du profil du licencié échouée : ${error.message}`);
 
   return c.json(mapLicencieRow(data));
+});
+
+/**
+ * POST /v1/clubs/:clubId/licencies/import — import en masse depuis un
+ * export FBI (demande du club, 2026-09-28 : "Voici la liste des
+ * licenciés, ajoute les tous stp, a lavenir yen aura dautres, faudra
+ * ignorer les doublons dans les exports"). `club_admin` uniquement (même
+ * verrou que la modification d'un profil — créer des licenciés est un
+ * geste admin, jamais un membre quelconque).
+ *
+ * Dédoublonnage PAR `ffbb_licence_id` ("N° national", contrainte unique
+ * `club_id, ffbb_licence_id` — migration `20260928020000`) : une ligne de
+ * l'export déjà connue pour ce club est IGNORÉE (jamais mise à jour ici —
+ * un club_admin ayant depuis corrigé un nom/une date à la main ne doit
+ * jamais se faire écraser silencieusement par le prochain import), jamais
+ * une erreur. `team_id`/`active`/`photo_url`/`email`/`phone` ne sont
+ * JAMAIS touchés par un import — un import ne fait qu'AJOUTER de nouvelles
+ * personnes, l'affectation à une équipe reste un geste manuel exclusif de
+ * club_admin (voir la fonctionnalité glisser-déposer, `PATCH .../profile`).
+ *
+ * Deux requêtes (lire les `ffbb_licence_id` déjà connus, puis insérer le
+ * reste) plutôt qu'un `upsert` — permet de renvoyer un compte EXACT
+ * `inserted`/`skipped` à l'admin (confirmation visible de ce qui a
+ * réellement été ajouté), l'`upsert` seul ne le distinguerait pas. La
+ * contrainte unique posée par la migration reste le filet de sécurité en
+ * cas de course (import concurrent) — un conflit résiduel à l'insertion
+ * fait échouer la requête plutôt que de créer un doublon silencieux.
+ */
+licenciesRouter.post("/import", requireClubRole("club_admin"), async (c) => {
+  const { club } = c.get("club");
+
+  const body = ImportLicenciesDtoSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!body.success) throw badRequest(body.error.issues[0]?.message ?? "Corps de requête invalide.");
+
+  const serviceSupabase = createServiceSupabaseClient();
+
+  const incomingIds = [...new Set(body.data.licencies.map((row) => row.ffbbLicenceId))];
+  const { data: existingRows, error: existingError } = await serviceSupabase
+    .from("licencies")
+    .select("ffbb_licence_id")
+    .eq("club_id", club.id)
+    .in("ffbb_licence_id", incomingIds);
+  if (existingError) throw new Error(`Lecture des licenciés existants échouée : ${existingError.message}`);
+
+  const existingIds = new Set((existingRows ?? []).map((row) => row.ffbb_licence_id));
+  const seenInBatch = new Set<string>();
+  const toInsert: {
+    club_id: string;
+    first_name: string;
+    last_name: string;
+    license_number: string | null;
+    birth_date: string | null;
+    ffbb_licence_id: string;
+    category_label: string | null;
+    sexe: "M" | "F" | null;
+  }[] = [];
+
+  for (const row of body.data.licencies) {
+    if (existingIds.has(row.ffbbLicenceId) || seenInBatch.has(row.ffbbLicenceId)) continue;
+    seenInBatch.add(row.ffbbLicenceId);
+    toInsert.push({
+      club_id: club.id,
+      first_name: row.firstName,
+      last_name: row.lastName,
+      license_number: row.licenseNumber ?? null,
+      birth_date: row.birthDate ?? null,
+      ffbb_licence_id: row.ffbbLicenceId,
+      category_label: row.categoryLabel ?? null,
+      sexe: row.sexe ?? null,
+    });
+  }
+
+  if (toInsert.length > 0) {
+    const { error: insertError } = await serviceSupabase.from("licencies").insert(toInsert);
+    if (insertError) throw new Error(`Import des licenciés échoué : ${insertError.message}`);
+  }
+
+  const result: ImportLicenciesResultDto = {
+    total: body.data.licencies.length,
+    inserted: toInsert.length,
+    skipped: body.data.licencies.length - toInsert.length,
+  };
+  return c.json(result);
 });

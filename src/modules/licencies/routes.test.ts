@@ -188,3 +188,58 @@ describe("PATCH /v1/clubs/:clubId/licencies/:licencieId/profile — permissions"
     expect(state.licencies.find((l) => l.id === "l1")?.team_id).toBeUndefined();
   });
 });
+
+describe("POST /v1/clubs/:clubId/licencies/import (club_admin) — import en masse depuis un export FBI", () => {
+  const validRow = { ffbbLicenceId: "200000002740760", licenseNumber: "JH775373", firstName: "Abdelaziz", lastName: "SGHIR", birthDate: "1977-08-14", categoryLabel: "Seniors", sexe: "M" as const };
+
+  it("insère les nouveaux licenciés (dédoublonnage par ffbbLicenceId) et renvoie total/inserted/skipped", async () => {
+    state.licencies = [];
+
+    const res = await request("/import", { method: "POST", body: JSON.stringify({ licencies: [validRow] }) });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ total: 1, inserted: 1, skipped: 0 });
+    expect(state.licencies).toHaveLength(1);
+    expect(state.licencies[0]).toMatchObject({ club_id: CLUB_A.id, first_name: "Abdelaziz", last_name: "SGHIR", ffbb_licence_id: "200000002740760", category_label: "Seniors", sexe: "M" });
+  });
+
+  it("ignore un licencié DÉJÀ connu par ffbbLicenceId (jamais un doublon, jamais une erreur)", async () => {
+    state.licencies = [licencie({ id: "l1", ffbb_licence_id: "200000002740760" })];
+
+    const res = await request("/import", { method: "POST", body: JSON.stringify({ licencies: [validRow] }) });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ total: 1, inserted: 0, skipped: 1 });
+    expect(state.licencies).toHaveLength(1);
+  });
+
+  it("dédoublonne aussi DEUX lignes identiques DANS LE MÊME import (jamais un doublon créé par le batch lui-même)", async () => {
+    state.licencies = [];
+
+    const res = await request("/import", { method: "POST", body: JSON.stringify({ licencies: [validRow, { ...validRow, firstName: "Doublon" }] }) });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ total: 2, inserted: 1, skipped: 1 });
+    expect(state.licencies).toHaveLength(1);
+  });
+
+  it("un import n'écrase JAMAIS teamId/active d'un licencié existant (jamais mis à jour, seulement ignoré)", async () => {
+    state.licencies = [licencie({ id: "l1", ffbb_licence_id: "200000002740760", team_id: "team-x", active: false })];
+
+    await request("/import", { method: "POST", body: JSON.stringify({ licencies: [validRow] }) });
+    expect(state.licencies[0]).toMatchObject({ team_id: "team-x", active: false });
+  });
+
+  it("400 quand ffbbLicenceId est manquant (validation zod, jamais atteint la base)", async () => {
+    state.licencies = [];
+    const res = await request("/import", { method: "POST", body: JSON.stringify({ licencies: [{ ...validRow, ffbbLicenceId: "" }] }) });
+    expect(res.status).toBe(400);
+    expect(state.licencies).toHaveLength(0);
+  });
+
+  it("refuse (403) à un membre non club_admin", async () => {
+    currentUserId = "user-plain";
+    state.licencies = [];
+
+    const res = await request("/import", { method: "POST", body: JSON.stringify({ licencies: [validRow] }) });
+    expect(res.status).toBe(403);
+    expect(state.licencies).toHaveLength(0);
+  });
+});

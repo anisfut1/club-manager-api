@@ -46,6 +46,9 @@ export interface FakeLicencieRow {
   photo_url: string | null;
   team_id?: string | null;
   active: boolean;
+  ffbb_licence_id?: string | null;
+  category_label?: string | null;
+  sexe?: "M" | "F" | null;
 }
 
 export interface FakeRoleRow {
@@ -501,8 +504,18 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
     select: (_cols?: string) => ({ in: (_col: string, _ids: string[]) => Promise.resolve({ data: [], error: null }) }),
   };
 
+  let licencieCounter = 0;
   const licenciesTable = {
     select: (_cols?: string) => queryable(state.licencies),
+    insert: (payload: Partial<FakeLicencieRow> | Partial<FakeLicencieRow>[]) => {
+      const rows = Array.isArray(payload) ? payload : [payload];
+      const inserted = rows.map((row) => {
+        licencieCounter += 1;
+        return { id: `licencie-auto-${licencieCounter}`, active: true, ...row } as FakeLicencieRow;
+      });
+      state.licencies.push(...inserted);
+      return Promise.resolve({ data: inserted, error: null });
+    },
     update: (patch: Partial<FakeLicencieRow>) => {
       const filters: { col: string; value: unknown }[] = [];
       const api = {

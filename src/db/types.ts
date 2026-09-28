@@ -152,6 +152,9 @@ export interface Database {
           photo_url: string | null;
           team_id: string | null;
           active: boolean;
+          ffbb_licence_id: string | null;
+          category_label: string | null;
+          sexe: "M" | "F" | null;
           created_at: string;
           updated_at: string;
         },
@@ -167,6 +170,9 @@ export interface Database {
           photo_url?: string | null;
           team_id?: string | null;
           active?: boolean;
+          ffbb_licence_id?: string | null;
+          category_label?: string | null;
+          sexe?: "M" | "F" | null;
           created_at?: string;
           updated_at?: string;
         }

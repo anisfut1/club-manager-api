@@ -26,7 +26,14 @@ import { PlatformClubDtoSchema, CreateClubDtoSchema } from "./contracts/platform
 import { ClubCapabilitiesSchema, ErrorEnvelopeSchema } from "./contracts/common.js";
 import { EmarqueImportDtoSchema, EmarqueImportsQueryDtoSchema } from "./contracts/emarque.js";
 import { MeDtoSchema } from "./contracts/me.js";
-import { LicenciesListDtoSchema, LicencieDtoSchema, LicencieProfileDtoSchema, UpdateLicencieProfileDtoSchema } from "./contracts/licencies.js";
+import {
+  LicenciesListDtoSchema,
+  LicencieDtoSchema,
+  LicencieProfileDtoSchema,
+  UpdateLicencieProfileDtoSchema,
+  ImportLicenciesDtoSchema,
+  ImportLicenciesResultDtoSchema,
+} from "./contracts/licencies.js";
 
 /**
  * Spec OpenAPI assemblée à partir des MÊMES schémas zod que les DTO utilisés
@@ -387,6 +394,16 @@ registry.registerPath({
     ...errorResponses,
     ...validationResponses,
   },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/clubs/{clubId}/licencies/import",
+  security: bearerAuth,
+  // Import en masse depuis un export FBI, club_admin uniquement — voir la
+  // doc de la route (routes.ts) pour le dédoublonnage par ffbbLicenceId.
+  request: { params: clubIdParam, body: { content: { "application/json": { schema: ImportLicenciesDtoSchema } } } },
+  responses: { 200: jsonResponse("Import terminé (total/inserted/skipped)", ImportLicenciesResultDtoSchema), ...errorResponses, ...validationResponses },
 });
 
 registry.registerPath({

@@ -146,3 +146,41 @@ d'upload de fichier dans ce backend.
   licence") — même mécanisme trivialement extensible si demandé.
 - Pas d'upload de photo (URL uniquement, voir plus haut) ni de pipeline de
   recadrage/redimensionnement.
+
+## Import en masse depuis un export FBI — "ajoute les tous stp"
+
+Demande du club, 2026-09-28, avec l'export réel de `rechercherLicence.fbi`
+(critère "Validation" = "Validé") joint en pièce jointe (.xlsx, 140 lignes) :
+**"Voici la liste des licenciés, ajoute les tous stp, a lavenir yen aura
+dautres, faudra ignorer les doublons dans les exports. Fais moi un truc ou
+jpeux glisser les cartes pr les mettre d'une equipe a lautre"**.
+
+`POST /v1/clubs/:clubId/licencies/import` (`club_admin`) reçoit un tableau
+de lignes déjà normalisées en JSON (le parsing du fichier XLSX/CSV réel se
+fait côté SCSB, jamais dans ce backend). Colonnes RÉELLES confirmées par
+l'export fourni : "N° national" (`ffbbLicenceId`), "Numéro" (`licenseNumber`),
+"Nom"/"Prénom", "Né(e) le" (converti en ISO côté SCSB), "Catégorie"
+(`categoryLabel`), "Sexe".
+
+**Dédoublonnage** : `ffbbLicenceId` ("N° national") est LA clé stable d'une
+personne physique côté FFBB — `license_number` ("Numéro") peut changer d'une
+saison à l'autre, jamais fiable pour dédupliquer des imports répétés dans le
+temps. Contrainte unique `(club_id, ffbb_licence_id)` (migration
+`20260928020000_licencies_ffbb_import.sql`) : une ligne déjà connue est
+IGNORÉE (`skipped`), jamais mise à jour (un club_admin ayant depuis corrigé
+un champ à la main ne doit jamais se faire écraser par le prochain import)
+ni dupliquée. Réponse `{total, inserted, skipped}` — confirmation exacte de
+ce qui a réellement été ajouté.
+
+Un import ne touche JAMAIS `teamId`/`active`/`photoUrl`/`email`/`phone` d'un
+licencié existant, et n'assigne JAMAIS `teamId` à l'insertion (toujours
+`null`) — l'export FBI ne dit pas à quelle équipe DU CLUB (il peut y en
+avoir plusieurs par catégorie, ex. SM1/SM2/SF, voir docs/TEAMS.md)
+appartient une personne. L'affectation reste un geste manuel exclusif de
+`club_admin`, via le glisser-déposer côté SCSB (`PATCH .../profile` avec
+`teamId`, déjà existant — aucune nouvelle route nécessaire pour ça).
+
+Les 8 licenciés déjà auto-provisionnés (voir plus haut) avant cette
+migration n'avaient pas de `ffbb_licence_id` : enrichis manuellement en base
+(par correspondance sur `license_number`) lors de l'import initial de
+l'export du club, jamais par un backfill deviné dans le code applicatif.
