@@ -8,6 +8,7 @@ import { createServiceSupabaseClient } from "../../db/client.js";
 import { findScheduleConflict, type OtherMatchSlot } from "./schedule-conflict.js";
 import { isDerogationActionRequired } from "./action-required.js";
 import { respondToDerogationForClub } from "./respond-derogation.js";
+import { formatTeamNameWithGender } from "../../util/team-name.js";
 
 /** Refusée : la date/heure demandée n'a jamais pris effet, jamais un vrai conflit de créneau à signaler. */
 const ETATS_SANS_ALERTE_CONFLIT = new Set(["Refusée"]);
@@ -89,8 +90,8 @@ derogationsRouter.get("/", requireClubRole("club_admin"), async (c) => {
   const teamIds = [
     ...new Set([...(matches ?? []).map((m) => m.team_id), ...(scheduledMatches ?? []).map((m) => m.team_id)].filter((id): id is string => id !== null)),
   ];
-  const { data: teams } = teamIds.length ? await supabase.from("teams").select("id, name").in("id", teamIds) : { data: [] };
-  const teamNameById = new Map((teams ?? []).map((t) => [t.id, t.name]));
+  const { data: teams } = teamIds.length ? await supabase.from("teams").select("id, name, sexe").in("id", teamIds) : { data: [] };
+  const teamNameById = new Map((teams ?? []).map((t) => [t.id, formatTeamNameWithGender(t.name, t.sexe)]));
 
   const otherMatchSlots: OtherMatchSlot[] = (scheduledMatches ?? [])
     .filter((m): m is typeof m & { match_datetime: string } => m.match_datetime !== null)

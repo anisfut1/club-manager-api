@@ -294,6 +294,55 @@ describe("GET /:clubId/derogations (voir docs/FBI.md)", () => {
     expect(body.derogations[0]).toMatchObject({ categoryLabel: "Seniors", teamName: "Seniors 2" });
   });
 
+  it("précise le sexe dans teamName quand le nom seul est ambigu (rencontre 9820, 2026-09-28 : \"on a SM1 et SF1 donc faut bien spécifier que c les féminin\")", async () => {
+    // Reproduit le cas réel : `teams.name` "Seniors 1" (sans suffixe) ET
+    // "Seniors 1 M" coexistent pour ce club — le nom SANS suffixe n'est PAS
+    // fiablement masculin (voir team-name.ts pour la root cause : scission
+    // historique d'équipes fusionnées à tort, migration 20260925100000).
+    // Ici l'équipe "Seniors 1" est en réalité l'équipe FÉMININE (`sexe: "F"`).
+    state.matches = [
+      {
+        id: "match-1",
+        club_id: CLUB_A.id,
+        numero: "9820",
+        journee: null,
+        match_datetime: "2026-11-15T16:00:00.000Z",
+        is_home: false,
+        opponent_name: "MONTPELLIER BASKET MOSSON - 1",
+        venue_raw_label: null,
+        score_home: null,
+        score_away: null,
+        status: "scheduled",
+        emarque_status: "not_applicable",
+        team_id: "team-seniors-1",
+        competition_id: "competition-seniors-f",
+      },
+    ];
+    state.competitions = [{ id: "competition-seniors-f", category_label: "Seniors" }];
+    state.teams = [{ id: "team-seniors-1", club_id: CLUB_A.id, name: "Seniors 1", sexe: "F" }];
+    state.fbiDerogationChecks = [
+      {
+        id: "check-1",
+        club_id: CLUB_A.id,
+        match_id: "match-1",
+        numero: "9820",
+        etat: "En Cours",
+        date_depot: null,
+        date_derogation: null,
+        date_rencontre: "15/11/2026",
+        heure: null,
+        domicile: "SPORT CLUB DE SETE BASKET - 1",
+        visiteur: "MONTPELLIER BASKET MOSSON - 1",
+        checked_at: "2026-09-28T10:47:09.000Z",
+      },
+    ];
+
+    const res = await request(`/${CLUB_A.id}/derogations`);
+    const body = await res.json();
+
+    expect(body.derogations[0]).toMatchObject({ teamName: "Seniors 1 (F)" });
+  });
+
   it("teamName reste `null` si le match n'a pas d'équipe du club associée", async () => {
     state.matches = [
       {

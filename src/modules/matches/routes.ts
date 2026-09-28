@@ -12,6 +12,7 @@ import type { QualityWarningDto } from "../../contracts/emarque.js";
 import { createServiceSupabaseClient } from "../../db/client.js";
 import { compareDerogationDateDepot } from "../../integrations/fbi/derogation-row.js";
 import { checkDerogationForMatchSync } from "../derogations/check-derogation-sync.js";
+import { formatTeamNameWithGender } from "../../util/team-name.js";
 
 export const matchesRouter = new Hono<AppEnv>();
 
@@ -103,9 +104,9 @@ matchesRouter.get("/", async (c) => {
 
   const teamIds = [...new Set((data ?? []).map((m) => m.team_id).filter((id): id is string => Boolean(id)))];
   const { data: teams } = teamIds.length
-    ? await supabase.from("teams").select("id, name").eq("club_id", club.id).in("id", teamIds)
+    ? await supabase.from("teams").select("id, name, sexe").eq("club_id", club.id).in("id", teamIds)
     : { data: [] };
-  const teamNameById = new Map((teams ?? []).map((t) => [t.id, t.name]));
+  const teamNameById = new Map((teams ?? []).map((t) => [t.id, formatTeamNameWithGender(t.name, t.sexe)]));
 
   const matchIds = (data ?? []).map((m) => m.id);
   const { data: derogationEtats } = matchIds.length
@@ -160,7 +161,7 @@ matchesRouter.get("/:matchId", async (c) => {
   if (!match) throw notFound("Match introuvable.");
 
   const { data: team } = match.team_id
-    ? await supabase.from("teams").select("name").eq("id", match.team_id).eq("club_id", club.id).maybeSingle()
+    ? await supabase.from("teams").select("name, sexe").eq("id", match.team_id).eq("club_id", club.id).maybeSingle()
     : { data: null };
 
   const [{ data: participants }, { data: coaches }, { data: officials }, { data: tableOfficials }, { data: stats }, { data: documents }, { data: latestImport }] =
@@ -197,7 +198,7 @@ matchesRouter.get("/:matchId", async (c) => {
     journee: match.journee,
     matchDatetime: match.match_datetime,
     isHome: match.is_home,
-    teamName: team?.name ?? null,
+    teamName: team ? formatTeamNameWithGender(team.name, team.sexe) : null,
     opponentName: match.opponent_name,
     opponentLogoUrl: match.opponent_logo_url,
     venueLabel: match.venue_raw_label,
