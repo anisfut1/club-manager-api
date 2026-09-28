@@ -29,6 +29,8 @@ export type ClubStatus = "active" | "suspended";
 export type MembershipStatus = "active" | "suspended";
 export type ClubRole = "club_admin" | "correspondant_club" | "responsable_tables" | "coach" | "joueur" | "parent";
 export type MatchStatus = "scheduled" | "played" | "postponed" | "cancelled" | "forfeit";
+/** Tables de marque (demande du club, 2026-09-28) — SCORER = marqueur, TIMEKEEPER = chronométreur, CLUB_DELEGATE = délégué de club. */
+export type TableAssignmentRole = "SCORER" | "TIMEKEEPER" | "CLUB_DELEGATE";
 export type EmarqueMatchStatus =
   | "not_applicable"
   | "pending"
@@ -386,6 +388,29 @@ export interface Database {
           emarque_next_discovery_attempt_at?: string | null;
           raw_ffbb_payload?: unknown;
           ffbb_last_seen_at?: string;
+          created_at?: string;
+          updated_at?: string;
+        }
+      >;
+
+      table_assignments: Table<
+        {
+          id: string;
+          club_id: string;
+          match_id: string;
+          licencie_id: string;
+          role: TableAssignmentRole;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+        },
+        {
+          id?: string;
+          club_id: string;
+          match_id: string;
+          licencie_id: string;
+          role: TableAssignmentRole;
+          created_by?: string | null;
           created_at?: string;
           updated_at?: string;
         }

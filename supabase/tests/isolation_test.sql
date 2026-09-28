@@ -246,4 +246,74 @@ select pg_temp.assert_count('service_role - plus aucun job pending (les 2 clubs 
 
 reset role;
 
+-- =============================================================
+-- Scenario 8 : Tables de marque (table_assignments) — isolation multi-
+-- tenant + role responsable_tables (jamais exploite avant ce module).
+-- =============================================================
+
+create or replace function pg_temp.assert_unique_violation(label text, stmt text) returns void
+language plpgsql as $$
+begin
+  execute stmt;
+  raise exception 'ECHEC [%] : la contrainte UNIQUE aurait du refuser cet INSERT', label;
+exception
+  when unique_violation then
+    raise notice 'OK [%] (unique_violation comme attendu)', label;
+end;
+$$;
+
+-- Un second membre du Club A, avec UNIQUEMENT le role 'responsable_tables'
+-- (jamais club_admin) — verifie que ce role seul suffit (§31 de la
+-- demande : "s'il existe deja un role adapte... utilise-le").
+insert into auth.users (id, email) values ('aaaaaaaa-0000-0000-0000-000000000010', 'table-manager-a@example.com');
+insert into public.club_memberships (id, club_id, user_id) values ('aaaaaaaa-0000-0000-0000-000000000011', 'aaaaaaaa-0000-0000-0000-000000000000', 'aaaaaaaa-0000-0000-0000-000000000010');
+insert into public.membership_roles (membership_id, role) values ('aaaaaaaa-0000-0000-0000-000000000011', 'responsable_tables');
+
+set role authenticated;
+set request.jwt.claim.sub = 'aaaaaaaa-0000-0000-0000-000000000010';
+
+insert into public.table_assignments (club_id, match_id, licencie_id, role, created_by)
+values ('aaaaaaaa-0000-0000-0000-000000000000', 'aaaaaaaa-0000-0000-0000-000000000006', 'aaaaaaaa-0000-0000-0000-000000000005', 'SCORER', 'aaaaaaaa-0000-0000-0000-000000000010');
+
+select pg_temp.assert_count('responsable_tables Club A - peut creer et lire une affectation', 1, (select count(*) from public.table_assignments where club_id = 'aaaaaaaa-0000-0000-0000-000000000000'));
+
+-- UNIQUE(club_id, match_id, role) : un 2e SCORER sur le meme match refuse
+-- (§28 de la demande : un seul licencie par poste).
+select pg_temp.assert_unique_violation(
+  'UNIQUE(club_id, match_id, role) - un 2e SCORER sur le meme match refuse',
+  $stmt$insert into public.table_assignments (club_id, match_id, licencie_id, role, created_by) values ('aaaaaaaa-0000-0000-0000-000000000000', 'aaaaaaaa-0000-0000-0000-000000000006', 'aaaaaaaa-0000-0000-0000-000000000005', 'SCORER', 'aaaaaaaa-0000-0000-0000-000000000010')$stmt$
+);
+
+-- UNIQUE(club_id, match_id, licencie_id) : le MEME licencie ne peut pas
+-- cumuler un 2e role sur le MEME match (§11/§28 de la demande).
+select pg_temp.assert_unique_violation(
+  'UNIQUE(club_id, match_id, licencie_id) - meme licencie, 2e role sur le meme match refuse',
+  $stmt$insert into public.table_assignments (club_id, match_id, licencie_id, role, created_by) values ('aaaaaaaa-0000-0000-0000-000000000000', 'aaaaaaaa-0000-0000-0000-000000000006', 'aaaaaaaa-0000-0000-0000-000000000005', 'TIMEKEEPER', 'aaaaaaaa-0000-0000-0000-000000000010')$stmt$
+);
+
+reset role;
+
+-- Club B (club_admin DE B) ne voit JAMAIS l'affectation du Club A, meme en
+-- connaissant l'UUID exact du club A.
+set role authenticated;
+set request.jwt.claim.sub = 'bbbbbbbb-0000-0000-0000-000000000001';
+select pg_temp.assert_count('user B (club_admin de B) - affectations Club A invisibles', 0, (select count(*) from public.table_assignments where club_id = 'aaaaaaaa-0000-0000-0000-000000000000'));
+reset role;
+
+-- Un membre du Club A SANS role club_admin/responsable_tables (ici coach,
+-- meme utilisateur cccccccc que Scenario 3) ne peut RIEN lire dans
+-- table_assignments pour ce club — role generique de membre insuffisant,
+-- contrairement a `matches`/`teams` qui sont lisibles par tout membre.
+set role authenticated;
+set request.jwt.claim.sub = 'cccccccc-0000-0000-0000-000000000001';
+select pg_temp.assert_count('user AB (coach sur A, pas club_admin/responsable_tables) - aucune affectation Club A visible', 0, (select count(*) from public.table_assignments where club_id = 'aaaaaaaa-0000-0000-0000-000000000000'));
+reset role;
+
+-- Nettoyage : le reste de la suite (rejouable) ne doit pas dependre de ces
+-- inserts locaux au Scenario 8.
+delete from public.table_assignments;
+delete from public.membership_roles where membership_id = 'aaaaaaaa-0000-0000-0000-000000000011';
+delete from public.club_memberships where id = 'aaaaaaaa-0000-0000-0000-000000000011';
+delete from auth.users where id = 'aaaaaaaa-0000-0000-0000-000000000010';
+
 do $$ begin raise notice '=== TOUS LES TESTS D''ISOLATION SONT PASSES ==='; end $$;

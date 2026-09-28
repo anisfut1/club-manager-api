@@ -176,6 +176,16 @@ export interface FakeFbiDerogationCheckRow {
   checked_at: string;
 }
 
+export interface FakeTableAssignmentRow {
+  id: string;
+  club_id: string;
+  match_id: string;
+  licencie_id: string;
+  role: string;
+  created_by: string | null;
+  updated_at?: string;
+}
+
 export interface FakeFbiJobRow {
   id: string;
   club_id: string;
@@ -204,6 +214,7 @@ export interface FakeClubSupabaseState {
   fbiScheduleDiscrepancies: FakeFbiScheduleDiscrepancyRow[];
   fbiDerogationChecks: FakeFbiDerogationCheckRow[];
   fbiJobs: FakeFbiJobRow[];
+  tableAssignments: FakeTableAssignmentRow[];
   isPlatformAdmin: boolean;
   /** Clés `${clubId}:${integration}` actuellement verrouillées (voir try_acquire_sync_lock/release_sync_lock). */
   syncLocks: Set<string>;
@@ -226,6 +237,7 @@ export function makeFakeClubSupabaseState(overrides: Partial<FakeClubSupabaseSta
     fbiScheduleDiscrepancies: [],
     fbiDerogationChecks: [],
     fbiJobs: [],
+    tableAssignments: [],
     isPlatformAdmin: false,
     syncLocks: new Set(),
     ...overrides,
@@ -519,6 +531,42 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
       return api;
     },
   };
+
+  let tableAssignmentCounter = 0;
+  const tableAssignmentsTable = {
+    select: (_cols?: string) => queryable(state.tableAssignments),
+    // `.upsert(row, { onConflict }).select("id").single()` — même contrat que le vrai client (voir modules/tables/routes.ts, PUT .../table-assignments/:role).
+    upsert: (row: Omit<FakeTableAssignmentRow, "id">, _opts?: { onConflict?: string }) => ({
+      select: (_cols?: string) => ({
+        single: () => {
+          const existingIndex = state.tableAssignments.findIndex((a) => a.club_id === row.club_id && a.match_id === row.match_id && a.role === row.role);
+          if (existingIndex >= 0) {
+            Object.assign(state.tableAssignments[existingIndex]!, row);
+            return Promise.resolve({ data: state.tableAssignments[existingIndex], error: null });
+          }
+          tableAssignmentCounter += 1;
+          const created: FakeTableAssignmentRow = { id: `table-assignment-${tableAssignmentCounter}`, ...row };
+          state.tableAssignments.push(created);
+          return Promise.resolve({ data: created, error: null });
+        },
+      }),
+    }),
+    delete: () => {
+      const filters: { col: string; value: unknown }[] = [];
+      const api = {
+        eq(col: string, value: unknown) {
+          filters.push({ col, value });
+          return api;
+        },
+        then(onFulfilled: (value: { error: null }) => unknown) {
+          state.tableAssignments = state.tableAssignments.filter((a) => !filters.every((f) => (a as unknown as Record<string, unknown>)[f.col] === f.value));
+          return Promise.resolve({ error: null }).then(onFulfilled);
+        },
+      };
+      return api;
+    },
+  };
+
   const syncRunsTable = { select: (_cols?: string) => queryable(state.syncRuns) };
   const profilesTable = {
     select: (_cols?: string) => ({
@@ -623,6 +671,8 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
           return fbiIntegrationStatusTable;
         case "sync_runs":
           return syncRunsTable;
+        case "table_assignments":
+          return tableAssignmentsTable;
         case "matches":
           return matchesTable;
         case "competitions":

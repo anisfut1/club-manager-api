@@ -47,6 +47,23 @@ describe("generateOpenApiDocument", () => {
     expect(names).toEqual(expect.arrayContaining(["period", "from", "to", "teamId", "homeAway", "status", "limit", "offset"]));
   });
 
+  it("expose les 4 routes du module Tables de marque (demande du club, 2026-09-28)", () => {
+    expect(doc.paths["/v1/clubs/{clubId}/matches/{matchId}/table-suggestions"]).toHaveProperty("get");
+    expect(doc.paths["/v1/clubs/{clubId}/matches/{matchId}/table-assignments/{role}"]).toHaveProperty("put");
+    expect(doc.paths["/v1/clubs/{clubId}/matches/{matchId}/table-assignments/{role}"]).toHaveProperty("delete");
+    expect(doc.paths["/v1/clubs/{clubId}/table-assignments"]).toHaveProperty("get");
+
+    expect(doc.components?.schemas).toHaveProperty("TableSuggestionsDto");
+    expect(doc.components?.schemas).toHaveProperty("TableAssignmentsListDto");
+
+    // ?role= obligatoire (§37 : contrat le plus propre, une seule route couvre les 3 rôles).
+    const suggestionsParams = doc.paths["/v1/clubs/{clubId}/matches/{matchId}/table-suggestions"]!.get!.parameters ?? [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const roleParam = suggestionsParams.find((p: any) => p.in === "query" && p.name === "role") as any;
+    expect(roleParam).toBeDefined();
+    expect(roleParam.required).toBe(true);
+  });
+
   it("génère un document valide (openapi 3.0.0, titre, au moins 15 routes)", () => {
     expect(doc.openapi).toBe("3.0.0");
     expect(doc.info.title).toBe("club-manager-api");

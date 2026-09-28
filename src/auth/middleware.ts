@@ -3,7 +3,7 @@ import { createUserSupabaseClient } from "../db/client.js";
 import { badRequest, forbidden } from "../api-error.js";
 import { extractBearerToken, verifyAccessToken } from "./jwt.js";
 import { requireClubContext } from "../tenancy/club-context.js";
-import { hasRole, type ClubRole } from "../tenancy/roles.js";
+import { hasAnyRole, hasRole, type ClubRole } from "../tenancy/roles.js";
 import type { AppEnv } from "./context.js";
 
 /**
@@ -49,6 +49,22 @@ export function requireClubRole(role: ClubRole): MiddlewareHandler<AppEnv> {
     const club = c.get("club");
     if (!hasRole(club.roles, role)) {
       throw forbidden(`Ce rôle (${role}) est requis sur ce club.`);
+    }
+    await next();
+  };
+}
+
+/**
+ * Nécessite `requireClubMembership` en amont. Lève 403 si AUCUN des rôles
+ * donnés n'est présent — pour une route qu'un rôle SPÉCIALISÉ peut gérer en
+ * plus de `club_admin` (ex: `responsable_tables` pour le module Tables de
+ * marque, voir modules/tables/routes.ts) sans devoir être club_admin.
+ */
+export function requireAnyClubRole(roles: readonly ClubRole[]): MiddlewareHandler<AppEnv> {
+  return async (c, next) => {
+    const club = c.get("club");
+    if (!hasAnyRole(club.roles, roles)) {
+      throw forbidden(`Un de ces rôles (${roles.join(", ")}) est requis sur ce club.`);
     }
     await next();
   };

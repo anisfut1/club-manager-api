@@ -11,6 +11,7 @@ import { derogationsRouter } from "../../modules/derogations/routes.js";
 import { emarqueImportsRouter } from "../../modules/emarque/routes.js";
 import { licenciesRouter } from "../../modules/licencies/routes.js";
 import { platformRouter } from "../../modules/platform/routes.js";
+import { tableAssignmentsRouter, matchTablesRouter } from "../../modules/tables/routes.js";
 import type { MeDto } from "../../contracts/me.js";
 
 /**
@@ -48,6 +49,8 @@ v1Router.get("/me", requireAuth, async (c) => {
 v1Router.route("/clubs", clubsRouter);
 v1Router.route("/clubs/:clubId/matches", matchesRouter);
 v1Router.route("/clubs/:clubId/matches/:matchId/documents", documentsRouter);
+v1Router.route("/clubs/:clubId/matches/:matchId", matchTablesRouter);
+v1Router.route("/clubs/:clubId/table-assignments", tableAssignmentsRouter);
 v1Router.route("/clubs/:clubId/integrations", integrationsRouter);
 v1Router.route("/clubs/:clubId/issues", issuesRouter);
 v1Router.route("/clubs/:clubId/derogations", derogationsRouter);

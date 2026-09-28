@@ -36,6 +36,15 @@ import {
   AutoAssignTeamsResultDtoSchema,
   DeleteLicencieResultDtoSchema,
 } from "./contracts/licencies.js";
+import {
+  TableAssignmentRoleSchema,
+  TableSuggestionsQueryDtoSchema,
+  TableSuggestionsDtoSchema,
+  TableAssignmentsQueryDtoSchema,
+  TableAssignmentsListDtoSchema,
+  PutTableAssignmentDtoSchema,
+  TableAssignmentResultDtoSchema,
+} from "./contracts/tables.js";
 
 /**
  * Spec OpenAPI assemblée à partir des MÊMES schémas zod que les DTO utilisés
@@ -64,6 +73,7 @@ const clubAndMatchIdParams = clubIdParam.extend({ matchId: z.string().uuid() });
 const clubAndDerogationIdParams = clubIdParam.extend({ derogationId: z.string().uuid() });
 const clubAndJobParams = z.object({ jobId: z.string().uuid() });
 const clubAndMatchIssueParams = clubIdParam.extend({ matchId: z.string().uuid() });
+const clubAndMatchAndRoleParams = clubAndMatchIdParams.extend({ role: TableAssignmentRoleSchema });
 
 const errorResponses = {
   401: jsonResponse("Non authentifié", ErrorEnvelopeSchema),
@@ -310,6 +320,41 @@ registry.registerPath({
   security: bearerAuth,
   request: { params: clubAndMatchIdParams, body: { content: { "application/json": { schema: RespondToDerogationDtoSchema } } } },
   responses: { 200: jsonResponse("Résultat RÉEL renvoyé par FBI (success/error/unknown)", RespondToDerogationResultDtoSchema), ...errorResponses, ...validationResponses },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/clubs/{clubId}/matches/{matchId}/table-suggestions",
+  security: bearerAuth,
+  // STRICTEMENT en lecture (§37 de la demande "Tables de marque") — ne crée jamais d'affectation, voir computeTableSuggestions (fonction pure).
+  request: { params: clubAndMatchIdParams, query: TableSuggestionsQueryDtoSchema },
+  responses: { 200: jsonResponse("Candidats classés (recommandés/disponibles/indisponibles) pour ce rôle sur ce match", TableSuggestionsDtoSchema), ...errorResponses, ...validationResponses },
+});
+
+registry.registerPath({
+  method: "put",
+  path: "/v1/clubs/{clubId}/matches/{matchId}/table-assignments/{role}",
+  security: bearerAuth,
+  // SEULE route qui transforme une suggestion en affectation réelle — recalcule toujours les conflits au moment de l'écriture (§42), jamais de force/override en V1 (§43).
+  request: { params: clubAndMatchAndRoleParams, body: { content: { "application/json": { schema: PutTableAssignmentDtoSchema } } } },
+  responses: { 200: jsonResponse("Affectation enregistrée", TableAssignmentResultDtoSchema), ...errorResponses, ...validationResponses },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/v1/clubs/{clubId}/matches/{matchId}/table-assignments/{role}",
+  security: bearerAuth,
+  request: { params: clubAndMatchAndRoleParams },
+  responses: { 200: jsonResponse("Affectation retirée (poste remis à 'À attribuer')", z.object({ removed: z.literal(true) })), ...errorResponses },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/clubs/{clubId}/table-assignments",
+  security: bearerAuth,
+  // Matchs à DOMICILE uniquement (§4 de la demande "Tables de marque") — un match extérieur n'apparaît jamais dans cette liste.
+  request: { params: clubIdParam, query: TableAssignmentsQueryDtoSchema },
+  responses: { 200: jsonResponse("Matchs à domicile du club, avec leurs 3 postes (affectés ou 'à attribuer')", TableAssignmentsListDtoSchema), ...errorResponses, ...validationResponses },
 });
 
 registry.registerPath({

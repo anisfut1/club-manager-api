@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computePeriodRange, isValidTimeZone } from "./timezone.js";
+import { computeDayRange, computePeriodRange, isValidTimeZone } from "./timezone.js";
 
 describe("isValidTimeZone", () => {
   it("accepte un fuseau IANA valide", () => {
@@ -57,5 +57,25 @@ describe("computePeriodRange", () => {
     const range = computePeriodRange("weekend", "Europe/Paris", thursdayBeforeDstEnd);
     expect(range.from).toBe("2026-10-23T22:00:00.000Z"); // samedi 24 octobre 00:00 CEST (UTC+2)
     expect(range.to).toBe("2026-10-25T23:00:00.000Z"); // lundi 26 octobre 00:00 CET (UTC+1) — 49h réelles, pas 48h
+  });
+});
+
+describe("computeDayRange (module Tables de marque — même jour calendaire que le match cible)", () => {
+  it("renvoie 00:00 -> 24:00 du jour calendaire, dans le fuseau du club", () => {
+    const range = computeDayRange(new Date("2026-10-03T13:00:00Z"), "Europe/Paris"); // 15:00 Paris (CEST)
+    expect(range.from).toBe("2026-10-02T22:00:00.000Z"); // 03/10 00:00 Paris
+    expect(range.to).toBe("2026-10-03T22:00:00.000Z"); // 04/10 00:00 Paris
+  });
+
+  it("un instant juste avant minuit heure de Paris reste dans SA journée, jamais celle du lendemain UTC", () => {
+    const range = computeDayRange(new Date("2026-10-03T21:30:00Z"), "Europe/Paris"); // 23:30 Paris le 03/10
+    expect(range.from).toBe("2026-10-02T22:00:00.000Z");
+    expect(range.to).toBe("2026-10-03T22:00:00.000Z");
+  });
+
+  it("traverse correctement le changement d'heure d'octobre — jamais `start + 24h`", () => {
+    const range = computeDayRange(new Date("2026-10-25T10:00:00Z"), "Europe/Paris"); // jour du changement CEST->CET
+    expect(range.from).toBe("2026-10-24T22:00:00.000Z"); // 25/10 00:00 CEST (UTC+2)
+    expect(range.to).toBe("2026-10-25T23:00:00.000Z"); // 26/10 00:00 CET (UTC+1) — 25h réelles ce jour-là, pas 24h
   });
 });

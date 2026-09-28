@@ -98,3 +98,23 @@ export function computePeriodRange(period: MatchesPeriod, timezone: string, now:
 
   return { from: start.toISOString(), to: end.toISOString() };
 }
+
+/**
+ * Fenêtre `[from, to)` en UTC du JOUR CALENDAIRE (dans le fuseau du club)
+ * contenant `instant` — ex: 00:00→24:00 heure de Paris. Utilisé par le
+ * module Tables de marque (`modules/tables/load-suggestion-data.ts`) pour
+ * borner "les matchs/affectations DU MÊME JOUR que le match cible" (§12 de
+ * la demande "Tables de marque" : les exemples d'enchaînement d'équipes à
+ * domicile sont toujours au sein d'une même journée) — même raisonnement
+ * DST-safe que `computePeriodRange` ci-dessus (chaque borne recalculée
+ * indépendamment depuis SA propre date calendaire, jamais `start + 24h`).
+ */
+export function computeDayRange(instant: Date, timezone: string): { from: string; to: string } {
+  const { year, month, day } = zonedDateParts(instant, timezone);
+  const nextDay = new Date(Date.UTC(year, month - 1, day + 1));
+
+  const start = zonedWallTimeToUtc(year, month, day, 0, 0, 0, timezone);
+  const end = zonedWallTimeToUtc(nextDay.getUTCFullYear(), nextDay.getUTCMonth() + 1, nextDay.getUTCDate(), 0, 0, 0, timezone);
+
+  return { from: start.toISOString(), to: end.toISOString() };
+}

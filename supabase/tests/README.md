@@ -10,18 +10,24 @@ que tous les tests sont passés.**
 
 ## Statut
 
-Cette suite a été écrite et **exécutée avec succès** (42/42 assertions,
+Cette suite a été écrite et **exécutée avec succès** (48/48 assertions,
 0 échec) contre une instance PostgreSQL 16 locale, en utilisant le shim
 ci-dessous (pas de Docker disponible dans cet environnement de
 développement) — d'abord 26 assertions lors de la migration multi-tenant,
 puis 12 de plus lors de l'intégration FBI/e-Marque (`fbi_jobs`,
 `match_documents`, voir `docs/JOBS.md`), puis 4 de plus lors de la
 résolution des gaps frontend (voir `docs/API.md`) pour verrouiller au
-niveau colonne le `PATCH /v1/clubs/:clubId`. Migrée telle quelle depuis
-SCSB (voir `docs/MIGRATION.md`) et rejouée avec succès depuis ce
-repository. Elle n'a pas encore été rejouée via la stack Supabase CLI
-complète (`supabase test db`) — les deux chemins d'exécution sont
-documentés ci-dessous.
+niveau colonne le `PATCH /v1/clubs/:clubId`, puis 6 de plus (Scénario 8)
+pour le module Tables de marque (`table_assignments`, voir
+`docs/TABLE_ASSIGNMENTS.md`) — isolation cross-tenant, contraintes UNIQUE
+(un seul licencié par poste, un licencié ne cumule jamais 2 postes sur le
+même match), et surtout la toute première vérification RÉELLE du rôle
+`responsable_tables` (présent dans `club_role` depuis la migration
+multi-tenant mais jamais exploité par aucun module jusqu'ici). Migrée
+telle quelle depuis SCSB (voir `docs/MIGRATION.md`) et rejouée avec succès
+depuis ce repository. Elle n'a pas encore été rejouée via la stack
+Supabase CLI complète (`supabase test db`) — les deux chemins d'exécution
+sont documentés ci-dessous.
 
 **Correctif shim (résolution des gaps frontend) :**
 `01_local_postgres_shim_after_migrations.sql` faisait un `grant select,
@@ -71,6 +77,15 @@ policies/grants du projet ne dépendent pas de ce shim).
   accordées, `permission denied` réelle), mais peut modifier `name`
   (colonne accordée) — vérifié au niveau grant PostgreSQL, pas seulement
   par la validation applicative Zod.
+- Tables de marque (`table_assignments`) : un membre ayant UNIQUEMENT le
+  rôle `responsable_tables` (jamais club_admin) peut créer et lire des
+  affectations pour SON club — première vérification réelle de ce rôle
+  jusque-là présent dans `club_role` mais inutilisé. Un membre du club
+  sans `club_admin`/`responsable_tables` (ex: coach) ne voit RIEN. Un
+  autre club ne voit jamais les affectations, même en connaissant l'UUID.
+  `UNIQUE(club_id, match_id, role)` refuse un second titulaire du même
+  poste ; `UNIQUE(club_id, match_id, licencie_id)` refuse qu'un même
+  licencié cumule deux postes sur le même match.
 
 ## Option A — Via Supabase CLI (stack locale complète, recommandé)
 
