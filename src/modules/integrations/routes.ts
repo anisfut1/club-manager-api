@@ -11,6 +11,7 @@ import { FfbbPublicProvider } from "../../integrations/ffbb/public-provider.js";
 import { syncFfbb } from "../../integrations/ffbb/sync.js";
 import { claimNextJobForClub } from "../../jobs/claim.js";
 import { processJobBatch } from "../../jobs/process-batch.js";
+import { checkAllDerogationsForClubSync } from "../derogations/check-all-derogations-sync.js";
 import { getEnv } from "../../config/env.js";
 import { logError } from "../../logger.js";
 import {
@@ -337,30 +338,25 @@ integrationsRouter.post("/fbi/reconcile-schedule", requireClubRole("club_admin")
 /**
  * POST /v1/clubs/:clubId/integrations/fbi/check-all-derogations — "je veux
  * un bouton global qui check toutes les demandes, pas match par match"
- * (demande du club, 2026-09-25, voir docs/FBI.md). Empile un job
- * `check_all_derogations` (un seul par club à la fois, contrainte
- * `fbi_jobs_unique_pending_all_derogations`) — UNE SEULE connexion FBI pour
- * tout le club (jamais une boucle de connexions par match, voir
- * `process-check-all-derogations.ts`). LECTURE SEULE : ne soumet/modifie
- * jamais une dérogation.
+ * (demande du club, 2026-09-25, voir docs/FBI.md). SYNCHRONE depuis
+ * 2026-09-28 ("doit y avoir rien en attente" — l'ancien modèle empilait un
+ * job `fbi_jobs`, mais chaque clic sur "Traiter les jobs en attente" ne
+ * traitait qu'UN job du club, potentiellement un AUTRE plus ancien, jamais
+ * forcément celui-ci — confusion directe constatée en production, "ca
+ * marche tjr pas" pendant qu'un job restait en attente plus d'une
+ * journée). `checkAllDerogationsForClubSync` login/consulte/enregistre
+ * DANS cette requête et renvoie le résultat immédiatement — le cron
+ * quotidien (`enqueue-fbi-verifications.ts`) continue lui d'empiler un job
+ * `check_all_derogations` séparément, traité en arrière-plan (voir sa
+ * doc). LECTURE SEULE : ne soumet/modifie jamais une dérogation.
  */
 integrationsRouter.post("/fbi/check-all-derogations", requireClubRole("club_admin"), async (c) => {
   const { club } = c.get("club");
   const serviceSupabase = createServiceSupabaseClient();
 
-  const credentials = await getFbiCredentials(serviceSupabase, club.id);
-  if (!credentials) throw conflict("Configure d'abord un identifiant/mot de passe FBI avant de vérifier les dérogations.", "FBI_NOT_CONFIGURED");
+  const result = await checkAllDerogationsForClubSync(serviceSupabase, { clubId: club.id });
 
-  const { error } = await serviceSupabase.from("fbi_jobs").insert({ club_id: club.id, type: "check_all_derogations" });
-
-  if (error) {
-    if (error.code === "23505") {
-      throw conflict("Une vérification globale des dérogations est déjà en attente ou en cours pour ce club.", "CHECK_ALL_DEROGATIONS_ALREADY_QUEUED");
-    }
-    throw new Error(`Création du job de vérification globale des dérogations échouée : ${error.message}`);
-  }
-
-  return c.json({ queued: true as const });
+  return c.json(result);
 });
 
 /**

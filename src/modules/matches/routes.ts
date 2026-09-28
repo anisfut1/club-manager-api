@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../auth/context.js";
 import { requireAuth, requireClubMembership, requireClubRole } from "../../auth/middleware.js";
-import { badRequest, conflict, notFound } from "../../api-error.js";
+import { badRequest, notFound } from "../../api-error.js";
 import { MatchesQueryDtoSchema, type MatchListItemDto, type MatchDetailsDto } from "../../contracts/matches.js";
 import { RespondToDerogationDtoSchema, type DerogationStatusDto } from "../../contracts/derogations.js";
 import { isDerogationActionRequired } from "../derogations/action-required.js";
@@ -10,8 +10,8 @@ import { computePeriodRange } from "../../util/timezone.js";
 import { sanitizeEmarqueError } from "../../integrations/emarque/sanitize-error.js";
 import type { QualityWarningDto } from "../../contracts/emarque.js";
 import { createServiceSupabaseClient } from "../../db/client.js";
-import { getFbiCredentials } from "../../integrations/fbi/credentials-store.js";
 import { compareDerogationDateDepot } from "../../integrations/fbi/derogation-row.js";
+import { checkDerogationForMatchSync } from "../derogations/check-derogation-sync.js";
 
 export const matchesRouter = new Hono<AppEnv>();
 
@@ -398,12 +398,13 @@ matchesRouter.post("/:matchId/derogation/respond", requireClubRole("club_admin")
 });
 
 /**
- * POST /v1/clubs/:clubId/matches/:matchId/derogation/check — empile un job
- * `check_derogation` (club_admin) pour ce match précis, consommé ensuite
- * par POST .../fbi/process-jobs (ou le cron) — même modèle que
- * `reconcile_schedule`, jamais synchrone ici (Playwright). LECTURE SEULE :
- * consulte l'état FBI de la dérogation, n'en soumet/modifie jamais une
- * (voir docs/FBI.md).
+ * POST /v1/clubs/:clubId/matches/:matchId/derogation/check — SYNCHRONE
+ * depuis 2026-09-28 ("doit y avoir rien en attente" — voir la doc de
+ * `checkDerogationForMatchSync` : l'ancien modèle empilait un job
+ * `fbi_jobs`, source directe de confusion quand un autre job plus ancien
+ * du club se traitait à sa place). `club_admin` uniquement. LECTURE
+ * SEULE : consulte l'état FBI de la dérogation, n'en soumet/modifie
+ * jamais une (voir docs/FBI.md).
  */
 matchesRouter.post("/:matchId/derogation/check", requireClubRole("club_admin"), async (c) => {
   const { club } = c.get("club");
@@ -411,22 +412,7 @@ matchesRouter.post("/:matchId/derogation/check", requireClubRole("club_admin"), 
   if (!matchId) throw badRequest("Paramètre de route :matchId manquant.");
 
   const serviceSupabase = createServiceSupabaseClient();
+  const result = await checkDerogationForMatchSync(serviceSupabase, { clubId: club.id, matchId });
 
-  const { data: match } = await serviceSupabase.from("matches").select("id, numero").eq("id", matchId).eq("club_id", club.id).maybeSingle();
-  if (!match) throw notFound("Match introuvable.");
-  if (!match.numero) throw badRequest("Ce match n'a pas de numéro de rencontre connu, impossible de rechercher sa dérogation sur FBI.");
-
-  const credentials = await getFbiCredentials(serviceSupabase, club.id);
-  if (!credentials) throw conflict("Configure d'abord un identifiant/mot de passe FBI avant de vérifier une dérogation.", "FBI_NOT_CONFIGURED");
-
-  const { error } = await serviceSupabase.from("fbi_jobs").insert({ club_id: club.id, match_id: matchId, type: "check_derogation" });
-
-  if (error) {
-    if (error.code === "23505") {
-      throw conflict("Une vérification de dérogation est déjà en attente ou en cours pour ce match.", "DEROGATION_CHECK_ALREADY_QUEUED");
-    }
-    throw new Error(`Création du job de vérification de dérogation échouée : ${error.message}`);
-  }
-
-  return c.json({ queued: true as const });
+  return c.json(result);
 });

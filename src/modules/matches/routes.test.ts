@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildFakeClubSupabase, makeFakeClubSupabaseState, type FakeClubSupabaseState } from "../../test-support/fake-club-supabase.js";
-import { encryptSecret } from "../../security/crypto.js";
+import { conflict, notFound } from "../../api-error.js";
 
 let state: FakeClubSupabaseState;
 let currentUserId = "user-a";
@@ -15,6 +15,9 @@ vi.mock("../../db/client.js", () => ({
   createServiceSupabaseClient: () => buildFakeClubSupabase(state),
   createAnonSupabaseClient: () => ({}),
 }));
+
+const { mockCheckDerogationForMatchSync } = vi.hoisted(() => ({ mockCheckDerogationForMatchSync: vi.fn() }));
+vi.mock("../derogations/check-derogation-sync.js", () => ({ checkDerogationForMatchSync: mockCheckDerogationForMatchSync }));
 
 const { app } = await import("../../app.js");
 
@@ -57,11 +60,6 @@ function match(overrides: Partial<(typeof state.matches)[number]>): (typeof stat
     team_id: TEAM_A.id,
     ...overrides,
   };
-}
-
-function fakeFbiCredentials(): (typeof state.fbiCredentials)[number] {
-  const encrypted = encryptSecret("s3cret-fbi-password", CLUB_A.id);
-  return { club_id: CLUB_A.id, username: "club1234", password_ciphertext: encrypted.ciphertext, password_iv: encrypted.iv, password_auth_tag: encrypted.authTag };
 }
 
 function request(path: string, init: RequestInit = {}) {
@@ -411,50 +409,38 @@ describe("GET /v1/clubs/:clubId/matches/:matchId/derogation (voir docs/FBI.md)",
   });
 });
 
-describe("POST /v1/clubs/:clubId/matches/:matchId/derogation/check (club_admin, voir docs/FBI.md)", () => {
+describe("POST /v1/clubs/:clubId/matches/:matchId/derogation/check (club_admin, voir docs/FBI.md — SYNCHRONE depuis 2026-09-28, 'doit y avoir rien en attente')", () => {
   beforeEach(() => {
     state.roles = [{ membership_id: "membership-a1", role: "club_admin" }];
   });
 
-  it("empile un job check_derogation quand FBI est configuré", async () => {
-    state.matches = [match({ id: "match-1", numero: "42" })];
-    state.fbiCredentials = [fakeFbiCredentials()];
+  it("délègue à checkDerogationForMatchSync (scopé club+match) et renvoie son résultat immédiatement", async () => {
+    mockCheckDerogationForMatchSync.mockResolvedValueOnce({ found: true });
 
     const res = await request("/match-1/derogation/check", { method: "POST" });
     expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body).toEqual({ queued: true });
-    expect(state.fbiJobs).toHaveLength(1);
-    expect(state.fbiJobs[0]).toMatchObject({ club_id: CLUB_A.id, match_id: "match-1", type: "check_derogation" });
+    expect(await res.json()).toEqual({ found: true });
+    expect(mockCheckDerogationForMatchSync).toHaveBeenCalledWith(expect.anything(), { clubId: CLUB_A.id, matchId: "match-1" });
   });
 
-  it("rejette (409) quand FBI n'est pas configuré pour ce club", async () => {
-    state.matches = [match({ id: "match-1", numero: "42" })];
+  it("rejette (409) quand FBI n'est pas configuré pour ce club (propagé depuis checkDerogationForMatchSync)", async () => {
+    mockCheckDerogationForMatchSync.mockRejectedValueOnce(conflict("Configure d'abord un identifiant/mot de passe FBI avant de vérifier une dérogation.", "FBI_NOT_CONFIGURED"));
+
     const res = await request("/match-1/derogation/check", { method: "POST" });
     expect(res.status).toBe(409);
   });
 
-  it("rejette (409) une deuxième vérification tant que la première est en attente", async () => {
-    state.matches = [match({ id: "match-1", numero: "42" })];
-    state.fbiCredentials = [fakeFbiCredentials()];
-
-    const first = await request("/match-1/derogation/check", { method: "POST" });
-    expect(first.status).toBe(200);
-    const second = await request("/match-1/derogation/check", { method: "POST" });
-    expect(second.status).toBe(409);
-  });
-
   it("refuse (403) à un membre non club_admin", async () => {
     state.roles = [{ membership_id: "membership-a1", role: "joueur" }];
-    state.matches = [match({ id: "match-1", numero: "42" })];
-    state.fbiCredentials = [fakeFbiCredentials()];
 
     const res = await request("/match-1/derogation/check", { method: "POST" });
     expect(res.status).toBe(403);
+    expect(mockCheckDerogationForMatchSync).not.toHaveBeenCalled();
   });
 
-  it("404 pour un match introuvable/d'un autre club", async () => {
-    state.fbiCredentials = [fakeFbiCredentials()];
+  it("404 pour un match introuvable/d'un autre club (propagé depuis checkDerogationForMatchSync)", async () => {
+    mockCheckDerogationForMatchSync.mockRejectedValueOnce(notFound("Match introuvable ou sans numéro de rencontre connu."));
+
     const res = await request("/match-inexistant/derogation/check", { method: "POST" });
     expect(res.status).toBe(404);
   });

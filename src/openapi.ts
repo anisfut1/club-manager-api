@@ -166,7 +166,9 @@ registry.registerPath({
   security: bearerAuth,
   request: { params: clubAndMatchIdParams },
   responses: {
-    200: jsonResponse("Job de vérification de dérogation empilé (un seul par match à la fois)", z.object({ queued: z.literal(true) })),
+    // Synchrone depuis 2026-09-28 (voir checkDerogationForMatchSync) —
+    // jamais plus un job fbi_jobs à espérer voir traité par un clic futur.
+    200: jsonResponse("Résultat immédiat de la vérification FBI de ce match", z.object({ found: z.boolean() })),
     ...errorResponses,
   },
 });
@@ -258,7 +260,11 @@ registry.registerPath({
   security: bearerAuth,
   request: { params: clubIdParam },
   responses: {
-    200: jsonResponse("Job de vérification globale des dérogations empilé (un seul par club à la fois)", z.object({ queued: z.literal(true) })),
+    // Synchrone depuis 2026-09-28 (voir checkAllDerogationsForClubSync).
+    200: jsonResponse(
+      "Résultat immédiat de la vérification globale FBI",
+      z.object({ derogationsFound: z.number(), matched: z.number(), unmatched: z.number() }),
+    ),
     ...errorResponses,
   },
 });

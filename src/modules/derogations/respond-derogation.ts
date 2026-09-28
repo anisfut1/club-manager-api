@@ -7,6 +7,7 @@ import { classifyFbiLoginStatus, FbiError } from "../../integrations/fbi/errors.
 import { getEnv } from "../../config/env.js";
 import { logError, logInfo } from "../../logger.js";
 import { isDerogationActionRequired } from "./action-required.js";
+import { assertNoActiveFbiJob } from "./fbi-session-lock.js";
 import type { DerogationResponseDecision } from "../../integrations/fbi/types.js";
 
 export interface RespondToDerogationResult {
@@ -78,6 +79,8 @@ export async function respondToDerogationForClub(
 
   const credentials = await getFbiCredentials(supabase, clubId);
   if (!credentials) throw conflict("Configure d'abord un identifiant/mot de passe FBI avant de répondre à une dérogation.", "FBI_NOT_CONFIGURED");
+
+  await assertNoActiveFbiJob(supabase, clubId);
 
   let division: string | null = null;
   if (match.competition_id) {

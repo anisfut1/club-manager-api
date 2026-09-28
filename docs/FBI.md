@@ -3565,3 +3565,53 @@ MÊME session, le tout dans une seule requête HTTP.
 que quand c'est vrai, mais une requête directe à cette route sans repasser
 par l'UI ne doit jamais pouvoir soumettre une réponse pour une dérogation
 qui n'attend pas celle du club.
+
+## Vérifications manuelles rendues SYNCHRONES — "doit y avoir rien en attente"
+
+Demande du club, 2026-09-28, après une nouvelle famine de la file
+`fbi_jobs` (le job `check_all_derogations` empilé par un clic est resté
+`pending` PLUS D'UNE JOURNÉE, un autre job plus ancien du club étant
+traité à sa place à chaque appel `process-jobs` — malgré la priorité par
+type déjà corrigée la veille, migration `20260927020000`) : **"à chaque
+fois cest le meme pb quand je clique sur verifier les derog ya des
+attentes, cest pas bon. doit y avoir rien en attente, faut que tu
+corriges ca."**
+
+Root cause structurelle, pas un simple réglage de priorité : le modèle
+"empiler un job `fbi_jobs` puis espérer qu'un `process-jobs` traite CE job
+précis" reste intrinsèquement fragile tant que d'autres jobs du même club
+peuvent exister dans la file (cron quotidien, autre bouton oublié en
+attente, etc.) — AUCUN ordre de priorité ne supprime cette incertitude
+pour l'utilisateur qui vient de cliquer.
+
+**Fix** : les deux vérifications déclenchées par un bouton (`POST
+.../matches/:matchId/derogation/check` et `POST
+.../integrations/fbi/check-all-derogations`) sont devenues SYNCHRONES —
+`checkDerogationForMatchSync`/`checkAllDerogationsForClubSync`
+(`modules/derogations/`) login/consultent FBI/enregistrent DANS la
+requête HTTP et renvoient le résultat RÉEL immédiatement, jamais un job à
+espérer voir traité. Même principe déjà appliqué à `respondToDerogationForClub`
+(accepter/refuser, voir plus haut) — les TROIS actions FBI déclenchées
+par un clic partagent maintenant ce modèle.
+
+**Le cron quotidien continue d'empiler un job** `check_all_derogations`
+(et `reconcile_schedule`) chaque matin via `enqueue-fbi-verifications.ts`
+— volontairement CONSERVÉ tel quel (demande du club, 2026-09-26 : "faut
+aussi intégrer toutes ces maj dans le cron daily... sans cliquer h24 sur
+des boutons manuels") : un cron n'a personne à qui répondre
+immédiatement, empiler puis traiter en arrière-plan (`/internal/cron/
+fbi-jobs`) reste le bon modèle pour LUI. Les deux chemins (manuel
+synchrone, cron asynchrone) écrivent dans la même table
+`fbi_derogation_checks` via le même upsert — aucun conflit de données,
+seule la façon de déclencher diffère.
+
+**Garde-fou ajouté** (`modules/derogations/fbi-session-lock.ts`,
+`assertNoActiveFbiJob`) : sans le passage par `fbi_jobs`, une action
+synchrone perdait la protection "un seul job actif par club à la fois"
+(`claim_next_fbi_job(_for_club)`) qui empêchait deux sessions FBI
+simultanées pour le même club — un risque direct de blocage anti-bot déjà
+vécu en production (voir ProcessFbiJobsButton.tsx, incident du
+2026-09-24). Les trois actions synchrones vérifient maintenant
+explicitement qu'aucun job `fbi_jobs` n'est `claimed`/`running` pour le
+club avant de lancer Playwright — sinon 409 ("réessaie dans quelques
+instants") plutôt qu'une deuxième connexion FBI concurrente.

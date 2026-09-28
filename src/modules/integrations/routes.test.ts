@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildFakeClubSupabase, makeFakeClubSupabaseState, type FakeClubSupabaseState } from "../../test-support/fake-club-supabase.js";
 import { encryptSecret } from "../../security/crypto.js";
 import { FbiError } from "../../integrations/fbi/errors.js";
+import { conflict } from "../../api-error.js";
 
 let state: FakeClubSupabaseState;
 let currentUserId = "user-a";
@@ -42,6 +43,9 @@ vi.mock("../../jobs/process-discover-emarque.js", () => ({ processDiscoverEmarqu
 
 const { mockParseDownloadedEmarqueDocuments } = vi.hoisted(() => ({ mockParseDownloadedEmarqueDocuments: vi.fn() }));
 vi.mock("../../jobs/parse-downloaded-documents.js", () => ({ parseDownloadedEmarqueDocuments: mockParseDownloadedEmarqueDocuments }));
+
+const { mockCheckAllDerogationsForClubSync } = vi.hoisted(() => ({ mockCheckAllDerogationsForClubSync: vi.fn() }));
+vi.mock("../derogations/check-all-derogations-sync.js", () => ({ checkAllDerogationsForClubSync: mockCheckAllDerogationsForClubSync }));
 
 const { app } = await import("../../app.js");
 const { resetEnvCacheForTests } = await import("../../config/env.js");
@@ -438,37 +442,28 @@ describe("POST /integrations/fbi/parse-documents (deuxième étape : documents t
   });
 });
 
-describe("POST /integrations/fbi/check-all-derogations (voir docs/FBI.md)", () => {
-  it("empile un job check_all_derogations quand FBI est configuré", async () => {
-    const encrypted = encryptSecret("s3cret-fbi-password", CLUB_A.id);
-    state.fbiCredentials = [{ club_id: CLUB_A.id, username: "club1234", password_ciphertext: encrypted.ciphertext, password_iv: encrypted.iv, password_auth_tag: encrypted.authTag }];
+describe("POST /integrations/fbi/check-all-derogations (voir docs/FBI.md — SYNCHRONE depuis 2026-09-28, 'doit y avoir rien en attente')", () => {
+  it("délègue à checkAllDerogationsForClubSync (scopé au club) et renvoie son résultat immédiatement", async () => {
+    mockCheckAllDerogationsForClubSync.mockResolvedValueOnce({ derogationsFound: 3, matched: 2, unmatched: 1 });
 
     const res = await request("/integrations/fbi/check-all-derogations", { method: "POST" });
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ queued: true });
-    expect(state.fbiJobs).toHaveLength(1);
-    expect(state.fbiJobs[0]).toMatchObject({ club_id: CLUB_A.id, match_id: null, type: "check_all_derogations" });
+    expect(await res.json()).toEqual({ derogationsFound: 3, matched: 2, unmatched: 1 });
+    expect(mockCheckAllDerogationsForClubSync).toHaveBeenCalledWith(expect.anything(), { clubId: CLUB_A.id });
   });
 
-  it("rejette (409) quand FBI n'est pas configuré", async () => {
+  it("rejette (409) quand FBI n'est pas configuré (propagé depuis checkAllDerogationsForClubSync)", async () => {
+    mockCheckAllDerogationsForClubSync.mockRejectedValueOnce(conflict("Configure d'abord un identifiant/mot de passe FBI avant de vérifier les dérogations.", "FBI_NOT_CONFIGURED"));
+
     const res = await request("/integrations/fbi/check-all-derogations", { method: "POST" });
     expect(res.status).toBe(409);
-  });
-
-  it("rejette (409) une deuxième vérification globale tant que la première est en attente", async () => {
-    const encrypted = encryptSecret("s3cret-fbi-password", CLUB_A.id);
-    state.fbiCredentials = [{ club_id: CLUB_A.id, username: "club1234", password_ciphertext: encrypted.ciphertext, password_iv: encrypted.iv, password_auth_tag: encrypted.authTag }];
-
-    const first = await request("/integrations/fbi/check-all-derogations", { method: "POST" });
-    expect(first.status).toBe(200);
-    const second = await request("/integrations/fbi/check-all-derogations", { method: "POST" });
-    expect(second.status).toBe(409);
   });
 
   it("un coach reçoit 403 (jamais de vérification déclenchée pour un rôle non autorisé)", async () => {
     currentUserId = "user-coach";
     const res = await request("/integrations/fbi/check-all-derogations", { method: "POST" });
     expect(res.status).toBe(403);
+    expect(mockCheckAllDerogationsForClubSync).not.toHaveBeenCalled();
   });
 });
