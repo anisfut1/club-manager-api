@@ -552,6 +552,20 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
       };
       return api;
     },
+    delete: () => {
+      const filters: { col: string; value: unknown }[] = [];
+      const api = {
+        eq(col: string, value: unknown) {
+          filters.push({ col, value });
+          return api;
+        },
+        then(onFulfilled: (value: { error: null }) => unknown) {
+          state.licencies = state.licencies.filter((l) => !filters.every((f) => (l as unknown as Record<string, unknown>)[f.col] === f.value));
+          return Promise.resolve({ error: null }).then(onFulfilled);
+        },
+      };
+      return api;
+    },
   };
 
   return {

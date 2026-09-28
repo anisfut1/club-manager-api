@@ -13,6 +13,7 @@ import {
   type LicenciesListDto,
   type ImportLicenciesResultDto,
   type AutoAssignTeamsResultDto,
+  type DeleteLicencieResultDto,
 } from "../../contracts/licencies.js";
 import { rejectedFieldsFor, resolveLicencieEditPermission } from "./profile-fields.js";
 import { requireClubRole } from "../../auth/middleware.js";
@@ -353,5 +354,31 @@ licenciesRouter.post("/auto-assign-teams", requireClubRole("club_admin"), async 
   const serviceSupabase = createServiceSupabaseClient();
   const result: AutoAssignTeamsResultDto = await autoAssignTeamsForClub(serviceSupabase, { clubId: club.id });
 
+  return c.json(result);
+});
+
+/**
+ * DELETE /v1/clubs/:clubId/licencies/:licencieId — supprime définitivement
+ * la fiche d'un licencié (demande du club, 2026-09-28 : "faut aussi un
+ * bouton pour supprimer un licencié"). `club_admin` uniquement — même
+ * verrou que le reste de l'écriture sur `licencies`. Sûr sans condition
+ * (voir `DeleteLicencieResultDtoSchema` pour le détail : toutes les
+ * références sont `on delete set null`, l'historique de match n'est
+ * jamais perdu).
+ */
+licenciesRouter.delete("/:licencieId", requireClubRole("club_admin"), async (c) => {
+  const { club } = c.get("club");
+  const licencieId = c.req.param("licencieId");
+  if (!licencieId) throw badRequest("Paramètre de route :licencieId manquant.");
+
+  const serviceSupabase = createServiceSupabaseClient();
+
+  const { data: existing } = await serviceSupabase.from("licencies").select("id").eq("id", licencieId).eq("club_id", club.id).maybeSingle();
+  if (!existing) throw notFound("Licencié introuvable.");
+
+  const { error } = await serviceSupabase.from("licencies").delete().eq("id", licencieId).eq("club_id", club.id);
+  if (error) throw new Error(`Suppression du licencié échouée : ${error.message}`);
+
+  const result: DeleteLicencieResultDto = { deleted: true };
   return c.json(result);
 });

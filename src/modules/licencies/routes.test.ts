@@ -277,3 +277,46 @@ describe("POST /v1/clubs/:clubId/licencies/auto-assign-teams (club_admin) — r�
     expect(state.licencies[0].team_id).toBeNull();
   });
 });
+
+describe("DELETE /v1/clubs/:clubId/licencies/:licencieId (club_admin) — suppression définitive", () => {
+  it("supprime le licencié et renvoie { deleted: true }", async () => {
+    state.licencies = [licencie({ id: "l1" })];
+
+    const res = await request("/l1", { method: "DELETE" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ deleted: true });
+    expect(state.licencies.find((l) => l.id === "l1")).toBeUndefined();
+  });
+
+  it("404 pour un licencié d'un AUTRE club, jamais une suppression cross-tenant silencieuse", async () => {
+    state.licencies = [licencie({ id: "l-other-club", club_id: CLUB_B.id })];
+
+    const res = await request("/l-other-club", { method: "DELETE" });
+    expect(res.status).toBe(404);
+    expect(state.licencies).toHaveLength(1);
+  });
+
+  it("404 pour un licencié inexistant", async () => {
+    state.licencies = [];
+    const res = await request("/inexistant", { method: "DELETE" });
+    expect(res.status).toBe(404);
+  });
+
+  it("refuse (403) à un membre non club_admin, jamais une suppression silencieuse", async () => {
+    currentUserId = "user-plain";
+    state.licencies = [licencie({ id: "l1" })];
+
+    const res = await request("/l1", { method: "DELETE" });
+    expect(res.status).toBe(403);
+    expect(state.licencies).toHaveLength(1);
+  });
+
+  it("refuse (403) au licencié lui-même (identité admin-contrôlée, même verrou que PATCH .../profile)", async () => {
+    currentUserId = "user-player";
+    state.licencies = [licencie({ id: "licencie-self" })];
+
+    const res = await request("/licencie-self", { method: "DELETE" });
+    expect(res.status).toBe(403);
+    expect(state.licencies).toHaveLength(1);
+  });
+});

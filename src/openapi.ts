@@ -34,6 +34,7 @@ import {
   ImportLicenciesDtoSchema,
   ImportLicenciesResultDtoSchema,
   AutoAssignTeamsResultDtoSchema,
+  DeleteLicencieResultDtoSchema,
 } from "./contracts/licencies.js";
 
 /**
@@ -415,6 +416,17 @@ registry.registerPath({
   // club_admin uniquement — voir auto-assign-teams.ts pour l'algorithme.
   request: { params: clubIdParam },
   responses: { 200: jsonResponse("Répartition terminée (total/assigned/skipped)", AutoAssignTeamsResultDtoSchema), ...errorResponses },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/v1/clubs/{clubId}/licencies/{licencieId}",
+  security: bearerAuth,
+  // Suppression définitive, club_admin uniquement — voir la doc de
+  // DeleteLicencieResultDtoSchema (sûre sans condition, jamais de perte
+  // d'historique de match).
+  request: { params: clubAndLicencieParams },
+  responses: { 200: jsonResponse("Licencié supprimé", DeleteLicencieResultDtoSchema), ...errorResponses },
 });
 
 registry.registerPath({

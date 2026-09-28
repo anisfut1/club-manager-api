@@ -192,3 +192,25 @@ export const AutoAssignTeamsResultDtoSchema = z
   .openapi("AutoAssignTeamsResultDto");
 
 export type AutoAssignTeamsResultDto = z.infer<typeof AutoAssignTeamsResultDtoSchema>;
+
+/**
+ * DELETE /v1/clubs/:clubId/licencies/:licencieId (club_admin) — supprime
+ * DÉFINITIVEMENT la fiche d'un licencié (demande du club, 2026-09-28 :
+ * "faut aussi un bouton pour supprimer un licencié"). Sûr sans condition :
+ * toutes les références (`match_participants`/`match_coaches`/
+ * `match_officials`/`match_table_officials`/`club_memberships`.
+ * `licencie_id`) sont `on delete set null` (voir les migrations d'origine)
+ * — l'historique/les statistiques d'un match ne sont JAMAIS perdus (ces
+ * tables stockent leur propre nom/prénom/n° de licence extraits de
+ * l'e-Marque, indépendamment de `licencies`), seul le lien vers CETTE
+ * fiche est détaché. Jamais un archivage déguisé : pour un·e licencié·e
+ * qui a quitté le club mais dont on veut garder la fiche/l'historique,
+ * `PATCH .../profile` avec `active: false` reste le bon geste.
+ */
+export const DeleteLicencieResultDtoSchema = z
+  .object({
+    deleted: z.literal(true),
+  })
+  .openapi("DeleteLicencieResultDto");
+
+export type DeleteLicencieResultDto = z.infer<typeof DeleteLicencieResultDtoSchema>;

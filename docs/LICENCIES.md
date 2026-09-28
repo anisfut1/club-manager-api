@@ -220,3 +220,21 @@ Reste un point de DÉPART, jamais une vérité définitive : un licencié déjà
 affecté (même approximativement) n'est JAMAIS réécrit par cette route, et
 le glisser-déposer (`PATCH .../profile`, page /joueurs côté SCSB) reste le
 moyen de corriger un rattachement approximatif au cas par cas.
+
+## Suppression définitive — "faut aussi un bouton pour supprimer un licencié"
+
+Demande du club, 2026-09-28. `DELETE /v1/clubs/:clubId/licencies/:licencieId`
+(`club_admin`) — sûre SANS CONDITION : toutes les tables qui référencent
+`licencies.id` (`match_participants`/`match_coaches`/`match_officials`/
+`match_table_officials`/`club_memberships`) le font en `on delete set null`
+(voir les migrations d'origine, phase 0/1) — jamais un blocage ni une
+cascade. L'historique et les statistiques d'un match ne sont JAMAIS perdus :
+`match_participants`/`match_coaches`/etc. stockent leur PROPRE nom/prénom/
+n° de licence extraits de l'e-Marque, indépendamment de `licencies` (voir
+leur commentaire de table) — seul le LIEN vers cette fiche précise est
+détaché.
+
+Jamais un archivage déguisé : pour un·e licencié·e qui a quitté le club
+mais dont on veut garder la fiche/l'historique, `PATCH .../profile` avec
+`active: false` (déjà existant) reste le bon geste — la suppression est
+pour une fiche créée par erreur/en double, jamais pour "désactiver".
