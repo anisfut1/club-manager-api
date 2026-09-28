@@ -5,7 +5,7 @@ import { createServiceSupabaseClient, type DbClient } from "../../db/client.js";
 import { badRequest, conflict, notFound } from "../../api-error.js";
 import { formatTeamNameWithGender } from "../../util/team-name.js";
 import { computeDayRange } from "../../util/timezone.js";
-import { TableSuggestionsQueryDtoSchema, TableAssignmentsQueryDtoSchema, PutTableAssignmentDtoSchema, TableAssignmentRoleSchema } from "../../contracts/tables.js";
+import { TableSuggestionsQueryDtoSchema, TableAssignmentsQueryDtoSchema, PutTableAssignmentDtoSchema, TableAssignmentRoleSchema, PutRefereeStatusDtoSchema } from "../../contracts/tables.js";
 import { computeMatchWindow } from "./match-window.js";
 import { DEFAULT_MATCH_DURATION_MINUTES, type TableAssignmentRole } from "./suggestion-policy.js";
 import { computeTableSuggestions, determineEligibility, type LicencieCandidateInput, type RankedCandidate, type UnavailableCandidate } from "./table-suggestion-service.js";
@@ -228,6 +228,42 @@ matchTablesRouter.delete("/table-assignments/:role", async (c) => {
   return c.json({ removed: true as const });
 });
 
+/**
+ * PUT .../matches/:matchId/referee-status — retour du club, 2026-09-28 :
+ * "il est possible qu'un arbitre officiel soit désigné, donc avoir la
+ * possibilité de cocher un truc style pas besoin d'arbitre". N'affecte
+ * JAMAIS `table_assignments` (aucun licencié impliqué) — écrit/efface une
+ * ligne dans `match_referee_overrides`, table dédiée à cette seule bascule.
+ * Refusé sur un match extérieur, même raisonnement que les affectations.
+ */
+matchTablesRouter.put("/referee-status", async (c) => {
+  const { club } = c.get("club");
+  const user = c.get("user");
+  const supabase = c.get("supabase");
+  const matchId = c.req.param("matchId");
+  if (!matchId) throw badRequest("Paramètre de route :matchId manquant.");
+
+  const body = PutRefereeStatusDtoSchema.safeParse(await c.req.json().catch(() => null));
+  if (!body.success) throw badRequest(body.error.issues.map((i) => i.message).join(" "));
+
+  await loadHomeMatchOrThrow(supabase, club.id, matchId);
+
+  const serviceSupabase = createServiceSupabaseClient();
+
+  if (body.data.noRefereeNeeded) {
+    const { error } = await serviceSupabase
+      .from("match_referee_overrides")
+      .upsert({ club_id: club.id, match_id: matchId, no_referee_needed: true, created_by: user.id, updated_at: new Date().toISOString() }, { onConflict: "club_id,match_id" });
+    if (error) throw new Error(`Enregistrement du statut arbitre échoué : ${error.message}`);
+  } else {
+    // Absence de ligne = état par défaut ("un arbitre du club est nécessaire") — jamais une ligne à `false` (voir commentaire de la migration).
+    const { error } = await serviceSupabase.from("match_referee_overrides").delete().eq("club_id", club.id).eq("match_id", matchId);
+    if (error) throw new Error(`Suppression du statut arbitre échouée : ${error.message}`);
+  }
+
+  return c.json({ refereeNotNeeded: body.data.noRefereeNeeded });
+});
+
 interface AssignmentSlotDto {
   id: string;
   licencie: { id: string; firstName: string; lastName: string };
@@ -300,6 +336,12 @@ tableAssignmentsRouter.get("/", async (c) => {
   const { data: teams } = await supabase.from("teams").select("id, name, sexe").eq("club_id", club.id);
   const teamNameById = new Map((teams ?? []).map((t) => [t.id, formatTeamNameWithGender(t.name, t.sexe)]));
 
+  const homeMatchIds = homeMatches.map((m) => m.id);
+  const { data: refereeOverrides } = homeMatchIds.length
+    ? await supabase.from("match_referee_overrides").select("match_id, no_referee_needed").eq("club_id", club.id).in("match_id", homeMatchIds)
+    : { data: [] };
+  const refereeNotNeededByMatchId = new Set((refereeOverrides ?? []).filter((o) => o.no_referee_needed).map((o) => o.match_id));
+
   // Un seul loadClubDayContext par jour calendaire distinct (club.timezone), partagé par tous les matchs de ce jour.
   const contextByDayKey = new Map<string, ClubDayContext>();
   const dayKeyFor = (isoDatetime: string): string => computeDayRange(new Date(isoDatetime), club.timezone).from;
@@ -319,7 +361,8 @@ tableAssignmentsRouter.get("/", async (c) => {
     const scorer = buildAssignmentSlot("SCORER", matchRef, context, club.timezone);
     const timekeeper = buildAssignmentSlot("TIMEKEEPER", matchRef, context, club.timezone);
     const clubDelegate = buildAssignmentSlot("CLUB_DELEGATE", matchRef, context, club.timezone);
-    const hasConflict = [scorer, timekeeper, clubDelegate].some((slot) => slot?.hasConflict === true);
+    const referee = buildAssignmentSlot("REFEREE", matchRef, context, club.timezone);
+    const hasConflict = [scorer, timekeeper, clubDelegate, referee].some((slot) => slot?.hasConflict === true);
 
     return {
       match: {
@@ -330,7 +373,8 @@ tableAssignmentsRouter.get("/", async (c) => {
         opponentName: m.opponent_name,
         venueLabel: m.venue_raw_label,
       },
-      assignments: { scorer, timekeeper, clubDelegate },
+      assignments: { scorer, timekeeper, clubDelegate, referee },
+      refereeNotNeeded: refereeNotNeededByMatchId.has(m.id),
       hasConflict,
     };
   });

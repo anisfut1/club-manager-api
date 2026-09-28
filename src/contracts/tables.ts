@@ -6,7 +6,7 @@ import { z } from "./zod.js";
  * `src/openapi.ts`, jamais une doc écrite séparément.
  */
 
-export const TableAssignmentRoleSchema = z.enum(["SCORER", "TIMEKEEPER", "CLUB_DELEGATE"]).openapi("TableAssignmentRole");
+export const TableAssignmentRoleSchema = z.enum(["SCORER", "TIMEKEEPER", "CLUB_DELEGATE", "REFEREE"]).openapi("TableAssignmentRole");
 export type TableAssignmentRoleDto = z.infer<typeof TableAssignmentRoleSchema>;
 
 const LicencieRefDtoSchema = z.object({ id: z.string().uuid(), firstName: z.string(), lastName: z.string() }).openapi("TableLicencieRefDto");
@@ -101,8 +101,18 @@ export const TableAssignmentsForMatchDtoSchema = z
       scorer: TableAssignmentSlotDtoSchema.nullable(),
       timekeeper: TableAssignmentSlotDtoSchema.nullable(),
       clubDelegate: TableAssignmentSlotDtoSchema.nullable(),
+      referee: TableAssignmentSlotDtoSchema.nullable(),
     }),
-    /** Vrai si AU MOINS un des 3 postes affectés a un conflit détecté (§79 — résumé pratique pour la card match). */
+    /**
+     * Retour du club, 2026-09-28 : "il est possible qu'un arbitre officiel
+     * soit désigné [par la FFBB], donc avoir la possibilité de cocher un
+     * truc style pas besoin d'arbitre". `true` -> le poste `referee`
+     * ci-dessus n'est PAS compté comme "à attribuer" côté frontend, même
+     * s'il vaut `null`. Ne concerne QUE ce poste (les 3 autres restent
+     * toujours requis).
+     */
+    refereeNotNeeded: z.boolean(),
+    /** Vrai si AU MOINS un des postes affectés a un conflit détecté (§79 — résumé pratique pour la card match). */
     hasConflict: z.boolean(),
   })
   .openapi("TableAssignmentsForMatchDto");
@@ -121,3 +131,13 @@ export const TableAssignmentsListDtoSchema = z.object({ matches: z.array(TableAs
 export const PutTableAssignmentDtoSchema = z.object({ licencieId: z.string().uuid() }).openapi("PutTableAssignmentDto");
 
 export const TableAssignmentResultDtoSchema = z.object({ assignment: TableAssignmentSlotDtoSchema }).openapi("TableAssignmentResultDto");
+
+/**
+ * PUT .../matches/:matchId/referee-status (retour du club, 2026-09-28) —
+ * bascule "pas besoin d'arbitre" quand un arbitre officiel FFBB est déjà
+ * désigné. N'affecte JAMAIS aucun licencié (voir `match_referee_overrides`,
+ * distincte de `table_assignments`) : ce n'est pas une affectation.
+ */
+export const PutRefereeStatusDtoSchema = z.object({ noRefereeNeeded: z.boolean() }).openapi("PutRefereeStatusDto");
+
+export const RefereeStatusResultDtoSchema = z.object({ refereeNotNeeded: z.boolean() }).openapi("RefereeStatusResultDto");

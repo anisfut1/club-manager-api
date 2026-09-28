@@ -186,6 +186,15 @@ export interface FakeTableAssignmentRow {
   updated_at?: string;
 }
 
+export interface FakeRefereeOverrideRow {
+  id: string;
+  club_id: string;
+  match_id: string;
+  no_referee_needed: boolean;
+  created_by: string | null;
+  updated_at?: string;
+}
+
 export interface FakeFbiJobRow {
   id: string;
   club_id: string;
@@ -215,6 +224,7 @@ export interface FakeClubSupabaseState {
   fbiDerogationChecks: FakeFbiDerogationCheckRow[];
   fbiJobs: FakeFbiJobRow[];
   tableAssignments: FakeTableAssignmentRow[];
+  refereeOverrides: FakeRefereeOverrideRow[];
   isPlatformAdmin: boolean;
   /** Clés `${clubId}:${integration}` actuellement verrouillées (voir try_acquire_sync_lock/release_sync_lock). */
   syncLocks: Set<string>;
@@ -238,6 +248,7 @@ export function makeFakeClubSupabaseState(overrides: Partial<FakeClubSupabaseSta
     fbiDerogationChecks: [],
     fbiJobs: [],
     tableAssignments: [],
+    refereeOverrides: [],
     isPlatformAdmin: false,
     syncLocks: new Set(),
     ...overrides,
@@ -567,6 +578,36 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
     },
   };
 
+  let refereeOverrideCounter = 0;
+  const refereeOverridesTable = {
+    select: (_cols?: string) => queryable(state.refereeOverrides),
+    // Directement thenable (pas de `.select()` chaîné) — même contrat que le
+    // vrai appel dans modules/tables/routes.ts, PUT .../referee-status.
+    upsert: (row: Omit<FakeRefereeOverrideRow, "id">, _opts?: { onConflict?: string }) => {
+      const existingIndex = state.refereeOverrides.findIndex((r) => r.club_id === row.club_id && r.match_id === row.match_id);
+      if (existingIndex >= 0) Object.assign(state.refereeOverrides[existingIndex]!, row);
+      else {
+        refereeOverrideCounter += 1;
+        state.refereeOverrides.push({ id: `referee-override-${refereeOverrideCounter}`, ...row });
+      }
+      return Promise.resolve({ error: null });
+    },
+    delete: () => {
+      const filters: { col: string; value: unknown }[] = [];
+      const api = {
+        eq(col: string, value: unknown) {
+          filters.push({ col, value });
+          return api;
+        },
+        then(onFulfilled: (value: { error: null }) => unknown) {
+          state.refereeOverrides = state.refereeOverrides.filter((r) => !filters.every((f) => (r as unknown as Record<string, unknown>)[f.col] === f.value));
+          return Promise.resolve({ error: null }).then(onFulfilled);
+        },
+      };
+      return api;
+    },
+  };
+
   const syncRunsTable = { select: (_cols?: string) => queryable(state.syncRuns) };
   const profilesTable = {
     select: (_cols?: string) => ({
@@ -673,6 +714,8 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
           return syncRunsTable;
         case "table_assignments":
           return tableAssignmentsTable;
+        case "match_referee_overrides":
+          return refereeOverridesTable;
         case "matches":
           return matchesTable;
         case "competitions":

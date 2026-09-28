@@ -56,12 +56,26 @@ describe("generateOpenApiDocument", () => {
     expect(doc.components?.schemas).toHaveProperty("TableSuggestionsDto");
     expect(doc.components?.schemas).toHaveProperty("TableAssignmentsListDto");
 
-    // ?role= obligatoire (§37 : contrat le plus propre, une seule route couvre les 3 rôles).
+    // ?role= obligatoire (§37 : contrat le plus propre, une seule route couvre les rôles).
     const suggestionsParams = doc.paths["/v1/clubs/{clubId}/matches/{matchId}/table-suggestions"]!.get!.parameters ?? [];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const roleParam = suggestionsParams.find((p: any) => p.in === "query" && p.name === "role") as any;
     expect(roleParam).toBeDefined();
     expect(roleParam.required).toBe(true);
+  });
+
+  it("expose REFEREE comme 4e rôle et la route de bascule 'pas besoin d'arbitre' (retour du club, 2026-09-28)", () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const roleSchema = (doc.components?.schemas as any).TableAssignmentRole;
+    expect(roleSchema.enum).toEqual(expect.arrayContaining(["SCORER", "TIMEKEEPER", "CLUB_DELEGATE", "REFEREE"]));
+
+    expect(doc.paths["/v1/clubs/{clubId}/matches/{matchId}/referee-status"]).toHaveProperty("put");
+    expect(doc.components?.schemas).toHaveProperty("PutRefereeStatusDto");
+    expect(doc.components?.schemas).toHaveProperty("RefereeStatusResultDto");
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const forMatchSchema = (doc.components?.schemas as any).TableAssignmentsForMatchDto;
+    expect(forMatchSchema.properties).toHaveProperty("refereeNotNeeded");
   });
 
   it("génère un document valide (openapi 3.0.0, titre, au moins 15 routes)", () => {

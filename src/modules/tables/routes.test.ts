@@ -244,6 +244,72 @@ describe("PUT .../table-assignments/:role — §40/§58 : seule action qui crée
   });
 });
 
+describe("PUT .../table-assignments/REFEREE — retour du club, 2026-09-28 : l'arbitre est un 4e poste, mêmes règles que les 3 autres", () => {
+  it("crée exactement une affectation REFEREE, puis GET la retourne", async () => {
+    const target = licencie({ id: L1, team_id: null });
+    state.licencies = [target];
+
+    const putRes = await request(`/matches/${TARGET_MATCH.id}/table-assignments/REFEREE`, { method: "PUT", body: JSON.stringify({ licencieId: L1 }) });
+    expect(putRes.status).toBe(200);
+    expect(state.tableAssignments).toEqual([expect.objectContaining({ role: "REFEREE", licencie_id: L1 })]);
+
+    const listRes = await request(`/table-assignments`);
+    const body = (await listRes.json()) as { matches: { match: { id: string }; assignments: { referee: { licencie: { id: string } } | null } }[] };
+    const match = body.matches.find((m) => m.match.id === TARGET_MATCH.id);
+    expect(match?.assignments.referee?.licencie.id).toBe(L1);
+  });
+
+  it("un arbitre affecté sur un AUTRE match qui chevauche rend le candidat indisponible pour REFEREE ici (même moteur générique, pas de règle spécifique au rôle)", async () => {
+    const otherMatch: FakeMatchRow = { ...TARGET_MATCH, id: "match-other", numero: "13", match_datetime: "2026-10-03T14:00:00Z" }; // 16h Paris, chevauche 15h-17h
+    state.matches = [TARGET_MATCH, otherMatch];
+    state.licencies = [licencie({ id: L1, team_id: null })];
+    state.tableAssignments = [{ id: "existing", club_id: CLUB_A.id, match_id: otherMatch.id, role: "REFEREE", licencie_id: L1, created_by: "user-admin" }];
+
+    const res = await request(`/matches/${TARGET_MATCH.id}/table-assignments/REFEREE`, { method: "PUT", body: JSON.stringify({ licencieId: L1 }) });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("TABLE_ASSIGNMENT_CONFLICT");
+  });
+});
+
+describe("PUT .../matches/:matchId/referee-status — retour du club, 2026-09-28 : 'pas besoin d'arbitre' (officiel FFBB déjà désigné)", () => {
+  it("cocher renvoie refereeNotNeeded=true, reflété par GET .../table-assignments, sans jamais toucher table_assignments", async () => {
+    const res = await request(`/matches/${TARGET_MATCH.id}/referee-status`, { method: "PUT", body: JSON.stringify({ noRefereeNeeded: true }) });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ refereeNotNeeded: true });
+    expect(state.tableAssignments).toHaveLength(0);
+
+    const listRes = await request(`/table-assignments`);
+    const body = (await listRes.json()) as { matches: { match: { id: string }; refereeNotNeeded: boolean }[] };
+    const match = body.matches.find((m) => m.match.id === TARGET_MATCH.id);
+    expect(match?.refereeNotNeeded).toBe(true);
+  });
+
+  it("décocher (noRefereeNeeded: false) remet l'état par défaut (arbitre du club à nouveau nécessaire)", async () => {
+    await request(`/matches/${TARGET_MATCH.id}/referee-status`, { method: "PUT", body: JSON.stringify({ noRefereeNeeded: true }) });
+    await request(`/matches/${TARGET_MATCH.id}/referee-status`, { method: "PUT", body: JSON.stringify({ noRefereeNeeded: false }) });
+
+    expect(state.refereeOverrides).toHaveLength(0); // absence de ligne = état par défaut (voir migration)
+
+    const listRes = await request(`/table-assignments`);
+    const body = (await listRes.json()) as { matches: { match: { id: string }; refereeNotNeeded: boolean }[] };
+    const match = body.matches.find((m) => m.match.id === TARGET_MATCH.id);
+    expect(match?.refereeNotNeeded).toBe(false);
+  });
+
+  it("409 AWAY_MATCH_NOT_SUPPORTED pour un match extérieur", async () => {
+    state.matches = [TARGET_MATCH, AWAY_MATCH];
+    const res = await request(`/matches/${AWAY_MATCH.id}/referee-status`, { method: "PUT", body: JSON.stringify({ noRefereeNeeded: true }) });
+    expect(res.status).toBe(409);
+  });
+
+  it("403 pour un membre sans club_admin ni responsable_tables", async () => {
+    currentUserId = "user-plain";
+    const res = await request(`/matches/${TARGET_MATCH.id}/referee-status`, { method: "PUT", body: JSON.stringify({ noRefereeNeeded: true }) });
+    expect(res.status).toBe(403);
+  });
+});
+
 describe("DELETE .../table-assignments/:role — §41 : remet le poste à 'À attribuer'", () => {
   it("retire uniquement l'affectation ciblée, jamais les autres", async () => {
     state.tableAssignments = [

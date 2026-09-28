@@ -29,8 +29,8 @@ export type ClubStatus = "active" | "suspended";
 export type MembershipStatus = "active" | "suspended";
 export type ClubRole = "club_admin" | "correspondant_club" | "responsable_tables" | "coach" | "joueur" | "parent";
 export type MatchStatus = "scheduled" | "played" | "postponed" | "cancelled" | "forfeit";
-/** Tables de marque (demande du club, 2026-09-28) — SCORER = marqueur, TIMEKEEPER = chronométreur, CLUB_DELEGATE = délégué de club. */
-export type TableAssignmentRole = "SCORER" | "TIMEKEEPER" | "CLUB_DELEGATE";
+/** Tables de marque (demande du club, 2026-09-28) — SCORER = marqueur, TIMEKEEPER = chronométreur, CLUB_DELEGATE = délégué de club, REFEREE = arbitre (ajouté 2026-09-28). */
+export type TableAssignmentRole = "SCORER" | "TIMEKEEPER" | "CLUB_DELEGATE" | "REFEREE";
 export type EmarqueMatchStatus =
   | "not_applicable"
   | "pending"
@@ -410,6 +410,27 @@ export interface Database {
           match_id: string;
           licencie_id: string;
           role: TableAssignmentRole;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        }
+      >;
+
+      match_referee_overrides: Table<
+        {
+          id: string;
+          club_id: string;
+          match_id: string;
+          no_referee_needed: boolean;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+        },
+        {
+          id?: string;
+          club_id: string;
+          match_id: string;
+          no_referee_needed?: boolean;
           created_by?: string | null;
           created_at?: string;
           updated_at?: string;

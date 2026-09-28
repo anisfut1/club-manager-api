@@ -223,7 +223,7 @@ export function determineEligibility(candidate: LicencieCandidateInput, input: T
   return null;
 }
 
-const ROLE_LABELS: Record<TableAssignmentRole, string> = { SCORER: "marqueur", TIMEKEEPER: "chronométreur", CLUB_DELEGATE: "délégué de club" };
+const ROLE_LABELS: Record<TableAssignmentRole, string> = { SCORER: "marqueur", TIMEKEEPER: "chronométreur", CLUB_DELEGATE: "délégué de club", REFEREE: "arbitre" };
 
 /**
  * determinePriorityTier (§12/§13/§22) — ADJACENT_NEXT_HOME (l'équipe joue

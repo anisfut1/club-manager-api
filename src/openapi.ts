@@ -44,6 +44,8 @@ import {
   TableAssignmentsListDtoSchema,
   PutTableAssignmentDtoSchema,
   TableAssignmentResultDtoSchema,
+  PutRefereeStatusDtoSchema,
+  RefereeStatusResultDtoSchema,
 } from "./contracts/tables.js";
 
 /**
@@ -354,7 +356,16 @@ registry.registerPath({
   security: bearerAuth,
   // Matchs à DOMICILE uniquement (§4 de la demande "Tables de marque") — un match extérieur n'apparaît jamais dans cette liste.
   request: { params: clubIdParam, query: TableAssignmentsQueryDtoSchema },
-  responses: { 200: jsonResponse("Matchs à domicile du club, avec leurs 3 postes (affectés ou 'à attribuer')", TableAssignmentsListDtoSchema), ...errorResponses, ...validationResponses },
+  responses: { 200: jsonResponse("Matchs à domicile du club, avec leurs 4 postes (affectés ou 'à attribuer')", TableAssignmentsListDtoSchema), ...errorResponses, ...validationResponses },
+});
+
+registry.registerPath({
+  method: "put",
+  path: "/v1/clubs/{clubId}/matches/{matchId}/referee-status",
+  security: bearerAuth,
+  // Bascule "pas besoin d'arbitre" (retour du club, 2026-09-28) — n'affecte jamais table_assignments, voir match_referee_overrides.
+  request: { params: clubAndMatchIdParams, body: { content: { "application/json": { schema: PutRefereeStatusDtoSchema } } } },
+  responses: { 200: jsonResponse("Statut arbitre enregistré", RefereeStatusResultDtoSchema), ...errorResponses, ...validationResponses },
 });
 
 registry.registerPath({

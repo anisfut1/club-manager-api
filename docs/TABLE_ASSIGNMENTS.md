@@ -1,9 +1,23 @@
 # Tables de marque
 
 Module métier majeur (demande du club, 2026-09-28) : pour chaque match du
-club joué **à domicile**, affecter un licencié à chacun des 3 postes :
-**marqueur** (`SCORER`), **chronométreur** (`TIMEKEEPER`) et **délégué de
-club** (`CLUB_DELEGATE`).
+club joué **à domicile**, affecter un licencié à chacun des 4 postes :
+**marqueur** (`SCORER`), **chronométreur** (`TIMEKEEPER`), **délégué de
+club** (`CLUB_DELEGATE`) et **arbitre** (`REFEREE`, ajouté le même jour).
+
+### Cas particulier de l'arbitre — "pas besoin d'arbitre"
+
+Contrairement aux 3 autres postes, un arbitre peut déjà être **officiellement
+désigné par la FFBB**, en dehors de ce club — le club n'a alors rien à
+affecter. `PUT .../matches/:matchId/referee-status` (body
+`{ noRefereeNeeded: boolean }`) bascule cet état, stocké dans
+`match_referee_overrides` (club_id, match_id, no_referee_needed), **jamais**
+dans `table_assignments` : ce n'est pas une affectation, aucun licencié n'y
+est référencé. Absence de ligne = état par défaut ("un arbitre du club est
+nécessaire"). Quand `refereeNotNeeded` vaut `true` (champ renvoyé par
+`GET .../table-assignments`), le poste `referee` n'est pas compté comme
+"à attribuer" côté frontend, même s'il est `null` — mais reste affectable si
+le club le souhaite quand même (les deux mécanismes sont indépendants).
 
 ## Principe fondamental — le logiciel suggère, le responsable décide
 
@@ -205,8 +219,8 @@ aucun module. C'est ce module qui l'active pour la première fois
 ## API
 
 - `GET /v1/clubs/:clubId/table-assignments?from=&to=` — matchs à domicile
-  du club (par défaut : à venir), avec leurs 3 postes (affectés ou "à
-  attribuer") et un `hasConflict` par match.
+  du club (par défaut : à venir), avec leurs 4 postes (affectés ou "à
+  attribuer"), un `refereeNotNeeded` et un `hasConflict` par match.
 - `GET /v1/clubs/:clubId/matches/:matchId/table-suggestions?role=SCORER` —
   candidats classés (recommandés/disponibles/indisponibles) pour ce rôle
   sur ce match. `role` obligatoire (une route par rôle, contrat le plus
@@ -217,13 +231,17 @@ aucun module. C'est ce module qui l'active pour la première fois
   conflit recalculé.
 - `DELETE /v1/clubs/:clubId/matches/:matchId/table-assignments/:role` —
   remet le poste à "à attribuer".
+- `PUT /v1/clubs/:clubId/matches/:matchId/referee-status` (body
+  `{ noRefereeNeeded: boolean }`) — bascule "pas besoin d'arbitre" (arbitre
+  officiel FFBB déjà désigné). N'écrit jamais dans `table_assignments`.
 
 ## Base de données
 
-Table `table_assignments` (migration `20260928100000_table_assignments.sql`) :
-`id`, `club_id`, `match_id`, `licencie_id`, `role`
-(`SCORER`/`TIMEKEEPER`/`CLUB_DELEGATE`), `created_by`, `created_at`,
-`updated_at`. Deux contraintes `UNIQUE` :
+Table `table_assignments` (migration `20260928100000_table_assignments.sql`,
+étendue par `20260928110000_table_referee.sql`) : `id`, `club_id`,
+`match_id`, `licencie_id`, `role`
+(`SCORER`/`TIMEKEEPER`/`CLUB_DELEGATE`/`REFEREE`), `created_by`,
+`created_at`, `updated_at`. Deux contraintes `UNIQUE` :
 
 - `(club_id, match_id, role)` — un seul licencié par poste.
 - `(club_id, match_id, licencie_id)` — un licencié ne peut jamais cumuler
@@ -232,6 +250,12 @@ Table `table_assignments` (migration `20260928100000_table_assignments.sql`) :
 Toute affectation est **MANUELLE** par construction en V1 : pas de colonne
 `source` (elle ne vaudrait jamais que `'MANUAL'`, information sans valeur
 ajoutée).
+
+Table `match_referee_overrides` (même migration) : `id`, `club_id`,
+`match_id`, `no_referee_needed`, `created_by`, `created_at`, `updated_at`,
+`UNIQUE(club_id, match_id)`. Distincte de `table_assignments` par
+construction : `no_referee_needed` ne référence aucun licencié, ce n'est
+jamais une affectation.
 
 ## Points d'extension futurs (documentés, non implémentés en V1)
 
@@ -247,9 +271,10 @@ ajoutée).
   `targetRole`, sans jamais fabriquer de compétence fictive) ; une future
   table de compétences pourrait filtrer/pondérer `candidates` en amont de
   `computeTableSuggestions` sans changer sa signature.
-- **Délégué de club** (§26) : aucune règle FFBB d'âge/qualification
-  n'est appliquée en V1 — un licencié potentiellement disponible peut être
-  suggéré pour `CLUB_DELEGATE` comme pour les 2 autres rôles. Une future
+- **Délégué de club** (§26) et **arbitre** (ajouté 2026-09-28) : aucune
+  règle FFBB d'âge/qualification/diplôme d'arbitre n'est appliquée en V1 —
+  un licencié potentiellement disponible peut être suggéré pour
+  `CLUB_DELEGATE` ou `REFEREE` comme pour les autres rôles. Une future
   règle d'éligibilité spécifique se brancherait dans
   `determineEligibility` sans changer le reste du moteur.
 
