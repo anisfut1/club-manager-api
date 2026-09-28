@@ -1633,8 +1633,14 @@ export class BrowserFbiClient {
       return { outcome: "unknown", message: `Le clic sur "Enregistrer" a échoué : ${error instanceof Error ? error.message : String(error)}` };
     }
 
+    // 45s (pas 20s) — constaté en production le 2026-09-28 (rencontre 9538) :
+    // l'enregistrement avait RÉELLEMENT réussi sur FBI (confirmé par le club
+    // en consultant FBI directement), mais renvoyé `outcome: "unknown"` —
+    // `enregistrerDerogationAjax()` (POST + navigation `retourArriere()`) a
+    // dû dépasser 20s ce jour-là, jamais une preuve que la navigation
+    // n'arrive pas, juste qu'elle peut être plus lente que prévu.
     const navigatedAway = await page
-      .waitForURL((candidate) => candidate.toString() !== beforeUrl, { timeout: 20_000 })
+      .waitForURL((candidate) => candidate.toString() !== beforeUrl, { timeout: 45_000 })
       .then(() => true)
       .catch(() => false);
     if (navigatedAway) return { outcome: "success" };

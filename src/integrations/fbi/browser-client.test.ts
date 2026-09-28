@@ -592,21 +592,29 @@ describe("BrowserFbiClient.respondToDerogation (ÉCRIT réellement sur FBI — d
     await client.closeSession(session);
   });
 
-  it("remonte le VRAI message d'erreur FBI (jamais un texte générique deviné) quand la page reste sur place et affiche <ul class=\"errorMessage\">", async () => {
-    server.setRoute({
-      path: "/enregistrerDerogation.fbi",
-      method: "POST",
-      contentType: "text/html",
-      body: '<ul class="errorMessage"><li>Le motif de refus est obligatoire.</li></ul>',
-    });
-    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
-    const session = await client.login({ username: "club1234", password: "secret" });
+  it(
+    "remonte le VRAI message d'erreur FBI (jamais un texte générique deviné) quand la page reste sur place et affiche <ul class=\"errorMessage\">",
+    async () => {
+      server.setRoute({
+        path: "/enregistrerDerogation.fbi",
+        method: "POST",
+        contentType: "text/html",
+        body: '<ul class="errorMessage"><li>Le motif de refus est obligatoire.</li></ul>',
+      });
+      const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+      const session = await client.login({ username: "club1234", password: "secret" });
 
-    const result = await client.respondToDerogation(session, REPONSE_ATTENDUE_ID, "refused", "x");
+      const result = await client.respondToDerogation(session, REPONSE_ATTENDUE_ID, "refused", "x");
 
-    expect(result).toMatchObject({ outcome: "error", message: expect.stringContaining("Le motif de refus est obligatoire.") });
-    await client.closeSession(session);
-  });
+      expect(result).toMatchObject({ outcome: "error", message: expect.stringContaining("Le motif de refus est obligatoire.") });
+      await client.closeSession(session);
+    },
+    // Aucune navigation dans ce cas (pas d'erreur "attendue" à ce niveau) :
+    // le test attend RÉELLEMENT les 45s de `waitForURL` (browser-client.ts,
+    // bump 20s→45s le 2026-09-28, rencontre 9538 — voir sa doc) avant de
+    // retomber sur la détection d'erreur — au-delà du testTimeout par défaut.
+    60_000,
+  );
 
   it("renvoie 'unknown' (jamais 'success' sans preuve) quand le champ de décision est introuvable — ex. la dérogation n'attend plus de réponse du club", async () => {
     // Réutilise le cas "club demandeur" (affichage lecture seule, pas de
