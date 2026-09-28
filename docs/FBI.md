@@ -3731,3 +3731,65 @@ côté SCSB).
 (vercel.json) que `processFbiJobs`/`checkAllDerogations`. Aucun changement
 requis côté club-manager-api — la route elle-même a toujours réussi, seul
 le client abandonnait trop tôt.
+
+## Salle FBI tronquée qui écrasait notre libellé complet — "les matchs sont plus a clavel ou lido"
+
+Constaté en production le 2026-09-28, en même temps que le job bloqué
+ci-dessus : une fois le rapprochement calendrier débloqué, le club a
+signalé que ses matchs à domicile n'apparaissaient plus dans les colonnes
+"Gymnase Maurice Clavel"/"Complexe sportif du Lido" côté SCSB (rendu
+agenda par salle) — tous tombaient dans "Autre salle" alors que
+`venue_raw_label` était correct en base au démarrage de la session.
+
+Root cause à deux niveaux dans `venuesLikelyMatch`
+(`integrations/fbi/schedule-reconciliation.ts`), tous les deux invisibles
+en relisant le code car le texte affiché semble identique de part et
+d'autre :
+
+1. **Espaces insécables non normalisés.** Le texte de cellule scrapé du
+   tableau FBI (`resultsTableGenericRows`) sépare les mots par des espaces
+   INSÉCABLES (`&nbsp;`, U+00A0), jamais un espace ASCII normal comme le
+   libellé FFBB. `normalize()`/`.toLowerCase()`/`.trim()` ne les touchent
+   pas : `"GYMNASE MAURICE CLAVEL".includes("gymnase maurice
+   clavel")` est `false` malgré un rendu visuel identique — un faux
+   `mismatch` de salle sur QUASIMENT chaque rencontre.
+2. **Salle tronquée par FBI lui-même.** FBI tronque les noms de salle trop
+   longs dans son tableau, en ajoutant `...` littéral (jamais une
+   troncature CSS invisible) : `"GYMNASE MAURICE C..."` pour `"GYMNASE
+   MAURICE CLAVEL — 22 rue Maurice Clavel"`. Un préfixe tronqué n'est
+   JAMAIS contenu dans notre libellé complet, ni l'inverse — `mismatch`
+   détecté à tort, et la correction alors appliquée ÉCRASAIT notre libellé
+   complet et correct par ce texte tronqué et inutilisable
+   (`processReconcileScheduleJob` écrit `correction.venueRawLabel` tel
+   quel). Reproduit sur ~20 rencontres du club pilote (matchs à domicile
+   ET à l'extérieur) le jour même où le job bloqué a enfin pu tourner.
+
+**Corrigé** (`normalizeVenueText`/`isTruncatedFbiSalle`,
+`schedule-reconciliation.ts`) :
+- Les espaces insécables sont convertis en espace normal avant toute
+  comparaison (`String.fromCharCode(160)`, jamais l'échappement ` `
+  dans une regex — un aller-retour JSON précédent avait déjà transformé un
+  tel échappement en caractère brut par accident dans ce même fichier,
+  piège à ne plus reproduire).
+- Une salle FBI tronquée (se terminant par `...`) est comparée par
+  PRÉFIXE à notre libellé complet plutôt que par `includes()` — un
+  préfixe qui correspond au début de notre libellé n'est jamais un vrai
+  changement de salle.
+- Une salle FBI tronquée qui NE matche aucun de nos libellés connus (cas
+  rare, préfixe réellement ambigu comme "HALLE DES SPORTS..." qui
+  correspond à 3 salles différentes) reste signalée comme anomalie
+  (`kind: "mismatch"`, visible pour vérification manuelle) mais
+  `correction: null` — jamais une correction tronquée écrite
+  automatiquement dans `matches.venue_raw_label`, quel que soit le
+  résultat du rapprochement.
+
+Nettoyage immédiat appliqué en production le 2026-09-28 (SQL direct,
+avant ce correctif de code) : ~19 rencontres du club pilote reconstruites
+sans ambiguïté à partir des libellés complets déjà connus par ailleurs en
+base (les matchs à domicile Clavel/Lido identifiés sans ambiguïté via
+`is_home = true`, les rencontres à l'extérieur via préfixe unique parmi
+les libellés distincts déjà présents) — 1 seule rencontre à l'extérieur
+laissée telle quelle (préfixe réellement ambigu entre 3 salles), sans
+impact sur le rendu agenda du club (matchs à domicile uniquement). Elle se
+corrigera automatiquement au prochain rapprochement calendrier réel
+maintenant que le code ne peut plus réécrire de valeur tronquée.

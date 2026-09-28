@@ -113,17 +113,58 @@ function parseFrenchDateParts(value: string): { year: number; month: number; day
  * suffit à considérer que c'est la MÊME salle — seule une salle FBI qui
  * n'apparaît nulle part dans notre libellé est traitée comme un vrai
  * changement de salle.
+ *
+ * Normalise aussi les espaces INSÉCABLES (U+00A0) en espace normal —
+ * constaté en production le 2026-09-28 : le texte de cellule scrapé du
+ * tableau FBI (`resultsTableGenericRows`) utilise `&nbsp;` entre les mots
+ * (mots séparés par \u00A0 côté FBI), jamais un espace ASCII normal comme
+ * le libellé FFBB — sans cette normalisation, `.includes()` échouait sur
+ * QUASIMENT chaque salle réellement identique, produisant un faux
+ * `mismatch` à chaque rapprochement.
  */
+const NON_BREAKING_SPACE = String.fromCharCode(160);
+
+function normalizeVenueText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .split(NON_BREAKING_SPACE)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .toLowerCase()
+    .trim();
+}
+
+/**
+ * FBI tronque les noms de salle trop longs dans son tableau de résultats,
+ * en ajoutant "..." littéral (jamais une troncature CSS invisible) —
+ * constaté en production le 2026-09-28 : "GYMNASE MAURICE C..." pour
+ * "GYMNASE MAURICE CLAVEL — 22 rue Maurice Clavel". Sans ce garde-fou,
+ * cette version tronquée ne matchait JAMAIS notre libellé complet (ni
+ * `includes` ni l'inverse — un préfixe n'est contenu dans rien), créant un
+ * faux `mismatch` de salle ; pire, la correction appliquée ÉCRASAIT alors
+ * notre libellé complet et correct par ce texte tronqué et inutilisable
+ * (`processReconcileScheduleJob` écrit `correction.venueRawLabel` tel
+ * quel dans `matches.venue_raw_label`) — reproduit et corrigé en base pour
+ * ~20 rencontres du club pilote ce même jour.
+ */
+const FBI_TRUNCATION_SUFFIX = "...";
+
+function isTruncatedFbiSalle(fbiSalle: string): boolean {
+  return fbiSalle.trim().endsWith(FBI_TRUNCATION_SUFFIX);
+}
+
 function venuesLikelyMatch(ourVenueRawLabel: string, fbiSalle: string): boolean {
-  const normalize = (value: string): string =>
-    value
-      .normalize("NFD")
-      .replace(/[̀-ͯ]/g, "")
-      .toLowerCase()
-      .trim();
-  const a = normalize(ourVenueRawLabel);
-  const b = normalize(fbiSalle);
-  if (!a || !b) return false;
+  const a = normalizeVenueText(ourVenueRawLabel);
+  if (!a) return false;
+
+  if (isTruncatedFbiSalle(fbiSalle)) {
+    const prefix = normalizeVenueText(fbiSalle.trim().slice(0, -FBI_TRUNCATION_SUFFIX.length));
+    return prefix.length > 0 && a.startsWith(prefix);
+  }
+
+  const b = normalizeVenueText(fbiSalle);
+  if (!b) return false;
   return a.includes(b) || b.includes(a);
 }
 
@@ -228,7 +269,15 @@ export function reconcileFbiSchedule(fbiRows: FbiScheduleRow[], ourMatches: OurM
         ffbbValue: ourVenue,
         fbiValue: fbiSalle,
         fbiOpponentName: fbiOpponentLabel(fbiRow),
-        correction: { venueRawLabel: fbiSalle },
+        // Une salle FBI tronquée ("GYMNASE MAURICE C...") ne doit JAMAIS
+        // écraser notre libellé complet, même dans le cas — rare — où elle
+        // ne matche aucun de nos libellés connus (préfixe réellement
+        // ambigu, ex. "HALLE DES SPORTS ..." qui correspond à 3 salles
+        // différentes) : l'anomalie reste visible (kind: "mismatch",
+        // fbiValue tronqué) pour vérification manuelle, mais `correction:
+        // null` empêche `processReconcileScheduleJob` de l'appliquer (voir
+        // son garde `!discrepancy.correction`).
+        correction: isTruncatedFbiSalle(fbiSalle) ? null : { venueRawLabel: fbiSalle },
       });
     }
   }

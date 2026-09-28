@@ -10,7 +10,7 @@ function fbiRow(overrides: Partial<FbiScheduleRow> = {}): FbiScheduleRow {
     equipe2: "FRONTIGNAN LA PEYRADE BASKET",
     dateRencontre: "26/09/2026",
     heure: "13:30",
-    salle: "GYMNASE MAURICE C...",
+    salle: "GYMNASE MAURICE CLAVEL",
     em: null,
     score1: null,
     forfait1: null,
@@ -29,7 +29,7 @@ function ourMatch(overrides: Partial<OurMatchForReconciliation> = {}): OurMatchF
     // Contient le nom de salle FBI par défaut (`fbiRow().salle`) — voir
     // `venuesLikelyMatch` : jamais une égalité stricte contre le format
     // combiné "Nom — Adresse" de `matches.venue_raw_label`.
-    venueRawLabel: "GYMNASE MAURICE C... — 12 rue du Stade, 34200 Sète",
+    venueRawLabel: "GYMNASE MAURICE CLAVEL — 12 rue du Stade, 34200 Sète",
     status: "scheduled",
     ...overrides,
   };
@@ -114,14 +114,14 @@ describe("reconcileFbiSchedule", () => {
 
   describe("salle (demande du club, 2026-09-27 : 'FBI doit emporter sur FFBB car les vraies infos proviennent de FBI')", () => {
     it("ne signale rien quand la salle FBI apparaît dans notre libellé combiné 'Nom — Adresse' (jamais une égalité stricte)", () => {
-      expect(reconcileFbiSchedule([fbiRow({ salle: "GYMNASE MAURICE C..." })], [ourMatch()])).toEqual([]);
+      expect(reconcileFbiSchedule([fbiRow({ salle: "GYMNASE MAURICE CLAVEL" })], [ourMatch()])).toEqual([]);
     });
 
     it("tolère la casse et les accents (jamais un faux positif de formatage)", () => {
       expect(
         reconcileFbiSchedule(
-          [fbiRow({ salle: "gymnase maurice c..." })],
-          [ourMatch({ venueRawLabel: "Gymnase Maurice C... — 12 rue du Stade" })],
+          [fbiRow({ salle: "gymnase maurice clavel" })],
+          [ourMatch({ venueRawLabel: "Gymnase Maurice Clavel — 12 rue du Stade" })],
         ),
       ).toEqual([]);
     });
@@ -136,7 +136,7 @@ describe("reconcileFbiSchedule", () => {
           numero: "3",
           kind: "mismatch",
           fieldName: "venue_raw_label",
-          ffbbValue: "GYMNASE MAURICE C... — 12 rue du Stade, 34200 Sète",
+          ffbbValue: "GYMNASE MAURICE CLAVEL — 12 rue du Stade, 34200 Sète",
           fbiValue: "GYMNASE PIERRE DE COUBERTIN",
           fbiOpponentName: "SPORT CLUB DE SETE BASKET - 1 – FRONTIGNAN LA PEYRADE BASKET",
           correction: { venueRawLabel: "GYMNASE PIERRE DE COUBERTIN" },
@@ -147,6 +147,38 @@ describe("reconcileFbiSchedule", () => {
     it("ne signale jamais rien quand l'un des deux côtés n'a pas de salle connue (FBI seul n'enrichit pas un vide)", () => {
       expect(reconcileFbiSchedule([fbiRow({ salle: null })], [ourMatch()])).toEqual([]);
       expect(reconcileFbiSchedule([fbiRow({ salle: "GYMNASE PIERRE DE COUBERTIN" })], [ourMatch({ venueRawLabel: null })])).toEqual([]);
+    });
+
+    /**
+     * Régression du bug constaté en production le 2026-09-28 : FBI tronque
+     * les noms de salle trop longs dans son tableau ("GYMNASE MAURICE
+     * C..."), et le texte de cellule scrapé utilise des espaces INSÉCABLES
+     * (`&nbsp;`, U+00A0) entre les mots — corrompant ~20 rencontres du club
+     * pilote (`venue_raw_label` écrasé par ce texte tronqué et inutilisable
+     * avant ce correctif).
+     */
+    describe("salle FBI tronquée ('GYMNASE MAURICE C...') — bug production 2026-09-28", () => {
+      it("ne signale rien quand le préfixe tronqué correspond au début de notre libellé complet", () => {
+        expect(reconcileFbiSchedule([fbiRow({ salle: "GYMNASE MAURICE C..." })], [ourMatch()])).toEqual([]);
+      });
+
+      it("normalise les espaces insécables (\\u00A0) du texte scrapé FBI avant comparaison", () => {
+        const nbsp = String.fromCharCode(160);
+        expect(reconcileFbiSchedule([fbiRow({ salle: `GYMNASE${nbsp}MAURICE${nbsp}C...` })], [ourMatch()])).toEqual([]);
+      });
+
+      it("signale l'anomalie MAIS n'écrit JAMAIS le texte tronqué comme correction, même quand aucun de nos libellés ne correspond (préfixe ambigu ou vraiment différent)", () => {
+        const discrepancies = reconcileFbiSchedule([fbiRow({ salle: "HALLE DES SPORTS..." })], [ourMatch()]);
+
+        expect(discrepancies).toEqual([
+          expect.objectContaining({
+            kind: "mismatch",
+            fieldName: "venue_raw_label",
+            fbiValue: "HALLE DES SPORTS...",
+            correction: null,
+          }),
+        ]);
+      });
     });
   });
 
