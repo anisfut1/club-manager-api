@@ -2,19 +2,23 @@ import type { DbClient } from "../../db/client.js";
 import { createServiceSupabaseClient } from "../../db/client.js";
 import { createEmarqueSignedUrl } from "../../storage/emarque-storage.js";
 import type { MatchDocumentDto } from "../../contracts/documents.js";
+import { logError } from "../../logger.js";
 
 /**
  * §33/§34 de la demande : la liste des documents e-Marque est visible par
  * tout membre, mais l'URL de téléchargement (signée, courte durée) n'est
- * incluse QUE pour un club_admin. Extrait pour être réutilisé
- * IDENTIQUEMENT par le routeur public sans compte (`public-matches/routes.ts`,
- * retour du club, 2026-09-29) — qui appelle toujours avec `canDownload:
+ * incluse QUE pour un club_admin ET si le fichier n'a pas encore été purgé
+ * (`purged_at`, retour du club, 2026-09-29 : "je veux juste l'interpréter...
+ * pas la stocker", voir docs/EMARQUE.md) — les stats déjà extraites restent
+ * en base, seul le fichier original disparaît après parsing. Extrait pour
+ * être réutilisé IDENTIQUEMENT par le routeur public sans compte
+ * (`public-matches/routes.ts`) — qui appelle toujours avec `canDownload:
  * false` (jamais de génération d'URL signée pour un visiteur anonyme).
  */
 export async function loadMatchDocuments(supabase: DbClient, club: { id: string }, matchId: string, canDownload: boolean): Promise<MatchDocumentDto[]> {
   const { data, error } = await supabase
     .from("match_documents")
-    .select("id, type, filename, mime_type, status, discovered_at, downloaded_at, storage_path")
+    .select("id, type, filename, mime_type, status, discovered_at, downloaded_at, storage_path, purged_at")
     .eq("match_id", matchId)
     .eq("club_id", club.id)
     .order("downloaded_at", { ascending: false });
@@ -28,15 +32,33 @@ export async function loadMatchDocuments(supabase: DbClient, club: { id: string 
   const serviceSupabase = canDownload ? createServiceSupabaseClient() : null;
 
   return Promise.all(
-    (data ?? []).map(async (doc) => ({
-      id: doc.id,
-      type: doc.type,
-      filename: doc.filename,
-      mimeType: doc.mime_type,
-      status: doc.status,
-      discoveredAt: doc.discovered_at,
-      downloadedAt: doc.downloaded_at,
-      downloadUrl: serviceSupabase ? await createEmarqueSignedUrl(serviceSupabase, doc.storage_path) : null,
-    })),
+    (data ?? []).map(async (doc) => {
+      const purged = doc.purged_at !== null;
+      let downloadUrl: string | null = null;
+
+      if (serviceSupabase && !purged) {
+        try {
+          downloadUrl = await createEmarqueSignedUrl(serviceSupabase, doc.storage_path);
+        } catch (signError) {
+          // Best-effort : un fichier absent malgré `purged_at` encore NULL
+          // (purge Storage réussie mais mise à jour de la ligne échouée,
+          // voir `purgeDocument` côté job de parsing) ne doit jamais faire
+          // échouer toute la liste — juste renvoyer `downloadUrl: null`.
+          logError("Génération d'URL signée e-Marque échouée (fichier probablement déjà purgé)", signError, { documentId: doc.id, matchId, clubId: club.id });
+        }
+      }
+
+      return {
+        id: doc.id,
+        type: doc.type,
+        filename: doc.filename,
+        mimeType: doc.mime_type,
+        status: doc.status,
+        discoveredAt: doc.discovered_at,
+        downloadedAt: doc.downloaded_at,
+        downloadUrl,
+        purged,
+      };
+    }),
   );
 }

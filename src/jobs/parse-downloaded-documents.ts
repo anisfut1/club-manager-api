@@ -1,8 +1,27 @@
 import type { DbClient } from "../db/client.js";
-import { downloadEmarqueFile } from "../storage/emarque-storage.js";
+import { deleteEmarqueFile, downloadEmarqueFile } from "../storage/emarque-storage.js";
 import { parseEmarqueZip, PARSER_VERSION } from "../integrations/emarque/parser/parse-emarque-zip.js";
 import { persistEmarqueMatchData } from "../integrations/emarque/persist/persist-emarque-match.js";
 import { logError, logInfo } from "../logger.js";
+
+/**
+ * Purge le fichier original une fois le PARSING tenté (succès OU échec
+ * définitif) — retour du club, 2026-09-29 : "je veux juste l'interpréter,
+ * récupérer les stats et ensuite pas la stocker". Il n'existe aucun
+ * mécanisme de nouvelle tentative après un `status: 'error'` (voir
+ * `docs/EMARQUE.md`) : le fichier ne sert donc plus à rien une fois cette
+ * tentative terminée, dans les deux cas. Best-effort et jamais fatal — une
+ * suppression Storage en échec ne doit jamais annuler l'import déjà
+ * persisté (les stats en base sont ce qui compte, pas le fichier).
+ */
+async function purgeDocument(supabase: DbClient, documentId: string, storagePath: string): Promise<void> {
+  try {
+    await deleteEmarqueFile(supabase, storagePath);
+    await supabase.from("match_documents").update({ purged_at: new Date().toISOString() }).eq("id", documentId);
+  } catch (error) {
+    logError("Purge Storage d'un document e-Marque après parsing échouée (non bloquant, stats déjà persistées)", error, { documentId, storagePath });
+  }
+}
 
 export interface ParseDownloadedDocumentsResult {
   candidatesExamined: number;
@@ -89,6 +108,7 @@ export async function parseDownloadedEmarqueDocuments(supabase: DbClient, option
 
       await supabase.from("match_documents").update({ status: "imported", updated_at: new Date().toISOString() }).eq("id", doc.id);
       result.imported += 1;
+      await purgeDocument(supabase, doc.id, doc.storage_path);
     } catch (error) {
       result.errors += 1;
       const message = error instanceof Error ? error.message : String(error);
@@ -99,6 +119,11 @@ export async function parseDownloadedEmarqueDocuments(supabase: DbClient, option
         .eq("id", doc.id);
 
       logError("Parsing d'un document e-Marque téléchargé en erreur", error, { documentId: doc.id, matchId: doc.match_id, clubId: doc.club_id });
+
+      // Aucune nouvelle tentative n'est jamais planifiée après ce `status:
+      // 'error'` (voir la doc de `purgeDocument` ci-dessus) : le fichier ne
+      // sert donc plus à rien, même en échec.
+      await purgeDocument(supabase, doc.id, doc.storage_path);
     }
   }
 

@@ -23,6 +23,7 @@ import {
 import { IssueDtoSchema } from "./contracts/issues.js";
 import { JobStatusDtoSchema } from "./contracts/jobs.js";
 import { PlatformClubDtoSchema, CreateClubDtoSchema } from "./contracts/platform.js";
+import { PurgeEmarqueDocumentsResultDtoSchema, DeleteOldSeasonsDtoSchema, DeleteOldSeasonsResultDtoSchema } from "./contracts/maintenance.js";
 import { ClubCapabilitiesSchema, ErrorEnvelopeSchema } from "./contracts/common.js";
 import { EmarqueImportDtoSchema, EmarqueImportsQueryDtoSchema } from "./contracts/emarque.js";
 import { MeDtoSchema } from "./contracts/me.js";
@@ -685,6 +686,23 @@ registry.registerPath({
   security: bearerAuth,
   request: { body: { content: { "application/json": { schema: CreateClubDtoSchema } } } },
   responses: { 201: jsonResponse("Club créé", z.object({ clubId: z.string().uuid(), slug: z.string(), adminInviteError: z.string().nullable() })), ...errorResponses },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/platform/maintenance/purge-emarque-documents",
+  security: bearerAuth,
+  // Retour du club, 2026-09-29 : purge RÉTROACTIVE de tout document e-Marque encore présent en Storage — les nouveaux sont déjà purgés automatiquement après parsing.
+  responses: { 200: jsonResponse("Purge terminée (idempotente, jamais destructive pour les stats déjà en base)", PurgeEmarqueDocumentsResultDtoSchema), ...errorResponses },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/platform/maintenance/delete-old-seasons",
+  security: bearerAuth,
+  // IRRÉVERSIBLE — retour du club, 2026-09-29 : "focus saison 2026-2027". `clubId` obligatoire, jamais un défaut "tous les clubs".
+  request: { body: { content: { "application/json": { schema: DeleteOldSeasonsDtoSchema } } } },
+  responses: { 200: jsonResponse("Matchs des saisons précédentes supprimés (cascade FK sur toutes les données liées)", DeleteOldSeasonsResultDtoSchema), ...errorResponses, ...validationResponses },
 });
 
 registry.registerPath({

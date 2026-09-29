@@ -3,6 +3,7 @@ import type { EMarqueMatchData } from "../integrations/emarque/types.js";
 
 vi.mock("../storage/emarque-storage.js", () => ({
   downloadEmarqueFile: vi.fn(async () => Buffer.from("contenu-zip-synthetique")),
+  deleteEmarqueFile: vi.fn(async () => undefined),
 }));
 
 vi.mock("../integrations/emarque/parser/parse-emarque-zip.js", () => ({
@@ -14,7 +15,7 @@ vi.mock("../integrations/emarque/persist/persist-emarque-match.js", () => ({
   persistEmarqueMatchData: vi.fn(async () => ({ importId: "import-1", status: "imported", alreadyImported: false, participantsLinked: 0, participantsUnlinked: 0 })),
 }));
 
-import { downloadEmarqueFile } from "../storage/emarque-storage.js";
+import { deleteEmarqueFile, downloadEmarqueFile } from "../storage/emarque-storage.js";
 import { parseEmarqueZip } from "../integrations/emarque/parser/parse-emarque-zip.js";
 import { persistEmarqueMatchData } from "../integrations/emarque/persist/persist-emarque-match.js";
 import { parseDownloadedEmarqueDocuments } from "./parse-downloaded-documents.js";
@@ -146,7 +147,14 @@ describe("parseDownloadedEmarqueDocuments", () => {
       expect.objectContaining({ matchId: "match-1", clubId: "club-1", fileHash: "abc123", parserVersion: "test-version" }),
     );
     // Marqué "parsing" avant traitement, "imported" après (jamais laissé en 'downloaded').
-    expect(documentUpdates.map((u) => (u.patch as { status: string }).status)).toEqual(["parsing", "imported"]);
+    const statusUpdates = documentUpdates.filter((u) => typeof (u.patch as { status?: string }).status === "string");
+    expect(statusUpdates.map((u) => (u.patch as { status: string }).status)).toEqual(["parsing", "imported"]);
+
+    // Retour du club, 2026-09-29 ("je veux juste l'interpréter... pas la
+    // stocker") : le fichier original est purgé du Storage une fois les
+    // stats extraites et persistées, jamais avant.
+    expect(deleteEmarqueFile).toHaveBeenCalledWith(supabase, "private/emarque/club-1/2025-2026/match-1/original.zip");
+    expect(documentUpdates.at(-1)).toMatchObject({ id: "doc-1", patch: expect.objectContaining({ purged_at: expect.any(String) }) });
   });
 
   it("marque le document et le match en erreur sans planter les autres documents", async () => {
@@ -164,7 +172,12 @@ describe("parseDownloadedEmarqueDocuments", () => {
     const result = await parseDownloadedEmarqueDocuments(supabase);
 
     expect(result).toEqual({ candidatesExamined: 1, imported: 0, errors: 1 });
-    expect(documentUpdates.at(-1)).toMatchObject({ id: "doc-1", patch: expect.objectContaining({ status: "error" }) });
+    expect(documentUpdates).toContainEqual({ id: "doc-1", patch: expect.objectContaining({ status: "error" }) });
+
+    // Aucune nouvelle tentative n'est jamais planifiée après un échec de
+    // parsing (voir docs/EMARQUE.md) : le fichier est purgé même en erreur.
+    expect(deleteEmarqueFile).toHaveBeenCalledWith(supabase, "path.zip");
+    expect(documentUpdates.at(-1)).toMatchObject({ id: "doc-1", patch: expect.objectContaining({ purged_at: expect.any(String) }) });
   });
 
   it("traite plusieurs documents de clubs différents indépendamment", async () => {

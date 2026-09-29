@@ -8,12 +8,13 @@ pour qu'un club fonctionne (voir `docs/FBI.md`, `docs/FFBB.md`).
 ```
 BrowserFbiClient.findEmarqueDocuments()  (§ discover, job "discover_emarque")
   → téléchargement (context.request.get(), cookies de session réutilisés)
-  → Supabase Storage (bucket privé "emarque")
+  → Supabase Storage (bucket privé "emarque")               ← temporaire
   → match_documents (manifeste, un enregistrement par fichier)
   → job "parse_document" empilé
   → integrations/emarque/parser.ts (job "parse_document", cron emarque-parse)
   → extraction (participants, stats, officiels, OTM, avertissements qualité)
   → emarque_imports (ledger de cycle de vie du parse)
+  → purge du fichier Storage (succès OU échec de parsing, voir "Purge...")
 ```
 
 ## Découverte et téléchargement
@@ -55,17 +56,47 @@ suit pas l'année civile). Bucket `emarque` : privé, sans policy Storage
 `authenticated` — accès uniquement via le client service role, jamais
 directement par un utilisateur (voir `docs/AUTH.md`).
 
+## Purge après parsing — le fichier original n'est jamais conservé
+
+Retour du club, 2026-09-29 : "je veux juste l'interpréter, récupérer les
+stats et ensuite pas la stocker" — le séjour d'un document dans Storage
+est volontairement TEMPORAIRE, le temps du parsing. Une fois la tentative
+de parsing terminée (`jobs/parse-downloaded-documents.ts`), qu'elle
+réussisse OU échoue, `storage/emarque-storage.ts#deleteEmarqueFile`
+supprime le fichier et `match_documents.purged_at` est renseigné.
+
+- Aucun mécanisme ne re-tente un parsing après un `status: 'error'` (voir
+  ci-dessous) : le fichier ne sert donc plus à rien dans les deux cas, une
+  fois cette unique tentative terminée.
+- `match_documents` reste le manifeste (type, filename, discovered_at,
+  sha256) même après purge — pour l'audit et pour ne jamais retélécharger
+  un même fichier déjà traité (dédoublonnage sur sha256).
+- `GET .../matches/:matchId/documents` renvoie `downloadUrl: null` et
+  `purged: true` pour tout document purgé, quel que soit le rôle de
+  l'appelant (`club_admin` inclus) — voir `modules/documents/shared.ts`.
+- La purge est best-effort et jamais bloquante : un échec de suppression
+  Storage est loggé mais ne remet jamais en cause l'import déjà persisté
+  (les stats en base sont ce qui compte, pas le fichier).
+- Ne concerne QUE `type = 'emarque_zip'` (ce que
+  `parseDownloadedEmarqueDocuments` traite) : les documents séparés de
+  repli (`match_sheet`/`summary`/`shot_chart`, téléchargés uniquement
+  quand aucun ZIP n'est disponible) n'ont toujours aucun parseur dédié —
+  les purger n'extrairait aucune statistique en échange, ce serait de la
+  perte de donnée pure. Ils restent donc téléchargeables normalement.
+
 ## `match_documents` vs `emarque_imports`
 
 Deux tables à deux responsabilités distinctes, jamais fusionnées :
 
 - **`match_documents`** — manifeste, un enregistrement par fichier
-  physique réellement stocké. Unique sur `(club_id, match_id, type,
-  sha256)` : un nouveau téléchargement du même contenu ne duplique rien.
+  physique. Unique sur `(club_id, match_id, type, sha256)` : un nouveau
+  téléchargement du même contenu ne duplique rien. `purged_at` distingue
+  un fichier encore présent (`NULL`) d'un fichier déjà purgé (voir
+  ci-dessus) — le manifeste, lui, n'est jamais supprimé (sauf suppression
+  du match lui-même, cascade FK).
 - **`emarque_imports`** — ledger du cycle de vie du *parsing* d'un
   document (`pending` → `parsed` / `failed`), avec ses propres
-  avertissements de qualité. Un document peut être re-parsé (nouvelle
-  version du parser) sans re-télécharger.
+  avertissements de qualité.
 
 ## Parsing — pipeline OCR/PDF réutilisé sans changement
 

@@ -37,6 +37,22 @@ export async function uploadEmarqueFile(supabase: DbClient, path: string, conten
   }
 }
 
+/**
+ * Supprime un fichier du bucket privé `emarque` (retour du club,
+ * 2026-09-29 : "je veux juste l'interpréter... pas la stocker") — appelée
+ * une fois les stats extraites et persistées (voir
+ * `jobs/parse-downloaded-documents.ts`), jamais avant. Idempotente côté
+ * Supabase Storage (un chemin déjà absent ne renvoie pas d'erreur), donc
+ * jamais retentée en boucle si déjà purgé.
+ */
+export async function deleteEmarqueFile(supabase: DbClient, path: string): Promise<void> {
+  const { error } = await supabase.storage.from(EMARQUE_BUCKET).remove([path]);
+
+  if (error) {
+    throw new Error(`Suppression Storage échouée (${path}) : ${error.message}`);
+  }
+}
+
 export async function downloadEmarqueFile(supabase: DbClient, path: string): Promise<Buffer> {
   const { data, error } = await supabase.storage.from(EMARQUE_BUCKET).download(path);
 

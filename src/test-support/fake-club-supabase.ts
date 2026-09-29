@@ -149,6 +149,7 @@ export interface FakeMatchDocumentRow {
   downloaded_at: string | null;
   storage_path: string;
   source: "fbi";
+  purged_at?: string | null;
 }
 
 export interface FakeFbiScheduleDiscrepancyRow {
@@ -721,11 +722,19 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
         downloaded_at: null,
         storage_path: `fake/${matchDocumentCounter}`,
         source: "fbi",
+        purged_at: null,
         ...row,
       };
       state.matchDocuments.push(created);
       return Promise.resolve({ data: created, error: null });
     },
+    update: (patch: Partial<FakeMatchDocumentRow>) => ({
+      eq: (_col: string, id: string) => {
+        const row = state.matchDocuments.find((d) => d.id === id);
+        if (row) Object.assign(row, patch);
+        return Promise.resolve({ error: null });
+      },
+    }),
   };
 
   let licencieCounter = 0;

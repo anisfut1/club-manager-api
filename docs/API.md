@@ -45,6 +45,8 @@ n'existe que si elle correspond à un vrai service déjà construit — voir
 | GET | `/v1/jobs/:jobId` | authentifié (RLS filtre par club) |
 | GET | `/v1/platform/clubs` | platform_admin |
 | POST | `/v1/platform/clubs` | platform_admin |
+| POST | `/v1/platform/maintenance/purge-emarque-documents` | platform_admin (idempotent, voir docs/EMARQUE.md) |
+| POST | `/v1/platform/maintenance/delete-old-seasons` | platform_admin (IRRÉVERSIBLE, `clubId` obligatoire) |
 
 `:clubId` accepte un UUID ou un slug (voir `tenancy/club-context.ts`).
 

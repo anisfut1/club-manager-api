@@ -604,6 +604,8 @@ export interface Database {
           discovered_at: string;
           downloaded_at: string | null;
           last_error: string | null;
+          /** `NULL` = fichier encore présent dans Storage ; sinon, horodatage de sa suppression (retour du club, 2026-09-29 : "je veux juste l'interpréter... pas la stocker", voir docs/EMARQUE.md). */
+          purged_at: string | null;
           created_at: string;
           updated_at: string;
         },
@@ -621,6 +623,7 @@ export interface Database {
           discovered_at?: string;
           downloaded_at?: string | null;
           last_error?: string | null;
+          purged_at?: string | null;
           created_at?: string;
           updated_at?: string;
         }

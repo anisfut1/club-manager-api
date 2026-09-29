@@ -76,6 +76,7 @@ const DOCUMENT_A: FakeMatchDocumentRow = {
   downloaded_at: "2026-10-03T15:05:00Z",
   storage_path: "club-a/match-a/feuille.pdf",
   source: "fbi",
+  purged_at: null,
 };
 
 function request(path: string, init: RequestInit = {}) {

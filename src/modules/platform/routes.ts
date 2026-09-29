@@ -6,6 +6,8 @@ import { badRequest } from "../../api-error.js";
 import { computeClubCapabilities } from "../../tenancy/club-capabilities.js";
 import { logError } from "../../logger.js";
 import type { PlatformClubDto } from "../../contracts/platform.js";
+import { DeleteOldSeasonsDtoSchema } from "../../contracts/maintenance.js";
+import { deleteMatchesBeforeCurrentSeason, purgeAllStoredEmarqueDocuments } from "./maintenance.js";
 
 export const platformRouter = new Hono<AppEnv>();
 
@@ -95,6 +97,39 @@ platformRouter.post("/clubs", async (c) => {
   }
 
   return c.json({ clubId: club.id, slug: club.slug, adminInviteError }, 201);
+});
+
+/**
+ * POST /v1/platform/maintenance/purge-emarque-documents — retour du club,
+ * 2026-09-29 : "je veux juste l'interpréter, récupérer les stats et
+ * ensuite pas la stocker", appliqué RÉTROACTIVEMENT à tout document
+ * encore présent en Storage (les nouveaux sont déjà purgés automatiquement
+ * après parsing, voir `jobs/parse-downloaded-documents.ts`). Idempotente,
+ * jamais destructive pour les stats déjà en base — voir
+ * `modules/platform/maintenance.ts`.
+ */
+platformRouter.post("/maintenance/purge-emarque-documents", async (c) => {
+  const supabase = createServiceSupabaseClient();
+  const result = await purgeAllStoredEmarqueDocuments(supabase);
+  return c.json(result);
+});
+
+/**
+ * POST /v1/platform/maintenance/delete-old-seasons — retour du club,
+ * 2026-09-29 : "tout les matchs des saisons précédentes, faut les
+ * supprimer j'en ai pas besoin, focus saison 2026-2027". IRRÉVERSIBLE —
+ * `clubId` obligatoire dans le corps (jamais un défaut "tous les clubs",
+ * voir `modules/platform/maintenance.ts`). La confirmation utilisateur
+ * (double clic, saisie du nom du club...) est de la responsabilité de
+ * l'UI appelante, jamais de cette route seule.
+ */
+platformRouter.post("/maintenance/delete-old-seasons", async (c) => {
+  const body = DeleteOldSeasonsDtoSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!body.success) throw badRequest(body.error.issues.map((issue) => issue.message).join(" "));
+
+  const supabase = createServiceSupabaseClient();
+  const result = await deleteMatchesBeforeCurrentSeason(supabase, body.data.clubId);
+  return c.json(result);
 });
 
 async function inviteFirstClubAdmin(supabase: DbClient, clubId: string, email: string): Promise<void> {

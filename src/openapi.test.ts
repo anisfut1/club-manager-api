@@ -107,6 +107,15 @@ describe("generateOpenApiDocument", () => {
     expect(doc.components?.schemas).toHaveProperty("PublicAccessListDto");
   });
 
+  it("expose les routes de maintenance plateforme (purge e-Marque rétroactive, suppression des saisons précédentes) — platform_admin uniquement", () => {
+    expect(doc.paths["/v1/platform/maintenance/purge-emarque-documents"]).toHaveProperty("post");
+    expect(doc.paths["/v1/platform/maintenance/delete-old-seasons"]).toHaveProperty("post");
+    expect(doc.paths["/v1/platform/maintenance/purge-emarque-documents"]!.post!.security).toEqual(expect.arrayContaining([expect.any(Object)]));
+    expect(doc.paths["/v1/platform/maintenance/delete-old-seasons"]!.post!.security).toEqual(expect.arrayContaining([expect.any(Object)]));
+    expect(doc.components?.schemas).toHaveProperty("PurgeEmarqueDocumentsResultDto");
+    expect(doc.components?.schemas).toHaveProperty("DeleteOldSeasonsResultDto");
+  });
+
   it("expose la vue publique en lecture seule des matchs (retour du club, 2026-09-29) — aucune route sous /v1/public/clubs/{clubSlug}/matches|teams ne porte bearerAuth", () => {
     const publicMatchesPaths = [
       "/v1/public/clubs/{clubSlug}/teams",
