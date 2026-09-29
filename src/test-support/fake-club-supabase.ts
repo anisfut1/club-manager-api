@@ -323,6 +323,10 @@ function queryable<T extends object>(rows: T[]) {
       filtered = filtered.filter((r) => (field(r, col) as string) < value);
       return api;
     },
+    gt(col: string, value: string) {
+      filtered = filtered.filter((r) => (field(r, col) as string) > value);
+      return api;
+    },
     // Appels multiples de `.order()` cumulent les clés de tri (comme le vrai
     // client Supabase — `ORDER BY col1, col2`, jamais un simple écrasement
     // du tri précédent par le dernier appel).

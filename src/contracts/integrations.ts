@@ -14,6 +14,24 @@ const FfbbIntegrationStatusDtoSchema = z.object({
  * `integrations/fbi/credentials-store.ts#getFbiUsername`, qui ne sélectionne
  * que la colonne `username`).
  */
+/**
+ * Retour du club, 2026-09-29 : "il me faut un truc pour savoir quand ya un
+ * truc en cours" — une seule session FBI active à la fois par club (voir
+ * `claim_next_fbi_job(_for_club)`, migration 20260924140000) bloquait
+ * silencieusement "Traiter les jobs FBI en attente" ("rien en attente")
+ * sans jamais dire QU'un autre job tournait déjà. `type`/`startedAt`
+ * reflètent le job `claimed`/`running` le plus récent pour ce club, mais
+ * SEULEMENT s'il est encore dans la fenêtre de fraîcheur de 10 minutes du
+ * garde-fou ci-dessus — un job plus vieux a forcément été tué par un
+ * timeout/crash, jamais affiché comme "en cours" (ce serait mentir).
+ */
+export const FbiActiveJobDtoSchema = z
+  .object({
+    type: z.enum(["test_connection", "discover_emarque", "reconcile_schedule", "check_derogation", "check_all_derogations"]),
+    startedAt: z.string(),
+  })
+  .openapi("FbiActiveJobDto");
+
 export const FbiIntegrationStatusDtoSchema = z
   .object({
     configured: z.boolean(),
@@ -22,6 +40,7 @@ export const FbiIntegrationStatusDtoSchema = z
     lastLoginAt: z.string().nullable(),
     autoImportEmarque: z.boolean(),
     lastError: z.string().nullable(),
+    activeJob: FbiActiveJobDtoSchema.nullable(),
   })
   .openapi("FbiIntegrationStatusDto");
 
@@ -34,6 +53,7 @@ export const IntegrationStatusDtoSchema = z
 
 export type IntegrationStatusDto = z.infer<typeof IntegrationStatusDtoSchema>;
 export type FbiIntegrationStatusDto = z.infer<typeof FbiIntegrationStatusDtoSchema>;
+export type FbiActiveJobDto = z.infer<typeof FbiActiveJobDtoSchema>;
 
 export const SaveFbiCredentialsDtoSchema = z
   .object({

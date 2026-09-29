@@ -3793,3 +3793,28 @@ laissée telle quelle (préfixe réellement ambigu entre 3 salles), sans
 impact sur le rendu agenda du club (matchs à domicile uniquement). Elle se
 corrigera automatiquement au prochain rapprochement calendrier réel
 maintenant que le code ne peut plus réécrire de valeur tronquée.
+
+## Visibilité du job FBI en cours (`activeJob`) — retour du club, 2026-09-29
+
+Avec le relai GitHub Actions toutes les 15 minutes (voir docs/DEPLOYMENT.md
+"Relai GitHub Actions..."), la garde "un seul job FBI actif par club à la
+fois" (`claim_next_fbi_job(_for_club)`, fenêtre de fraîcheur 10 minutes,
+voir plus haut) devient bien plus visible qu'avant : un job un peu long
+(`check_all_derogations` sur un roster important, ~4-5 min en pratique)
+bloque désormais régulièrement "Traiter les jobs FBI en attente" côté
+club_admin — jamais un bug, juste la même protection anti-double-session
+FBI qu'avant, simplement sollicitée plus souvent. Le club a signalé ne pas
+pouvoir savoir POURQUOI le bouton affichait "rien en attente" alors qu'un
+job venait d'être empilé.
+
+`GET /v1/clubs/:clubId/integrations` expose désormais `fbi.activeJob`
+(`FbiActiveJobDto | null`) — le job `claimed`/`running` le plus récent pour
+ce club, **uniquement** s'il est dans la même fenêtre de fraîcheur de 10
+minutes que la garde de claim elle-même (`findActiveFbiJob`,
+`modules/integrations/routes.ts`) : un job plus vieux que ça a forcément
+été tué par un timeout/crash, jamais affiché comme "en cours" (ce serait
+mentir, et ça ne bloque déjà plus la file côté claim). Affiché côté SCSB
+en bandeau sur `/admin/integrations/fbi` ("En cours : ... — depuis X min").
+Rendu côté serveur (page non auto-rafraîchie) : un rechargement de page
+suffit à revoir l'état à jour, pas de polling client pour un simple
+indicatif.

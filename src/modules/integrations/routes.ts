@@ -18,6 +18,7 @@ import { logError } from "../../logger.js";
 import {
   PatchFbiIntegrationDtoSchema,
   PatchFfbbIntegrationDtoSchema,
+  type FbiActiveJobDto,
   type FbiIntegrationStatusDto,
   type IntegrationStatusDto,
   type SyncRunDto,
@@ -45,6 +46,30 @@ function messageForFbiErrorCode(code: FbiErrorCode): string {
 }
 
 /**
+ * Job FBI `claimed`/`running` EN COURS pour ce club — retour du club,
+ * 2026-09-29 : "il me faut un truc pour savoir quand ya un truc en cours".
+ * Même fenêtre de fraîcheur (10 min) que le garde-fou "un seul job actif
+ * par club" côté `claim_next_fbi_job(_for_club)` (migration
+ * 20260924140000) — un job `claimed` plus vieux que ça a forcément été tué
+ * par un timeout/crash Vercel, jamais affiché comme "en cours" ici non
+ * plus (cohérent avec le fait qu'il ne bloque plus la file côté claim).
+ */
+async function findActiveFbiJob(supabase: DbClient, clubId: string): Promise<FbiActiveJobDto | null> {
+  const { data } = await supabase
+    .from("fbi_jobs")
+    .select("type, claimed_at")
+    .eq("club_id", clubId)
+    .in("status", ["claimed", "running"])
+    .gt("claimed_at", new Date(Date.now() - 10 * 60 * 1000).toISOString())
+    .order("claimed_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!data?.claimed_at) return null;
+  return { type: data.type, startedAt: data.claimed_at };
+}
+
+/**
  * Construit le statut FBI exposé à l'API (gap 8 de la demande) : lit
  * `fbi_integration_status` via le client passé (RLS pour une lecture,
  * service role pour rester cohérent juste après une écriture service
@@ -52,9 +77,10 @@ function messageForFbiErrorCode(code: FbiErrorCode): string {
  * voir `credentials-store.ts#getFbiUsername`.
  */
 async function buildFbiStatusDto(supabase: DbClient, clubId: string): Promise<FbiIntegrationStatusDto> {
-  const [{ data: fbiStatus }, username] = await Promise.all([
+  const [{ data: fbiStatus }, username, activeJob] = await Promise.all([
     supabase.from("fbi_integration_status").select("configured, last_login_success, last_login_at, auto_import_emarque, last_error").eq("club_id", clubId).maybeSingle(),
     getFbiUsername(supabase, clubId),
+    findActiveFbiJob(supabase, clubId),
   ]);
 
   return {
@@ -64,6 +90,7 @@ async function buildFbiStatusDto(supabase: DbClient, clubId: string): Promise<Fb
     lastLoginAt: fbiStatus?.last_login_at ?? null,
     autoImportEmarque: fbiStatus?.auto_import_emarque ?? false,
     lastError: fbiStatus?.last_error ?? null,
+    activeJob,
   };
 }
 

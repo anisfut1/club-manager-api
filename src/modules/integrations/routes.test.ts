@@ -207,6 +207,58 @@ describe("GET /integrations (gap 8 de la demande)", () => {
     expect(body.fbi.username).toBeNull();
     expect(body.fbi.configured).toBe(false);
   });
+
+  it("activeJob = null quand aucun job n'est en cours pour ce club", async () => {
+    const res = await request("/integrations", { method: "GET" });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.fbi.activeJob).toBeNull();
+  });
+
+  it("expose le job FBI en cours (claimed, récent) — retour du club : 'savoir quand ya un truc en cours'", async () => {
+    state.fbiJobs.push({
+      id: "job-active",
+      club_id: CLUB_A.id,
+      match_id: null,
+      type: "check_all_derogations",
+      status: "claimed",
+      claimed_at: new Date(Date.now() - 3 * 60_000).toISOString(),
+    });
+
+    const res = await request("/integrations", { method: "GET" });
+    const body = await res.json();
+    expect(body.fbi.activeJob).toMatchObject({ type: "check_all_derogations" });
+  });
+
+  it("ignore un job claimed VIEUX (> 10 min) — tué par un timeout/crash, ne bloque plus rien (même garde-fou que claim_next_fbi_job)", async () => {
+    state.fbiJobs.push({
+      id: "job-stale",
+      club_id: CLUB_A.id,
+      match_id: null,
+      type: "discover_emarque",
+      status: "claimed",
+      claimed_at: new Date(Date.now() - 15 * 60_000).toISOString(),
+    });
+
+    const res = await request("/integrations", { method: "GET" });
+    const body = await res.json();
+    expect(body.fbi.activeJob).toBeNull();
+  });
+
+  it("ignore un job d'un AUTRE club (isolation tenant)", async () => {
+    state.fbiJobs.push({
+      id: "job-other-club",
+      club_id: "bbbbbbbb-0000-0000-0000-000000000000",
+      match_id: null,
+      type: "check_all_derogations",
+      status: "claimed",
+      claimed_at: new Date().toISOString(),
+    });
+
+    const res = await request("/integrations", { method: "GET" });
+    const body = await res.json();
+    expect(body.fbi.activeJob).toBeNull();
+  });
 });
 
 describe("POST /integrations/ffbb/sync — verrou de concurrence", () => {
