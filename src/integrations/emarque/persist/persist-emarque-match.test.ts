@@ -45,6 +45,7 @@ interface FakeSupabaseOptions {
 function makeFakeSupabase(options: FakeSupabaseOptions = {}) {
   const inserted: Record<string, unknown[]> = {};
   const updated: Record<string, { id: string; payload: unknown }[]> = {};
+  const deleted: Record<string, { col: string; value: unknown }[][]> = {};
   let participantCounter = 0;
   let importCounter = 0;
   let licencieCounter = 0;
@@ -52,9 +53,25 @@ function makeFakeSupabase(options: FakeSupabaseOptions = {}) {
 
   const fail = (table: string) => options.failOnTable === table;
 
+  function deletable(table: string) {
+    const filters: { col: string; value: unknown }[] = [];
+    const api = {
+      eq(col: string, value: unknown) {
+        filters.push({ col, value });
+        return api;
+      },
+      then(onFulfilled: (v: { error: null }) => unknown) {
+        (deleted[table] ??= []).push(filters);
+        return Promise.resolve({ error: null }).then(onFulfilled);
+      },
+    };
+    return api;
+  }
+
   const supabase = {
     _inserted: inserted,
     _updated: updated,
+    _deleted: deleted,
     from(table: string) {
       switch (table) {
         case "emarque_imports":
@@ -119,6 +136,7 @@ function makeFakeSupabase(options: FakeSupabaseOptions = {}) {
                 },
               }),
             }),
+            delete: () => deletable(table),
           };
         case "player_match_stats":
         case "match_coaches":
@@ -130,6 +148,7 @@ function makeFakeSupabase(options: FakeSupabaseOptions = {}) {
               (inserted[table] ??= []).push(payload);
               return Promise.resolve({ error: null });
             },
+            delete: () => deletable(table),
           };
         case "matches":
           return {
@@ -361,6 +380,84 @@ describe("persistEmarqueMatchData", () => {
       payload: expect.objectContaining({ status: "error", last_error: expect.any(String) }),
     });
     expect(supabase._updated.matches).toContainEqual({ id: "match-1", payload: { emarque_status: "error" } });
+  });
+
+  it("retour du club, 2026-09-29 (\"ça s'est importé auto mais ça a pas tout bien importé\") : nettoie les données PARTIELLES déjà écrites avant l'échec, un match en erreur n'affiche plus jamais une composition/des stats incomplètes", async () => {
+    const supabase = makeFakeSupabase({ failOnTable: "match_coaches" });
+    const data = buildData({
+      players: [
+        { teamSide: "home", jerseyNumber: "6", lastName: "MARTIN", firstName: "Léo", licenseNumber: null, isCaptain: false, isStarter: null, confidence: 90 },
+      ],
+      coaches: [{ teamSide: "home", role: "principal", lastName: "COACH", firstName: "C.", licenseNumber: null }],
+    });
+
+    await expect(persistEmarqueMatchData(supabase, { ...BASE_PARAMS, data })).rejects.toThrow();
+
+    // Le participant a bien été écrit AVANT l'échec (sur match_coaches) —
+    // exactement le scénario "composition partielle" observé en production.
+    expect(supabase._inserted.match_participants).toHaveLength(1);
+    // Nettoyé après coup : un DELETE a bien été émis sur les 5 tables de
+    // données dérivées, scopé au bon match/club (jamais un autre match).
+    for (const table of ["match_participants", "match_coaches", "match_officials", "match_table_officials", "player_match_stats"]) {
+      expect(supabase._deleted[table]).toContainEqual([
+        { col: "match_id", value: "match-1" },
+        { col: "club_id", value: "club-1" },
+      ]);
+    }
+  });
+});
+
+describe("persistEmarqueMatchData — résilience aux doublons de statistiques (retour du club, 2026-09-29)", () => {
+  it("ignore une ligne de statistiques en double (même participant déjà servi) au lieu de faire échouer tout le match", async () => {
+    const supabase = makeFakeSupabase();
+    const data = buildData({
+      players: [
+        { teamSide: "away", jerseyNumber: "2", lastName: "ROCH", firstName: "Jonas", licenseNumber: null, isCaptain: false, isStarter: null, confidence: 90 },
+      ],
+      playerStats: [
+        {
+          teamSide: "away",
+          jerseyNumber: "2",
+          lastName: null,
+          firstName: null,
+          secondsPlayed: 1200,
+          points: 9,
+          shotsMade: 4,
+          threePointsMade: 0,
+          twoPointsInteriorMade: 3,
+          twoPointsExteriorMade: 1,
+          freeThrowsMade: 0,
+          foulsCommitted: 0,
+        },
+        // Deuxième ligne "resume" résolue vers le MÊME participant (maillot
+        // 2, extérieur) — le bug réel constaté (rencontre n°3, U13 M vs
+        // Frontignan) : sans le correctif, la deuxième insertion crashait
+        // sur la contrainte unique `player_match_stats_participant_id_key`
+        // et faisait échouer TOUT l'import, y compris les 15 autres joueurs
+        // par ailleurs correctement lus.
+        {
+          teamSide: "away",
+          jerseyNumber: "2",
+          lastName: null,
+          firstName: null,
+          secondsPlayed: 300,
+          points: 2,
+          shotsMade: 1,
+          threePointsMade: 0,
+          twoPointsInteriorMade: 1,
+          twoPointsExteriorMade: 0,
+          freeThrowsMade: 0,
+          foulsCommitted: 0,
+        },
+      ],
+    });
+
+    const result = await persistEmarqueMatchData(supabase, { ...BASE_PARAMS, data });
+
+    expect(result.status).toBe("imported");
+    // Seule la PREMIÈRE ligne pour ce participant est conservée.
+    expect(supabase._inserted.player_match_stats).toHaveLength(1);
+    expect(supabase._inserted.player_match_stats[0]).toMatchObject({ participant_id: "participant-1", points: 9 });
   });
 });
 

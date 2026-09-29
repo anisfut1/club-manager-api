@@ -5,7 +5,7 @@ vi.mock("../../storage/emarque-storage.js", () => ({
 }));
 
 import { deleteEmarqueFile } from "../../storage/emarque-storage.js";
-import { deleteMatchesBeforeCurrentSeason, purgeAllStoredEmarqueDocuments } from "./maintenance.js";
+import { deleteMatchesBeforeCurrentSeason, purgeAllStoredEmarqueDocuments, retryFailedEmarqueImports } from "./maintenance.js";
 
 /**
  * Retour du club, 2026-09-29 : "je veux juste l'interpréter... pas la
@@ -183,5 +183,155 @@ describe("deleteMatchesBeforeCurrentSeason", () => {
 
     expect(result.matchesDeleted).toBe(0);
     expect(getDeleteFilters()).toEqual([]);
+  });
+});
+
+interface FakeFailedMatch {
+  id: string;
+  club_id: string;
+  emarque_status: string;
+}
+
+interface FakeMatchDoc {
+  id: string;
+  match_id: string;
+  type: string;
+  status: string;
+  purged_at: string | null;
+}
+
+const EMARQUE_DELETE_ONLY_TABLES = ["match_participants", "match_coaches", "match_officials", "match_table_officials", "player_match_stats", "emarque_imports"];
+
+function makeFakeSupabaseForRetry(matches: FakeFailedMatch[], docs: FakeMatchDoc[]) {
+  const deletes: Array<{ table: string; filters: Record<string, unknown> }> = [];
+  const matchDocUpdates: Array<{ id: string; patch: unknown }> = [];
+  const matchUpdates: Array<{ id: string; patch: unknown }> = [];
+
+  const supabase = {
+    from(table: string) {
+      if (table === "matches") {
+        return {
+          select: (_cols: string) => {
+            const filters: Record<string, unknown> = {};
+            const api = {
+              eq(col: string, value: unknown) {
+                filters[col] = value;
+                return api;
+              },
+              then(onFulfilled: (v: { data: FakeFailedMatch[]; error: null }) => unknown) {
+                const filtered = matches.filter((m) => Object.entries(filters).every(([k, v]) => (m as unknown as Record<string, unknown>)[k] === v));
+                return Promise.resolve({ data: filtered, error: null }).then(onFulfilled);
+              },
+            };
+            return api;
+          },
+          update: (patch: unknown) => ({
+            eq: (_col: string, id: string) => {
+              matchUpdates.push({ id, patch });
+              return Promise.resolve({ error: null });
+            },
+          }),
+        };
+      }
+
+      if (table === "match_documents") {
+        return {
+          select: (_cols: string) => {
+            const filters: Record<string, unknown> = {};
+            const api = {
+              eq(col: string, value: unknown) {
+                filters[col] = value;
+                return api;
+              },
+              maybeSingle() {
+                const found = docs.find((d) => Object.entries(filters).every(([k, v]) => (d as unknown as Record<string, unknown>)[k] === v)) ?? null;
+                return Promise.resolve({ data: found, error: null });
+              },
+            };
+            return api;
+          },
+          update: (patch: unknown) => ({
+            eq: (_col: string, id: string) => {
+              matchDocUpdates.push({ id, patch });
+              return Promise.resolve({ error: null });
+            },
+          }),
+        };
+      }
+
+      if (!EMARQUE_DELETE_ONLY_TABLES.includes(table)) throw new Error(`Table inattendue : ${table}`);
+
+      return {
+        delete: () => {
+          const filters: Record<string, unknown> = {};
+          const api = {
+            eq(col: string, value: unknown) {
+              filters[col] = value;
+              return api;
+            },
+            then(onFulfilled: (v: { error: null }) => unknown) {
+              deletes.push({ table, filters: { ...filters } });
+              return Promise.resolve({ error: null }).then(onFulfilled);
+            },
+          };
+          return api;
+        },
+      };
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any;
+
+  return { supabase, deletes, matchDocUpdates, matchUpdates };
+}
+
+describe("retryFailedEmarqueImports", () => {
+  it("nettoie les données partielles, supprime l'import figé et repasse document+match à 'downloaded' quand le fichier original est encore présent", async () => {
+    const { supabase, deletes, matchDocUpdates, matchUpdates } = makeFakeSupabaseForRetry(
+      [{ id: "match-1", club_id: "club-a", emarque_status: "error" }],
+      [{ id: "doc-1", match_id: "match-1", type: "emarque_zip", status: "error", purged_at: null }],
+    );
+
+    const result = await retryFailedEmarqueImports(supabase);
+
+    expect(result).toEqual({ matchesExamined: 1, matchesRetried: 1, matchesSkippedNoFile: 0 });
+
+    for (const table of EMARQUE_DELETE_ONLY_TABLES) {
+      expect(deletes).toContainEqual({ table, filters: { match_id: "match-1", club_id: "club-a" } });
+    }
+
+    expect(matchDocUpdates).toEqual([{ id: "doc-1", patch: expect.objectContaining({ status: "downloaded", last_error: null }) }]);
+    expect(matchUpdates).toEqual([{ id: "match-1", patch: { emarque_status: "downloaded" } }]);
+  });
+
+  it("ignore (sans erreur) un match dont le document e-Marque a déjà été purgé — pas de fichier à reparser sans nouveau téléchargement FBI", async () => {
+    const { supabase, deletes, matchDocUpdates, matchUpdates } = makeFakeSupabaseForRetry(
+      [{ id: "match-2", club_id: "club-a", emarque_status: "error" }],
+      [{ id: "doc-2", match_id: "match-2", type: "emarque_zip", status: "error", purged_at: "2026-09-01T00:00:00Z" }],
+    );
+
+    const result = await retryFailedEmarqueImports(supabase);
+
+    expect(result).toEqual({ matchesExamined: 1, matchesRetried: 0, matchesSkippedNoFile: 1 });
+    expect(deletes).toEqual([]);
+    expect(matchDocUpdates).toEqual([]);
+    expect(matchUpdates).toEqual([]);
+  });
+
+  it("filtre par club quand clubId est fourni", async () => {
+    const { supabase, matchUpdates } = makeFakeSupabaseForRetry(
+      [
+        { id: "match-a", club_id: "club-a", emarque_status: "error" },
+        { id: "match-b", club_id: "club-b", emarque_status: "error" },
+      ],
+      [
+        { id: "doc-a", match_id: "match-a", type: "emarque_zip", status: "error", purged_at: null },
+        { id: "doc-b", match_id: "match-b", type: "emarque_zip", status: "error", purged_at: null },
+      ],
+    );
+
+    const result = await retryFailedEmarqueImports(supabase, "club-a");
+
+    expect(result).toEqual({ matchesExamined: 1, matchesRetried: 1, matchesSkippedNoFile: 0 });
+    expect(matchUpdates).toEqual([{ id: "match-a", patch: { emarque_status: "downloaded" } }]);
   });
 });

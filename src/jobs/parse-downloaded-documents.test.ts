@@ -174,10 +174,12 @@ describe("parseDownloadedEmarqueDocuments", () => {
     expect(result).toEqual({ candidatesExamined: 1, imported: 0, errors: 1 });
     expect(documentUpdates).toContainEqual({ id: "doc-1", patch: expect.objectContaining({ status: "error" }) });
 
-    // Aucune nouvelle tentative n'est jamais planifiée après un échec de
-    // parsing (voir docs/EMARQUE.md) : le fichier est purgé même en erreur.
-    expect(deleteEmarqueFile).toHaveBeenCalledWith(supabase, "path.zip");
-    expect(documentUpdates.at(-1)).toMatchObject({ id: "doc-1", patch: expect.objectContaining({ purged_at: expect.any(String) }) });
+    // Retour du club, 2026-09-29 ("sans bug, sans interruption") : le
+    // fichier n'est JAMAIS purgé sur un échec de parsing — conservé pour
+    // diagnostic et pour une nouvelle tentative (`retryFailedEmarqueImports`)
+    // sans forcer un nouveau téléchargement FBI.
+    expect(deleteEmarqueFile).not.toHaveBeenCalled();
+    expect(documentUpdates.some((u) => (u.patch as { purged_at?: unknown }).purged_at !== undefined)).toBe(false);
   });
 
   it("traite plusieurs documents de clubs différents indépendamment", async () => {

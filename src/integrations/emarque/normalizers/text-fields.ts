@@ -61,7 +61,18 @@ export function extractLicenseNumber(rawText: string): string | null {
  * mieux vaut `null` qu'une correction appliquée au mauvais caractère.
  */
 export function extractIsolatedLicenseNumber(rawText: string): string | null {
-  const stripped = rawText.replace(/\s/g, "").toUpperCase();
+  // Retour du club, 2026-09-29 : "faut corriger les imports des stats car
+  // ca marche pas" — sur la saison 2026-2027, cette fonction ne matchait
+  // plus AUCUNE licence (0/40 joueurs sur les 4 premiers matchs traités),
+  // contre 15/15 lors de sa calibration initiale. Ne retirer que les
+  // espaces laissait passer tout bruit OCR non-alphanumérique de bordure de
+  // tableau (".", "-", "|", "_"...) directement dans le compte de 8
+  // caractères, faisant systématiquement échouer la vérification de
+  // longueur. Un numéro de licence FFBB ne contient JAMAIS un tel
+  // caractère : les retirer ici ne risque donc aucune fausse lecture
+  // (contrairement à `findLicenseMatch`, qui lit du texte libre où ce bruit
+  // pourrait faire partie d'un nom).
+  const stripped = rawText.toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (stripped.length !== 8) return null;
 
   const corrected = stripped

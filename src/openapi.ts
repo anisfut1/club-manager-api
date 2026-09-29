@@ -23,7 +23,12 @@ import {
 import { IssueDtoSchema } from "./contracts/issues.js";
 import { JobStatusDtoSchema } from "./contracts/jobs.js";
 import { PlatformClubDtoSchema, CreateClubDtoSchema } from "./contracts/platform.js";
-import { PurgeEmarqueDocumentsResultDtoSchema, DeleteOldSeasonsDtoSchema, DeleteOldSeasonsResultDtoSchema } from "./contracts/maintenance.js";
+import {
+  PurgeEmarqueDocumentsResultDtoSchema,
+  DeleteOldSeasonsDtoSchema,
+  DeleteOldSeasonsResultDtoSchema,
+  RetryFailedEmarqueImportsResultDtoSchema,
+} from "./contracts/maintenance.js";
 import { ClubCapabilitiesSchema, ErrorEnvelopeSchema } from "./contracts/common.js";
 import { EmarqueImportDtoSchema, EmarqueImportsQueryDtoSchema } from "./contracts/emarque.js";
 import { MeDtoSchema } from "./contracts/me.js";
@@ -703,6 +708,14 @@ registry.registerPath({
   // IRRÉVERSIBLE — retour du club, 2026-09-29 : "focus saison 2026-2027". `clubId` obligatoire, jamais un défaut "tous les clubs".
   request: { body: { content: { "application/json": { schema: DeleteOldSeasonsDtoSchema } } } },
   responses: { 200: jsonResponse("Matchs des saisons précédentes supprimés (cascade FK sur toutes les données liées)", DeleteOldSeasonsResultDtoSchema), ...errorResponses, ...validationResponses },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/platform/maintenance/retry-failed-emarque-imports",
+  security: bearerAuth,
+  // Retour du club, 2026-09-29 : relance les matchs `error` en réutilisant le fichier déjà téléchargé — jamais `needs_review` (fichier déjà purgé sur le chemin de succès).
+  responses: { 200: jsonResponse("Nouvelle tentative terminée (réutilise le fichier déjà en Storage, jamais un nouveau téléchargement FBI)", RetryFailedEmarqueImportsResultDtoSchema), ...errorResponses },
 });
 
 registry.registerPath({

@@ -14,7 +14,7 @@ BrowserFbiClient.findEmarqueDocuments()  (§ discover, job "discover_emarque")
   → integrations/emarque/parser.ts (job "parse_document", cron emarque-parse)
   → extraction (participants, stats, officiels, OTM, avertissements qualité)
   → emarque_imports (ledger de cycle de vie du parse)
-  → purge du fichier Storage (succès OU échec de parsing, voir "Purge...")
+  → purge du fichier Storage (SUCCÈS uniquement, voir "Purge...")
 ```
 
 ## Découverte et téléchargement
@@ -56,18 +56,24 @@ suit pas l'année civile). Bucket `emarque` : privé, sans policy Storage
 `authenticated` — accès uniquement via le client service role, jamais
 directement par un utilisateur (voir `docs/AUTH.md`).
 
-## Purge après parsing — le fichier original n'est jamais conservé
+## Purge après parsing — le fichier original n'est jamais conservé en cas de succès
 
 Retour du club, 2026-09-29 : "je veux juste l'interpréter, récupérer les
 stats et ensuite pas la stocker" — le séjour d'un document dans Storage
-est volontairement TEMPORAIRE, le temps du parsing. Une fois la tentative
-de parsing terminée (`jobs/parse-downloaded-documents.ts`), qu'elle
-réussisse OU échoue, `storage/emarque-storage.ts#deleteEmarqueFile`
-supprime le fichier et `match_documents.purged_at` est renseigné.
+est volontairement TEMPORAIRE, le temps du parsing. Une fois le parsing
+**réussi** (`jobs/parse-downloaded-documents.ts`, `status: 'imported'` ou
+`'needs_review'` — voir "Nouvelle tentative..." pour la distinction),
+`storage/emarque-storage.ts#deleteEmarqueFile` supprime le fichier et
+`match_documents.purged_at` est renseigné.
 
-- Aucun mécanisme ne re-tente un parsing après un `status: 'error'` (voir
-  ci-dessous) : le fichier ne sert donc plus à rien dans les deux cas, une
-  fois cette unique tentative terminée.
+**Sur un échec de parsing (`status: 'error'`), le fichier n'est PLUS purgé**
+depuis le retour du club, même jour : "faut corriger les imports des
+stats... sur tous les matchs, sans bug, sans interruption". Purger un
+document en erreur détruisait la seule preuve exploitable pour diagnostiquer
+un bug de parsing, et bloquait toute nouvelle tentative une fois le parseur
+corrigé — voir "Nouvelle tentative des imports en erreur" ci-dessous, qui
+réutilise ce fichier conservé.
+
 - `match_documents` reste le manifeste (type, filename, discovered_at,
   sha256) même après purge — pour l'audit et pour ne jamais retélécharger
   un même fichier déjà traité (dédoublonnage sur sha256).
@@ -192,6 +198,72 @@ club (rencontre n°1481), nouveau test contre le document réel
 relier chaque joueur/joueuse à sa licence FFBB ; scope explicitement
 limité aux licencié(e)s du club exploitant le compte FBI, jamais ceux du
 club adverse d'une rencontre.
+
+## Correctifs d'import — retour du club, 2026-09-29 ("les imports des stats ça marche pas")
+
+Constaté en production sur la saison 2026-2027 : 0/40 licences lues (contre
+15/15 lors de la calibration initiale de `feuillematch-layout.ts`, voir
+ci-dessus), et un match (`U13 M vs Frontignan`, rencontre n°3) importé avec
+une composition/des statistiques manifestement incomplètes malgré un statut
+apparent de succès. Trois bugs distincts, corrigés ensemble :
+
+1. **`extractIsolatedLicenseNumber` (`normalizers/text-fields.ts`) trop
+   stricte** — ne retirait que les espaces avant de vérifier une longueur
+   de 8 caractères exactement. Tout bruit OCR non-alphanumérique de bordure
+   de tableau (`.`, `-`, `|`, `_`...) faisait donc systématiquement échouer
+   cette vérification, quelle que soit la qualité de la lecture du numéro
+   lui-même. Corrigé : tout caractère hors `[A-Z0-9]` est retiré avant le
+   contrôle de longueur — un numéro de licence FFBB n'en contient jamais,
+   ce retrait ne risque donc aucune fausse lecture.
+2. **`insertPlayerStats` (`persist/persist-emarque-match.ts`) faisait
+   échouer tout l'import sur un doublon** — deux lignes "résumé" résolues
+   vers le même participant (`${teamSide}:${jerseyNumber}`) violaient la
+   contrainte unique `player_match_stats_participant_id_key`, ce qui
+   remontait jusqu'à faire échouer la totalité du match, y compris les
+   lignes par ailleurs correctement lues. Corrigé : la première ligne pour
+   un participant donné est conservée, toute ligne suivante pour ce même
+   participant est ignorée (loguée, jamais silencieuse).
+3. **`persistEmarqueMatchData` ne nettoyait jamais les écritures partielles
+   en cas d'échec en cours de traitement** — un match marqué `error`
+   affichait quand même une composition/des statistiques incomplètes,
+   jamais annoncées comme telles (exactement le symptôme rapporté par le
+   club). Corrigé : le `catch` supprime désormais explicitement
+   `match_participants`/`match_coaches`/`match_officials`/
+   `match_table_officials`/`player_match_stats` pour ce match avant de
+   marquer l'import en erreur — un match `error` n'affiche plus jamais de
+   données partielles.
+
+## Nouvelle tentative des imports en erreur (`retryFailedEmarqueImports`)
+
+Avant ce correctif, aucun mécanisme ne relançait un match resté
+`emarque_status: 'error'` — le cron `discover_emarque` ne reprend que
+`pending`/`waiting_for_emarque` (voir "Découverte et téléchargement"
+ci-dessus), donc un match en erreur restait bloqué indéfiniment.
+
+```
+POST /v1/platform/maintenance/retry-failed-emarque-imports   (platform_admin)
+```
+
+Pour chaque match `emarque_status = 'error'` dont le document e-Marque
+(`type = 'emarque_zip'`, `status = 'error'`) n'est **pas encore purgé**
+(voir "Purge après parsing" ci-dessus — un match `error` n'est justement
+plus jamais purgé) :
+
+1. nettoie les données partielles déjà en base (cas d'un import en erreur
+   persisté AVANT le correctif de rollback ci-dessus) ;
+2. supprime la ligne `emarque_imports` correspondante — la contrainte
+   UNIQUE `(club_id, file_hash)` ferait sinon revenir `alreadyImported` sans
+   rien retraiter ;
+3. repasse `match_documents.status` à `'downloaded'` — le prochain passage
+   de `parseDownloadedEmarqueDocuments` (cron `emarque-parse`) reprend alors
+   ce document tel quel, **sans nouveau téléchargement FBI** ;
+4. repasse `matches.emarque_status` à `'downloaded'`.
+
+**Ne couvre jamais `needs_review`** : ce statut correspond à un import qui
+a RÉUSSI (avec un avertissement qualité), dont le fichier a donc déjà été
+purgé sur le chemin de succès — le relancer nécessiterait un nouveau
+téléchargement FBI (`discover_emarque`), hors périmètre de cette route qui
+réutilise volontairement le fichier déjà en Storage.
 
 ## Cron
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  extractIsolatedLicenseNumber,
   extractJerseyNumber,
   extractLicenseNumber,
   extractSingleInteger,
@@ -29,6 +30,38 @@ describe("extractLicenseNumber", () => {
 
   it("ne confond pas un simple nombre avec une licence (pas de préfixe lettre)", () => {
     expect(extractLicenseNumber("2813")).toBeNull();
+  });
+});
+
+describe("extractIsolatedLicenseNumber", () => {
+  it("extrait un numéro de licence propre", () => {
+    expect(extractIsolatedLicenseNumber("VT013405")).toBe("VT013405");
+  });
+
+  it("tolère des espaces internes", () => {
+    expect(extractIsolatedLicenseNumber("VT 013405")).toBe("VT013405");
+  });
+
+  it("retour du club, 2026-09-29 (0/40 licences lues sur les 4 premiers matchs de la saison 2026-2027) : tolère du bruit OCR non-alphanumérique de bordure de tableau, plus seulement les espaces", () => {
+    expect(extractIsolatedLicenseNumber("VT013405.")).toBe("VT013405");
+    expect(extractIsolatedLicenseNumber("|VT013405|")).toBe("VT013405");
+    expect(extractIsolatedLicenseNumber("-VT013405-")).toBe("VT013405");
+    expect(extractIsolatedLicenseNumber("VT_013405")).toBe("VT013405");
+  });
+
+  it("corrige la confusion O/0 par position (lettre en tête, chiffre ensuite)", () => {
+    expect(extractIsolatedLicenseNumber("VTO10167")).toBe("VT010167");
+    expect(extractIsolatedLicenseNumber("0H954244")).toBe("OH954244");
+  });
+
+  it("refuse toujours une longueur différente de 8 après nettoyage (jamais un décalage de colonne deviné)", () => {
+    expect(extractIsolatedLicenseNumber("VT01340")).toBeNull();
+    expect(extractIsolatedLicenseNumber("VT0134055")).toBeNull();
+  });
+
+  it("refuse une cellule vide ou barrée", () => {
+    expect(extractIsolatedLicenseNumber("")).toBeNull();
+    expect(extractIsolatedLicenseNumber("———")).toBeNull();
   });
 });
 

@@ -5,14 +5,20 @@ import { persistEmarqueMatchData } from "../integrations/emarque/persist/persist
 import { logError, logInfo } from "../logger.js";
 
 /**
- * Purge le fichier original une fois le PARSING tenté (succès OU échec
- * définitif) — retour du club, 2026-09-29 : "je veux juste l'interpréter,
- * récupérer les stats et ensuite pas la stocker". Il n'existe aucun
- * mécanisme de nouvelle tentative après un `status: 'error'` (voir
- * `docs/EMARQUE.md`) : le fichier ne sert donc plus à rien une fois cette
- * tentative terminée, dans les deux cas. Best-effort et jamais fatal — une
- * suppression Storage en échec ne doit jamais annuler l'import déjà
- * persisté (les stats en base sont ce qui compte, pas le fichier).
+ * Purge le fichier original une fois le PARSING RÉUSSI — retour du club,
+ * 2026-09-29 : "je veux juste l'interpréter, récupérer les stats et
+ * ensuite pas la stocker". Jamais appelée sur un échec (voir le `catch`
+ * ci-dessous) depuis le retour du club, même jour : "faut corriger les
+ * imports des stats... sur tous les matchs, sans bug, sans interruption" —
+ * purger un document en erreur supprimait la SEULE preuve exploitable pour
+ * diagnostiquer un bug de parsing (constaté sur la rencontre n°3, saison
+ * 2026-2027 : impossible de ré-examiner le fichier original une fois
+ * purgé), et bloquait toute nouvelle tentative une fois le parseur corrigé
+ * (voir `retryFailedEmarqueImports`, modules/platform/maintenance.ts, qui
+ * réutilise ce même fichier plutôt que de forcer un nouveau téléchargement
+ * FBI). Best-effort et jamais fatal — une suppression Storage en échec ne
+ * doit jamais annuler l'import déjà persisté (les stats en base sont ce
+ * qui compte, pas le fichier).
  */
 async function purgeDocument(supabase: DbClient, documentId: string, storagePath: string): Promise<void> {
   try {
@@ -120,10 +126,9 @@ export async function parseDownloadedEmarqueDocuments(supabase: DbClient, option
 
       logError("Parsing d'un document e-Marque téléchargé en erreur", error, { documentId: doc.id, matchId: doc.match_id, clubId: doc.club_id });
 
-      // Aucune nouvelle tentative n'est jamais planifiée après ce `status:
-      // 'error'` (voir la doc de `purgeDocument` ci-dessus) : le fichier ne
-      // sert donc plus à rien, même en échec.
-      await purgeDocument(supabase, doc.id, doc.storage_path);
+      // Le fichier n'est JAMAIS purgé ici — voir la doc de `purgeDocument`
+      // ci-dessus : conservé pour diagnostic ET pour une nouvelle tentative
+      // (`retryFailedEmarqueImports`) une fois le parseur corrigé.
     }
   }
 

@@ -152,19 +152,49 @@ async function insertParticipants(
   return { linked, unlinked, byKey };
 }
 
+/**
+ * Insère les statistiques par joueur — JAMAIS d'échec dur sur un doublon
+ * (retour du club, 2026-09-29 : "faut que ce soit fait... sans bug, sans
+ * interruption"). Constaté en production (rencontre n°3, saison 2026-2027,
+ * U13 M vs Frontignan) : deux lignes "resume" résolues vers LE MÊME
+ * participant (même `${teamSide}:${jerseyNumber}`, un maillot mal lu deux
+ * fois différemment côté "resume" mais retombant sur la même correction —
+ * ou un vrai doublon de ligne OCR) faisaient échouer la deuxième insertion
+ * sur la contrainte unique `player_match_stats_participant_id_key`, ce qui
+ * remontait jusqu'à `persistEmarqueMatchData` et faisait échouer TOUT le
+ * match — 15 lignes de statistiques par ailleurs correctement lues
+ * perdues à cause d'UNE seule ligne en trop. Désormais : la première ligne
+ * pour un participant donné est conservée, toute ligne suivante pour ce
+ * MÊME participant est ignorée (loguée, jamais silencieuse) plutôt que de
+ * faire échouer l'import entier.
+ */
 async function insertPlayerStats(
   supabase: Client,
   clubId: string,
   matchId: string,
   stats: EMarquePlayerStat[],
   participantIdByKey: Map<string, string>,
-): Promise<void> {
+): Promise<{ duplicatesSkipped: number }> {
+  const usedParticipantIds = new Set<string>();
+  let duplicatesSkipped = 0;
+
   for (const stat of stats) {
     const participantId = participantIdByKey.get(`${stat.teamSide}:${stat.jerseyNumber ?? ""}`);
     // Pas de participant correspondant (joueur listé au résumé mais pas sur
     // la feuille de match, ou maillot illisible d'un côté) : on ignore cette
     // ligne de statistiques plutôt que de deviner un rattachement.
     if (!participantId) continue;
+
+    if (usedParticipantIds.has(participantId)) {
+      duplicatesSkipped += 1;
+      logError(
+        "Ligne de statistiques ignorée (doublon résolu vers un participant déjà servi — jamais un échec dur, voir la doc d'insertPlayerStats)",
+        new Error("duplicate participant in playerStats"),
+        { clubId, matchId, participantId, teamSide: stat.teamSide, jerseyNumber: stat.jerseyNumber },
+      );
+      continue;
+    }
+    usedParticipantIds.add(participantId);
 
     const { error } = await supabase.from("player_match_stats").insert({
       club_id: clubId,
@@ -184,6 +214,8 @@ async function insertPlayerStats(
       throw new Error(`Insertion statistiques (maillot ${stat.jerseyNumber ?? "?"}) échouée : ${error.message}`);
     }
   }
+
+  return { duplicatesSkipped };
 }
 
 async function insertCoaches(supabase: Client, clubId: string, matchId: string, importId: string, coaches: EMarqueCoach[]): Promise<void> {
@@ -322,10 +354,14 @@ export async function persistEmarqueMatchData(supabase: Client, params: PersistE
 
   try {
     const { linked, unlinked, byKey } = await insertParticipants(supabase, clubId, matchId, importId, data.players, clubTeamSide, matchTeamId);
-    await insertPlayerStats(supabase, clubId, matchId, data.playerStats, byKey);
+    const { duplicatesSkipped } = await insertPlayerStats(supabase, clubId, matchId, data.playerStats, byKey);
     await insertCoaches(supabase, clubId, matchId, importId, data.coaches);
     await insertOfficials(supabase, clubId, matchId, importId, data.officials);
     await insertTableOfficials(supabase, clubId, matchId, importId, data.tableOfficials);
+
+    if (duplicatesSkipped > 0) {
+      logInfo("Import e-Marque : lignes de statistiques dupliquées ignorées (jamais un échec dur)", { importId, matchId, duplicatesSkipped });
+    }
 
     const finalStatus = statusFromWarnings(data);
 
@@ -350,10 +386,30 @@ export async function persistEmarqueMatchData(supabase: Client, params: PersistE
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
 
+    // Retour du club, 2026-09-29 ("ça s'est importé auto mais ça a pas tout
+    // bien importé") : sans ce nettoyage, un échec EN COURS d'écriture (ex:
+    // toutes les entrées sauf un doublon de statistiques) laissait des
+    // participants/statistiques PARTIELS visibles en base malgré
+    // `emarque_status: 'error'` — un match "en erreur" affichait quand même
+    // une composition/des stats incomplètes, jamais annoncées comme telles.
+    // Best-effort : une suppression en échec ici est loguée mais NE DOIT
+    // JAMAIS masquer l'erreur d'origine (celle qui a déclenché ce `catch`).
+    try {
+      await Promise.all([
+        supabase.from("match_participants").delete().eq("match_id", matchId).eq("club_id", clubId),
+        supabase.from("match_coaches").delete().eq("match_id", matchId).eq("club_id", clubId),
+        supabase.from("match_officials").delete().eq("match_id", matchId).eq("club_id", clubId),
+        supabase.from("match_table_officials").delete().eq("match_id", matchId).eq("club_id", clubId),
+        supabase.from("player_match_stats").delete().eq("match_id", matchId).eq("club_id", clubId),
+      ]);
+    } catch (cleanupError) {
+      logError("Nettoyage des données partielles après échec d'import e-Marque en erreur (non bloquant)", cleanupError, { importId, matchId });
+    }
+
     await supabase.from("emarque_imports").update({ status: "error", last_error: message }).eq("id", importId);
     await supabase.from("matches").update({ emarque_status: "error" }).eq("id", matchId);
 
-    logError("Import e-Marque en erreur, écriture partielle possible", error, { importId, matchId });
+    logError("Import e-Marque en erreur, données partielles nettoyées", error, { importId, matchId });
 
     throw error;
   }

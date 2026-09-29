@@ -47,6 +47,7 @@ n'existe que si elle correspond à un vrai service déjà construit — voir
 | POST | `/v1/platform/clubs` | platform_admin |
 | POST | `/v1/platform/maintenance/purge-emarque-documents` | platform_admin (idempotent, voir docs/EMARQUE.md) |
 | POST | `/v1/platform/maintenance/delete-old-seasons` | platform_admin (IRRÉVERSIBLE, `clubId` obligatoire) |
+| POST | `/v1/platform/maintenance/retry-failed-emarque-imports` | platform_admin (réutilise le fichier déjà téléchargé, voir docs/EMARQUE.md) |
 
 `:clubId` accepte un UUID ou un slug (voir `tenancy/club-context.ts`).
 

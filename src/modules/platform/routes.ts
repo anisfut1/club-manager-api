@@ -7,7 +7,7 @@ import { computeClubCapabilities } from "../../tenancy/club-capabilities.js";
 import { logError } from "../../logger.js";
 import type { PlatformClubDto } from "../../contracts/platform.js";
 import { DeleteOldSeasonsDtoSchema } from "../../contracts/maintenance.js";
-import { deleteMatchesBeforeCurrentSeason, purgeAllStoredEmarqueDocuments } from "./maintenance.js";
+import { deleteMatchesBeforeCurrentSeason, purgeAllStoredEmarqueDocuments, retryFailedEmarqueImports } from "./maintenance.js";
 
 export const platformRouter = new Hono<AppEnv>();
 
@@ -129,6 +129,20 @@ platformRouter.post("/maintenance/delete-old-seasons", async (c) => {
 
   const supabase = createServiceSupabaseClient();
   const result = await deleteMatchesBeforeCurrentSeason(supabase, body.data.clubId);
+  return c.json(result);
+});
+
+/**
+ * POST /v1/platform/maintenance/retry-failed-emarque-imports — retour du
+ * club, 2026-09-29 : "faut que ce soit fait sur tous les matchs, sans bug,
+ * sans interruption". Relance le parsing des matchs restés `error` en
+ * réutilisant le fichier déjà téléchargé (jamais un nouveau login FBI) —
+ * voir `modules/platform/maintenance.ts`. Sans effet sur `needs_review`
+ * (fichier déjà purgé sur le chemin de succès, hors périmètre ici).
+ */
+platformRouter.post("/maintenance/retry-failed-emarque-imports", async (c) => {
+  const supabase = createServiceSupabaseClient();
+  const result = await retryFailedEmarqueImports(supabase);
   return c.json(result);
 });
 

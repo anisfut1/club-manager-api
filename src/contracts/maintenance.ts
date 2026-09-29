@@ -26,3 +26,13 @@ export const DeleteOldSeasonsResultDtoSchema = z
   .openapi("DeleteOldSeasonsResultDto");
 
 export type DeleteOldSeasonsResultDto = z.infer<typeof DeleteOldSeasonsResultDtoSchema>;
+
+export const RetryFailedEmarqueImportsResultDtoSchema = z
+  .object({
+    matchesExamined: z.number(),
+    matchesRetried: z.number(),
+    matchesSkippedNoFile: z.number(),
+  })
+  .openapi("RetryFailedEmarqueImportsResultDto");
+
+export type RetryFailedEmarqueImportsResultDto = z.infer<typeof RetryFailedEmarqueImportsResultDtoSchema>;
