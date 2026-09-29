@@ -437,6 +437,29 @@ export interface Database {
         }
       >;
 
+      licencie_public_tokens: Table<
+        {
+          id: string;
+          club_id: string;
+          licencie_id: string;
+          token_hash: string;
+          email: string | null;
+          created_at: string;
+          revoked_at: string | null;
+          revoked_by: string | null;
+        },
+        {
+          id?: string;
+          club_id: string;
+          licencie_id: string;
+          token_hash: string;
+          email?: string | null;
+          created_at?: string;
+          revoked_at?: string | null;
+          revoked_by?: string | null;
+        }
+      >;
+
       match_change_history: Table<
         {
           id: string;

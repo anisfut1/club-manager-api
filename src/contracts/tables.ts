@@ -9,9 +9,9 @@ import { z } from "./zod.js";
 export const TableAssignmentRoleSchema = z.enum(["SCORER", "TIMEKEEPER", "CLUB_DELEGATE", "REFEREE"]).openapi("TableAssignmentRole");
 export type TableAssignmentRoleDto = z.infer<typeof TableAssignmentRoleSchema>;
 
-const LicencieRefDtoSchema = z.object({ id: z.string().uuid(), firstName: z.string(), lastName: z.string() }).openapi("TableLicencieRefDto");
+export const LicencieRefDtoSchema = z.object({ id: z.string().uuid(), firstName: z.string(), lastName: z.string() }).openapi("TableLicencieRefDto");
 
-const TeamRefDtoSchema = z.object({ id: z.string().uuid(), name: z.string() }).openapi("TableTeamRefDto");
+export const TeamRefDtoSchema = z.object({ id: z.string().uuid(), name: z.string() }).openapi("TableTeamRefDto");
 
 export const SuggestionReasonCodeSchema = z.enum(["NEXT_HOME_MATCH", "PREVIOUS_HOME_MATCH", "SAME_VENUE", "SEASON_DUTY_COUNT"]).openapi("SuggestionReasonCode");
 
@@ -83,7 +83,7 @@ export const TableAssignmentSlotDtoSchema = z
   })
   .openapi("TableAssignmentSlotDto");
 
-const MatchRefDtoSchema = z
+export const MatchRefDtoSchema = z
   .object({
     id: z.string().uuid(),
     numero: z.string().nullable(),

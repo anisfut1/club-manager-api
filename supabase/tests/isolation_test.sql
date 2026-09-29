@@ -316,4 +316,49 @@ delete from public.membership_roles where membership_id = 'aaaaaaaa-0000-0000-00
 delete from public.club_memberships where id = 'aaaaaaaa-0000-0000-0000-000000000011';
 delete from auth.users where id = 'aaaaaaaa-0000-0000-0000-000000000010';
 
+-- =============================================================
+-- Scenario 9 : accès public sans compte (licencie_public_tokens) — retour
+-- du club, 2026-09-29 : "je vais envoyer le lien à tout le monde... si le
+-- token est tjr actif, sinon faut faire une demande admin". Cette table
+-- gère UNIQUEMENT la gestion admin des jetons (club_admin) ; le flux
+-- public lui-même passe par le rôle service côté API, jamais par cette
+-- RLS (voir modules/public-tables/routes.ts) — ce scénario vérifie donc
+-- que la RLS reste bien réservée à club_admin, plus stricte que
+-- table_assignments (jamais responsable_tables ici : gestion d'identité).
+-- =============================================================
+
+set role authenticated;
+set request.jwt.claim.sub = 'aaaaaaaa-0000-0000-0000-000000000001';
+
+insert into public.licencie_public_tokens (club_id, licencie_id, token_hash, email)
+values ('aaaaaaaa-0000-0000-0000-000000000000', 'aaaaaaaa-0000-0000-0000-000000000005', 'fake-hash-thomas', 'thomas@example.test');
+
+select pg_temp.assert_count('club_admin A - peut creer et lire un jeton public', 1, (select count(*) from public.licencie_public_tokens where club_id = 'aaaaaaaa-0000-0000-0000-000000000000'));
+
+-- UNIQUE PARTIEL (club_id, licencie_id) WHERE revoked_at IS NULL : un 2e
+-- jeton ACTIF pour le MEME licencie refuse (§"une fois qu'un nom est
+-- choisi, il peut plus être choisi").
+select pg_temp.assert_unique_violation(
+  'UNIQUE PARTIEL (club_id, licencie_id) actifs - 2e jeton actif pour le meme licencie refuse',
+  $stmt$insert into public.licencie_public_tokens (club_id, licencie_id, token_hash) values ('aaaaaaaa-0000-0000-0000-000000000000', 'aaaaaaaa-0000-0000-0000-000000000005', 'fake-hash-autre')$stmt$
+);
+
+reset role;
+
+-- club_admin de B ne voit jamais les jetons du Club A, meme UUID connu.
+set role authenticated;
+set request.jwt.claim.sub = 'bbbbbbbb-0000-0000-0000-000000000001';
+select pg_temp.assert_count('club_admin B - jetons publics Club A invisibles', 0, (select count(*) from public.licencie_public_tokens where club_id = 'aaaaaaaa-0000-0000-0000-000000000000'));
+reset role;
+
+-- Un simple membre (coach sur A, pas club_admin) ne voit RIEN : cette RLS
+-- est plus stricte que table_assignments (jamais responsable_tables non
+-- plus — gestion d'identité, pas de postes).
+set role authenticated;
+set request.jwt.claim.sub = 'cccccccc-0000-0000-0000-000000000001';
+select pg_temp.assert_count('user AB (coach sur A, pas club_admin) - aucun jeton public Club A visible', 0, (select count(*) from public.licencie_public_tokens where club_id = 'aaaaaaaa-0000-0000-0000-000000000000'));
+reset role;
+
+delete from public.licencie_public_tokens where club_id = 'aaaaaaaa-0000-0000-0000-000000000000';
+
 do $$ begin raise notice '=== TOUS LES TESTS D''ISOLATION SONT PASSES ==='; end $$;

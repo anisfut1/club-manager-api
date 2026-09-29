@@ -19,6 +19,16 @@ nécessaire"). Quand `refereeNotNeeded` vaut `true` (champ renvoyé par
 "à attribuer" côté frontend, même s'il est `null` — mais reste affectable si
 le club le souhaite quand même (les deux mécanismes sont indépendants).
 
+### Accès sans compte (auto-affectation)
+
+Ce document couvre l'algorithme (règle des 120 minutes, conflits,
+ranking, équité), commun aux deux façades. L'accès **sans création de
+compte**, où chaque licencié se positionne lui-même via un lien commun et
+un jeton personnel, et la propriété d'une affectation qui en découle
+(retour du club, 2026-09-29 : "la personne qui va se mettre sur un match
+ne peut pas être supprimée par quelqu'un d'autre sauf un admin"), sont
+documentés séparément dans `docs/PUBLIC_TABLE_ACCESS.md`.
+
 ## Principe fondamental — le logiciel suggère, le responsable décide
 
 Le système **n'affecte jamais automatiquement** un licencié. Il calcule des

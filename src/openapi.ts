@@ -47,6 +47,19 @@ import {
   PutRefereeStatusDtoSchema,
   RefereeStatusResultDtoSchema,
 } from "./contracts/tables.js";
+import {
+  PublicClubDtoSchema,
+  PublicLicenciesListDtoSchema,
+  ClaimLicencieDtoSchema,
+  ClaimResultDtoSchema,
+  PublicMeDtoSchema,
+  PublicTableAssignmentsListDtoSchema,
+  PublicTableAssignmentsQueryDtoSchema,
+  PublicTokenQueryDtoSchema,
+  PublicAssignResultDtoSchema,
+  PublicAccessListDtoSchema,
+  PublicAccessResetResultDtoSchema,
+} from "./contracts/public-tables.js";
 
 /**
  * Spec OpenAPI assemblée à partir des MÊMES schémas zod que les DTO utilisés
@@ -76,6 +89,12 @@ const clubAndDerogationIdParams = clubIdParam.extend({ derogationId: z.string().
 const clubAndJobParams = z.object({ jobId: z.string().uuid() });
 const clubAndMatchIssueParams = clubIdParam.extend({ matchId: z.string().uuid() });
 const clubAndMatchAndRoleParams = clubAndMatchIdParams.extend({ role: TableAssignmentRoleSchema });
+const clubAndLicencieIdParams = clubIdParam.extend({ licencieId: z.string().uuid() });
+
+const clubSlugParam = z.object({ clubSlug: z.string().openapi({ description: "Slug du club (flux public sans compte)" }) });
+const clubSlugAndLicencieIdParams = clubSlugParam.extend({ licencieId: z.string().uuid() });
+const clubSlugAndMatchIdParams = clubSlugParam.extend({ matchId: z.string().uuid() });
+const clubSlugAndMatchAndRoleParams = clubSlugAndMatchIdParams.extend({ role: TableAssignmentRoleSchema });
 
 const errorResponses = {
   401: jsonResponse("Non authentifié", ErrorEnvelopeSchema),
@@ -366,6 +385,94 @@ registry.registerPath({
   // Bascule "pas besoin d'arbitre" (retour du club, 2026-09-28) — n'affecte jamais table_assignments, voir match_referee_overrides.
   request: { params: clubAndMatchIdParams, body: { content: { "application/json": { schema: PutRefereeStatusDtoSchema } } } },
   responses: { 200: jsonResponse("Statut arbitre enregistré", RefereeStatusResultDtoSchema), ...errorResponses, ...validationResponses },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/clubs/{clubId}/table-assignments/public-access",
+  security: bearerAuth,
+  // club_admin uniquement (retour du club, 2026-09-29 : gestion d'accès/identité sans compte) — qui a revendiqué son lien personnel.
+  request: { params: clubIdParam },
+  responses: { 200: jsonResponse("État des accès publics par licencié (revendiqué ou non)", PublicAccessListDtoSchema), ...errorResponses },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/clubs/{clubId}/table-assignments/public-access/{licencieId}/reset",
+  security: bearerAuth,
+  // Révoque le jeton actif du licencié (lien perdu, etc.) — le nom redevient choisissable, les affectations existantes ne sont jamais touchées.
+  request: { params: clubAndLicencieIdParams },
+  responses: { 200: jsonResponse("Accès public réinitialisé", PublicAccessResetResultDtoSchema), ...errorResponses },
+});
+
+/**
+ * Flux PUBLIC sans compte (retour du club, 2026-09-29) — AUCUNE de ces
+ * routes ne porte `security: bearerAuth` : il n'y a pas de session
+ * Supabase, l'identité vient du `token` (query string), voir
+ * modules/public-tables/routes.ts.
+ */
+registry.registerPath({
+  method: "get",
+  path: "/v1/public/clubs/{clubSlug}",
+  request: { params: clubSlugParam },
+  responses: { 200: jsonResponse("Infos club minimales (aucune donnée membre/rôle)", PublicClubDtoSchema), 404: jsonResponse("Introuvable", ErrorEnvelopeSchema) },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/public/clubs/{clubSlug}/licencies",
+  request: { params: clubSlugParam },
+  responses: { 200: jsonResponse("Roster pour choisir son nom (`claimed` seulement, jamais qui)", PublicLicenciesListDtoSchema), 404: jsonResponse("Introuvable", ErrorEnvelopeSchema) },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/public/clubs/{clubSlug}/licencies/{licencieId}/claim",
+  // Atomique (index unique partiel côté DB) — retour du club : "une fois qu'un nom est choisi, il peut plus être choisi".
+  request: { params: clubSlugAndLicencieIdParams, body: { content: { "application/json": { schema: ClaimLicencieDtoSchema } } } },
+  responses: { 200: jsonResponse("Jeton personnel — renvoyé UNE SEULE FOIS, jamais récupérable ensuite", ClaimResultDtoSchema), 404: jsonResponse("Introuvable", ErrorEnvelopeSchema), 409: jsonResponse("Déjà revendiqué", ErrorEnvelopeSchema) },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/public/clubs/{clubSlug}/me",
+  request: { params: clubSlugParam, query: PublicTokenQueryDtoSchema },
+  responses: { 200: jsonResponse("Identité résolue depuis le jeton", PublicMeDtoSchema), 401: jsonResponse("Jeton invalide ou révoqué", ErrorEnvelopeSchema), 404: jsonResponse("Introuvable", ErrorEnvelopeSchema) },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/public/clubs/{clubSlug}/table-assignments",
+  request: { params: clubSlugParam, query: PublicTableAssignmentsQueryDtoSchema },
+  responses: { 200: jsonResponse("Même contenu que la vue admin, avec `me`", PublicTableAssignmentsListDtoSchema), 401: jsonResponse("Jeton invalide ou révoqué", ErrorEnvelopeSchema), 404: jsonResponse("Introuvable", ErrorEnvelopeSchema) },
+});
+
+registry.registerPath({
+  method: "put",
+  path: "/v1/public/clubs/{clubSlug}/matches/{matchId}/table-assignments/{role}",
+  // Auto-affectation UNIQUEMENT (licencieId vient du jeton, jamais du body) — ne remplace jamais un·e titulaire différent·e (retour du club, 2026-09-29).
+  request: { params: clubSlugAndMatchAndRoleParams, query: PublicTokenQueryDtoSchema },
+  responses: {
+    200: jsonResponse("Auto-affectation enregistrée", PublicAssignResultDtoSchema),
+    400: jsonResponse("Requête invalide", ErrorEnvelopeSchema),
+    401: jsonResponse("Jeton invalide ou révoqué", ErrorEnvelopeSchema),
+    404: jsonResponse("Introuvable", ErrorEnvelopeSchema),
+    409: jsonResponse("Conflit métier ou poste déjà occupé par quelqu'un d'autre", ErrorEnvelopeSchema),
+  },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/v1/public/clubs/{clubSlug}/matches/{matchId}/table-assignments/{role}",
+  // Retrait de SA PROPRE affectation uniquement — 403 si le poste appartient à quelqu'un d'autre (retour du club, 2026-09-29).
+  request: { params: clubSlugAndMatchAndRoleParams, query: PublicTokenQueryDtoSchema },
+  responses: {
+    200: jsonResponse("Affectation retirée", z.object({ removed: z.literal(true) })),
+    400: jsonResponse("Requête invalide", ErrorEnvelopeSchema),
+    401: jsonResponse("Jeton invalide ou révoqué", ErrorEnvelopeSchema),
+    403: jsonResponse("Ce poste appartient à quelqu'un d'autre", ErrorEnvelopeSchema),
+    404: jsonResponse("Introuvable", ErrorEnvelopeSchema),
+  },
 });
 
 registry.registerPath({

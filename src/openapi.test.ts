@@ -78,6 +78,35 @@ describe("generateOpenApiDocument", () => {
     expect(forMatchSchema.properties).toHaveProperty("refereeNotNeeded");
   });
 
+  it("expose le flux public sans compte (retour du club, 2026-09-29) — aucune route sous /v1/public ne porte bearerAuth", () => {
+    const publicPaths = ["/v1/public/clubs/{clubSlug}", "/v1/public/clubs/{clubSlug}/licencies", "/v1/public/clubs/{clubSlug}/me", "/v1/public/clubs/{clubSlug}/table-assignments"];
+    for (const path of publicPaths) expect(doc.paths).toHaveProperty(path);
+
+    expect(doc.paths["/v1/public/clubs/{clubSlug}/licencies/{licencieId}/claim"]).toHaveProperty("post");
+    expect(doc.paths["/v1/public/clubs/{clubSlug}/matches/{matchId}/table-assignments/{role}"]).toHaveProperty("put");
+    expect(doc.paths["/v1/public/clubs/{clubSlug}/matches/{matchId}/table-assignments/{role}"]).toHaveProperty("delete");
+
+    const publicOps = [
+      doc.paths["/v1/public/clubs/{clubSlug}"]!.get!,
+      doc.paths["/v1/public/clubs/{clubSlug}/licencies"]!.get!,
+      doc.paths["/v1/public/clubs/{clubSlug}/licencies/{licencieId}/claim"]!.post!,
+      doc.paths["/v1/public/clubs/{clubSlug}/me"]!.get!,
+      doc.paths["/v1/public/clubs/{clubSlug}/table-assignments"]!.get!,
+      doc.paths["/v1/public/clubs/{clubSlug}/matches/{matchId}/table-assignments/{role}"]!.put!,
+      doc.paths["/v1/public/clubs/{clubSlug}/matches/{matchId}/table-assignments/{role}"]!.delete!,
+    ];
+    for (const op of publicOps) expect(op.security ?? []).toEqual([]); // jamais de session Supabase sur ce flux
+
+    expect(doc.components?.schemas).toHaveProperty("ClaimResultDto");
+    expect(doc.components?.schemas).toHaveProperty("PublicTableAssignmentsListDto");
+  });
+
+  it("expose la gestion admin des accès publics (liste + réinitialisation)", () => {
+    expect(doc.paths["/v1/clubs/{clubId}/table-assignments/public-access"]).toHaveProperty("get");
+    expect(doc.paths["/v1/clubs/{clubId}/table-assignments/public-access/{licencieId}/reset"]).toHaveProperty("post");
+    expect(doc.components?.schemas).toHaveProperty("PublicAccessListDto");
+  });
+
   it("génère un document valide (openapi 3.0.0, titre, au moins 15 routes)", () => {
     expect(doc.openapi).toBe("3.0.0");
     expect(doc.info.title).toBe("club-manager-api");

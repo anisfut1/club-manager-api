@@ -359,3 +359,50 @@ describe("Cross-tenant — §30/§59 : Club B ne voit jamais les données Club A
     expect([403, 404]).toContain(res.status);
   });
 });
+
+describe("GET .../table-assignments/public-access — retour du club, 2026-09-29 : vue admin des accès publics", () => {
+  it("club_admin uniquement — 403 pour responsable_tables (gestion d'accès/identité, plus sensible)", async () => {
+    currentUserId = "user-table-manager";
+    const res = await request(`/table-assignments/public-access`);
+    expect(res.status).toBe(403);
+  });
+
+  it("liste `claimed`/`email`/`claimedAt` sans exposer le jeton lui-même", async () => {
+    state.licencies = [licencie({ id: L1, first_name: "Thomas", last_name: "Martin", team_id: null })];
+    state.publicTokens = [{ id: "pt1", club_id: CLUB_A.id, licencie_id: L1, token_hash: "hash", email: "thomas@example.test", created_at: "2026-09-29T10:00:00Z", revoked_at: null, revoked_by: null }];
+
+    const res = await request(`/table-assignments/public-access`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { entries: { licencie: { id: string }; claimed: boolean; email: string | null; claimedAt: string | null }[] };
+    expect(body.entries).toEqual([{ licencie: { id: L1, firstName: "Thomas", lastName: "Martin" }, claimed: true, email: "thomas@example.test", claimedAt: "2026-09-29T10:00:00Z" }]);
+    expect(JSON.stringify(body)).not.toContain("hash"); // jamais le token_hash exposé
+  });
+});
+
+describe("POST .../public-access/:licencieId/reset — retour du club : \"sauf si admin remet à reset son profil\"", () => {
+  it("révoque le jeton actif — le nom redevient choisissable, les affectations existantes restent intactes", async () => {
+    state.licencies = [licencie({ id: L1, team_id: null })];
+    state.publicTokens = [{ id: "pt1", club_id: CLUB_A.id, licencie_id: L1, token_hash: "hash", email: null, created_at: "2026-09-29T10:00:00Z", revoked_at: null, revoked_by: null }];
+    state.tableAssignments = [{ id: "a1", club_id: CLUB_A.id, match_id: TARGET_MATCH.id, role: "SCORER", licencie_id: L1, created_by: null }];
+
+    const res = await request(`/table-assignments/public-access/${L1}/reset`, { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ reset: true });
+
+    expect(state.publicTokens[0]?.revoked_at).not.toBeNull();
+    expect(state.tableAssignments).toHaveLength(1); // jamais touché par la réinitialisation d'accès
+  });
+
+  it("403 pour responsable_tables", async () => {
+    currentUserId = "user-table-manager";
+    state.licencies = [licencie({ id: L1, team_id: null })];
+    const res = await request(`/table-assignments/public-access/${L1}/reset`, { method: "POST" });
+    expect(res.status).toBe(403);
+  });
+
+  it("404 pour un licencié d'un autre club, même UUID connu (jamais un reset cross-tenant)", async () => {
+    state.licencies = [licencie({ id: L_CLUB_B, club_id: CLUB_B.id })];
+    const res = await request(`/table-assignments/public-access/${L_CLUB_B}/reset`, { method: "POST" });
+    expect(res.status).toBe(404);
+  });
+});

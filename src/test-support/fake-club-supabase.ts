@@ -195,6 +195,17 @@ export interface FakeRefereeOverrideRow {
   updated_at?: string;
 }
 
+export interface FakePublicTokenRow {
+  id: string;
+  club_id: string;
+  licencie_id: string;
+  token_hash: string;
+  email: string | null;
+  created_at: string;
+  revoked_at: string | null;
+  revoked_by: string | null;
+}
+
 export interface FakeFbiJobRow {
   id: string;
   club_id: string;
@@ -225,6 +236,7 @@ export interface FakeClubSupabaseState {
   fbiJobs: FakeFbiJobRow[];
   tableAssignments: FakeTableAssignmentRow[];
   refereeOverrides: FakeRefereeOverrideRow[];
+  publicTokens: FakePublicTokenRow[];
   isPlatformAdmin: boolean;
   /** Clés `${clubId}:${integration}` actuellement verrouillées (voir try_acquire_sync_lock/release_sync_lock). */
   syncLocks: Set<string>;
@@ -249,6 +261,7 @@ export function makeFakeClubSupabaseState(overrides: Partial<FakeClubSupabaseSta
     fbiJobs: [],
     tableAssignments: [],
     refereeOverrides: [],
+    publicTokens: [],
     isPlatformAdmin: false,
     syncLocks: new Set(),
     ...overrides,
@@ -608,6 +621,42 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
     },
   };
 
+  let publicTokenCounter = 0;
+  const publicTokensTable = {
+    select: (_cols?: string) => queryable(state.publicTokens),
+    // Simule les 2 index uniques de la migration (club_id+licencie_id PARTIEL sur actifs, et token_hash) — jamais un simple push sans vérification.
+    insert: (row: Partial<FakePublicTokenRow> & { club_id: string; licencie_id: string; token_hash: string }) => {
+      const activeLicencieDuplicate = state.publicTokens.some((t) => t.club_id === row.club_id && t.licencie_id === row.licencie_id && t.revoked_at === null);
+      const tokenHashDuplicate = state.publicTokens.some((t) => t.token_hash === row.token_hash);
+      if (activeLicencieDuplicate || tokenHashDuplicate) return Promise.resolve({ error: { code: "23505", message: "duplicate key value violates unique constraint" } });
+
+      publicTokenCounter += 1;
+      const created: FakePublicTokenRow = { id: `public-token-${publicTokenCounter}`, email: null, created_at: new Date().toISOString(), revoked_at: null, revoked_by: null, ...row };
+      state.publicTokens.push(created);
+      return Promise.resolve({ error: null });
+    },
+    // `.update(patch).eq(...).eq(...).is(...)`, thenable sans `.select()` — même contrat que `fbiJobsTable.update`.
+    update: (patch: Partial<FakePublicTokenRow>) => {
+      const filters: { col: string; value: unknown }[] = [];
+      const api = {
+        eq(col: string, value: unknown) {
+          filters.push({ col, value });
+          return api;
+        },
+        is(col: string, value: null) {
+          filters.push({ col, value });
+          return api;
+        },
+        then(onFulfilled: (value: { error: null }) => unknown) {
+          const rows = state.publicTokens.filter((t) => filters.every((f) => (t as unknown as Record<string, unknown>)[f.col] === f.value));
+          rows.forEach((r) => Object.assign(r, patch));
+          return Promise.resolve({ error: null }).then(onFulfilled);
+        },
+      };
+      return api;
+    },
+  };
+
   const syncRunsTable = { select: (_cols?: string) => queryable(state.syncRuns) };
   const profilesTable = {
     select: (_cols?: string) => ({
@@ -716,6 +765,8 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
           return tableAssignmentsTable;
         case "match_referee_overrides":
           return refereeOverridesTable;
+        case "licencie_public_tokens":
+          return publicTokensTable;
         case "matches":
           return matchesTable;
         case "competitions":

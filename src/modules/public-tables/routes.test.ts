@@ -1,0 +1,222 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { buildFakeClubSupabase, makeFakeClubSupabaseState, type FakeClubSupabaseState, type FakeLicencieRow, type FakeMatchRow, type FakeTeamRow } from "../../test-support/fake-club-supabase.js";
+
+let state: FakeClubSupabaseState;
+
+vi.mock("../../db/client.js", () => ({
+  createServiceSupabaseClient: () => buildFakeClubSupabase(state),
+  createUserSupabaseClient: () => buildFakeClubSupabase(state),
+  createAnonSupabaseClient: () => ({}),
+}));
+
+const { app } = await import("../../app.js");
+
+/**
+ * Flux PUBLIC sans compte (retour du club, 2026-09-29) — AUCUN de ces
+ * tests n'envoie de header Authorization : il n'y a pas de session
+ * Supabase, l'identité vient exclusivement de `?token=`. Toutes les
+ * lectures/écritures passent par `createServiceSupabaseClient` (RLS
+ * bypass), c'est ce que ce fichier vérifie : que le code applicatif, et
+ * lui seul, isole correctement club/identité.
+ */
+
+const CLUB_A = {
+  id: "aaaaaaaa-0000-0000-0000-000000000000",
+  slug: "club-a",
+  name: "Club A Basket",
+  short_name: null,
+  logo_url: null,
+  accent_color: null,
+  timezone: "Europe/Paris",
+  status: "active" as const,
+  ffbb_club_id: "AAA0000001",
+  ffbb_enabled: true,
+  ffbb_next_sync_at: null,
+};
+const CLUB_B = { ...CLUB_A, id: "bbbbbbbb-0000-0000-0000-000000000000", slug: "club-b", ffbb_club_id: "BBB0000002" };
+
+const TEAM_U13M: FakeTeamRow = { id: "team-u13m", club_id: CLUB_A.id, name: "U13 M", sexe: "M", active: true };
+const TEAM_U13F: FakeTeamRow = { id: "team-u13f", club_id: CLUB_A.id, name: "U13 F", sexe: "F", active: true };
+
+// 2026-10-03 est en heure d'été (CEST, UTC+2) : 15:00 Paris == 13:00 UTC.
+const TARGET_MATCH: FakeMatchRow = {
+  id: "match-target",
+  club_id: CLUB_A.id,
+  numero: "15",
+  journee: null,
+  match_datetime: "2026-10-03T13:00:00Z", // 15:00 Paris
+  is_home: true,
+  opponent_name: "MEZE LOUPIAN",
+  venue_raw_label: "GYMNASE MAURICE CLAVEL",
+  score_home: null,
+  score_away: null,
+  status: "scheduled",
+  emarque_status: "not_applicable",
+  team_id: TEAM_U13M.id,
+};
+
+const AWAY_MATCH: FakeMatchRow = { ...TARGET_MATCH, id: "match-away", numero: "16", match_datetime: "2026-10-03T14:00:00Z", is_home: false, team_id: TEAM_U13F.id };
+
+const THOMAS: FakeLicencieRow = {
+  id: "licencie-thomas",
+  club_id: CLUB_A.id,
+  first_name: "Thomas",
+  last_name: "Martin",
+  license_number: null,
+  birth_date: null,
+  email: null,
+  phone: null,
+  photo_url: null,
+  team_id: null,
+  active: true,
+};
+const LEA: FakeLicencieRow = { ...THOMAS, id: "licencie-lea", first_name: "Léa", last_name: "Fontaine" };
+
+function request(path: string, init: RequestInit = {}) {
+  return app.request(`/v1/public/clubs/club-a${path}`, init);
+}
+
+async function claim(licencieId: string, email?: string): Promise<string> {
+  const res = await request(`/licencies/${licencieId}/claim`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: email ?? null }) });
+  const body = (await res.json()) as { token: string };
+  return body.token;
+}
+
+beforeEach(() => {
+  state = makeFakeClubSupabaseState({
+    clubs: [{ ...CLUB_A }, { ...CLUB_B }],
+    teams: [TEAM_U13M, TEAM_U13F],
+    matches: [TARGET_MATCH],
+    licencies: [THOMAS, LEA],
+  });
+});
+
+describe("GET /v1/public/clubs/:clubSlug — pas de compte requis", () => {
+  it("renvoie les infos club minimales, sans header Authorization", async () => {
+    const res = await request("");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ slug: "club-a", name: "Club A Basket", logoUrl: null, timezone: "Europe/Paris" });
+  });
+
+  it("404 pour un slug inconnu", async () => {
+    const res = await app.request("/v1/public/clubs/club-inconnu");
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("GET /v1/public/clubs/:clubSlug/licencies — roster pour choisir son nom", () => {
+  it("liste les licenciés actifs avec `claimed`, jamais qui a revendiqué quoi", async () => {
+    await claim(THOMAS.id);
+    const res = await request("/licencies");
+    const body = (await res.json()) as { licencies: { id: string; claimed: boolean }[] };
+    expect(body.licencies).toEqual(
+      expect.arrayContaining([
+        { id: THOMAS.id, firstName: "Thomas", lastName: "Martin", claimed: true },
+        { id: LEA.id, firstName: "Léa", lastName: "Fontaine", claimed: false },
+      ]),
+    );
+  });
+});
+
+describe("POST .../licencies/:licencieId/claim — retour du club : \"il choisit son nom dans la liste\"", () => {
+  it("renvoie un jeton exploitable immédiatement", async () => {
+    const token = await claim(THOMAS.id, "thomas@example.test");
+    expect(token).toBeTruthy();
+
+    const meRes = await request(`/me?token=${token}`);
+    expect(meRes.status).toBe(200);
+    expect(await meRes.json()).toEqual({ licencie: { id: THOMAS.id, firstName: "Thomas", lastName: "Martin" } });
+  });
+
+  it('409 ALREADY_CLAIMED si le nom a déjà été choisi — "une fois qu\'un nom est choisi, il peut plus être choisi"', async () => {
+    await claim(THOMAS.id);
+    const res = await request(`/licencies/${THOMAS.id}/claim`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}) });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("ALREADY_CLAIMED");
+  });
+
+  it("404 pour un licencié d'un autre club, même UUID connu", async () => {
+    const res = await app.request(`/v1/public/clubs/club-b/licencies/${THOMAS.id}/claim`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}) });
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("Le jeton n'authentifie que SON club — jamais un autre, même avec un slug connu", () => {
+  it("un jeton du club A échoue sur les routes du club B", async () => {
+    const token = await claim(THOMAS.id);
+    const res = await app.request(`/v1/public/clubs/club-b/me?token=${token}`);
+    expect(res.status).toBe(401);
+  });
+});
+
+describe("PUT .../table-assignments/:role — auto-affectation, retour du club : \"la personne qui va se mettre sur un match\"", () => {
+  it("licencieId vient TOUJOURS du jeton — crée l'affectation pour SOI, jamais pour quelqu'un d'autre", async () => {
+    const token = await claim(THOMAS.id);
+    const res = await request(`/matches/${TARGET_MATCH.id}/table-assignments/SCORER?token=${token}`, { method: "PUT" });
+    expect(res.status).toBe(200);
+    expect(state.tableAssignments).toEqual([expect.objectContaining({ role: "SCORER", licencie_id: THOMAS.id, created_by: null })]);
+  });
+
+  it("409 ALREADY_TAKEN_BY_SOMEONE_ELSE si le poste est déjà occupé par quelqu'un d'autre — jamais un remplacement silencieux", async () => {
+    const thomasToken = await claim(THOMAS.id);
+    const leaToken = await claim(LEA.id);
+
+    await request(`/matches/${TARGET_MATCH.id}/table-assignments/SCORER?token=${thomasToken}`, { method: "PUT" });
+    const res = await request(`/matches/${TARGET_MATCH.id}/table-assignments/SCORER?token=${leaToken}`, { method: "PUT" });
+
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("ALREADY_TAKEN_BY_SOMEONE_ELSE");
+    expect(state.tableAssignments).toHaveLength(1);
+    expect(state.tableAssignments[0]?.licencie_id).toBe(THOMAS.id); // inchangé
+  });
+
+  it("409 AWAY_MATCH_NOT_SUPPORTED pour un match extérieur", async () => {
+    state.matches = [TARGET_MATCH, AWAY_MATCH];
+    const token = await claim(THOMAS.id);
+    const res = await request(`/matches/${AWAY_MATCH.id}/table-assignments/SCORER?token=${token}`, { method: "PUT" });
+    expect(res.status).toBe(409);
+  });
+
+  it("401 sans jeton (ou jeton révoqué/invalide)", async () => {
+    const res = await request(`/matches/${TARGET_MATCH.id}/table-assignments/SCORER?token=jeton-invalide`, { method: "PUT" });
+    expect(res.status).toBe(401);
+  });
+});
+
+describe("DELETE .../table-assignments/:role — retour du club : \"peuvent se supprimer eux-mêmes si le token est tjr actif\"", () => {
+  it("retire SA PROPRE affectation", async () => {
+    const token = await claim(THOMAS.id);
+    await request(`/matches/${TARGET_MATCH.id}/table-assignments/SCORER?token=${token}`, { method: "PUT" });
+
+    const res = await request(`/matches/${TARGET_MATCH.id}/table-assignments/SCORER?token=${token}`, { method: "DELETE" });
+    expect(res.status).toBe(200);
+    expect(state.tableAssignments).toHaveLength(0);
+  });
+
+  it('403 en tentant de retirer l\'affectation de QUELQU\'UN D\'AUTRE — "ne peut pas être supprimé par quelqu\'un d\'autre sauf un admin"', async () => {
+    const thomasToken = await claim(THOMAS.id);
+    const leaToken = await claim(LEA.id);
+    await request(`/matches/${TARGET_MATCH.id}/table-assignments/SCORER?token=${thomasToken}`, { method: "PUT" });
+
+    const res = await request(`/matches/${TARGET_MATCH.id}/table-assignments/SCORER?token=${leaToken}`, { method: "DELETE" });
+    expect(res.status).toBe(403);
+    expect(state.tableAssignments).toHaveLength(1); // toujours affecté à Thomas
+  });
+});
+
+describe("Réinitialisation admin — retour du club : \"sinon faut faire une demande admin\"", () => {
+  it("après révocation, le token perd son accès ET le nom redevient choisissable", async () => {
+    const token = await claim(THOMAS.id);
+
+    // Révocation directe en base (équivalent du POST admin .../public-access/:licencieId/reset, testé côté modules/tables/routes.test.ts).
+    state.publicTokens = state.publicTokens.map((t) => (t.licencie_id === THOMAS.id ? { ...t, revoked_at: new Date().toISOString() } : t));
+
+    const meRes = await request(`/me?token=${token}`);
+    expect(meRes.status).toBe(401);
+
+    const reclaimRes = await request(`/licencies/${THOMAS.id}/claim`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}) });
+    expect(reclaimRes.status).toBe(200);
+  });
+});

@@ -10,24 +10,27 @@ que tous les tests sont passés.**
 
 ## Statut
 
-Cette suite a été écrite et **exécutée avec succès** (48/48 assertions,
+Cette suite a été écrite et **exécutée avec succès** (60/60 assertions,
 0 échec) contre une instance PostgreSQL 16 locale, en utilisant le shim
 ci-dessous (pas de Docker disponible dans cet environnement de
-développement) — d'abord 26 assertions lors de la migration multi-tenant,
-puis 12 de plus lors de l'intégration FBI/e-Marque (`fbi_jobs`,
-`match_documents`, voir `docs/JOBS.md`), puis 4 de plus lors de la
-résolution des gaps frontend (voir `docs/API.md`) pour verrouiller au
-niveau colonne le `PATCH /v1/clubs/:clubId`, puis 6 de plus (Scénario 8)
-pour le module Tables de marque (`table_assignments`, voir
-`docs/TABLE_ASSIGNMENTS.md`) — isolation cross-tenant, contraintes UNIQUE
-(un seul licencié par poste, un licencié ne cumule jamais 2 postes sur le
-même match), et surtout la toute première vérification RÉELLE du rôle
-`responsable_tables` (présent dans `club_role` depuis la migration
-multi-tenant mais jamais exploité par aucun module jusqu'ici). Migrée
-telle quelle depuis SCSB (voir `docs/MIGRATION.md`) et rejouée avec succès
-depuis ce repository. Elle n'a pas encore été rejouée via la stack
-Supabase CLI complète (`supabase test db`) — les deux chemins d'exécution
-sont documentés ci-dessous.
+développement) — construite par ajouts successifs (migration multi-tenant,
+intégration FBI/e-Marque — `fbi_jobs`/`match_documents`, voir
+`docs/JOBS.md` —, gaps frontend verrouillant au niveau colonne le
+`PATCH /v1/clubs/:clubId`, voir `docs/API.md`), puis le module Tables de
+marque (Scénario 8, `table_assignments`, voir `docs/TABLE_ASSIGNMENTS.md`)
+— isolation cross-tenant, contraintes UNIQUE (un seul licencié par poste,
+un licencié ne cumule jamais 2 postes sur le même match), et surtout la
+toute première vérification RÉELLE du rôle `responsable_tables` (présent
+dans `club_role` depuis la migration multi-tenant mais jamais exploité par
+aucun module jusque-là) —, puis l'accès public sans compte (Scénario 9,
+`licencie_public_tokens`, voir `docs/PUBLIC_TABLE_ACCESS.md`) — RLS
+réservée à `club_admin` uniquement (jamais `responsable_tables` : gestion
+d'identité, pas de postes), index UNIQUE PARTIEL (un seul jeton actif à la
+fois par licencié), et isolation cross-tenant. Migrée telle quelle depuis
+SCSB (voir `docs/MIGRATION.md`) et rejouée avec succès depuis ce
+repository. Elle n'a pas encore été rejouée via la stack Supabase CLI
+complète (`supabase test db`) — les deux chemins d'exécution sont
+documentés ci-dessous.
 
 **Correctif shim (résolution des gaps frontend) :**
 `01_local_postgres_shim_after_migrations.sql` faisait un `grant select,
@@ -86,6 +89,18 @@ policies/grants du projet ne dépendent pas de ce shim).
   `UNIQUE(club_id, match_id, role)` refuse un second titulaire du même
   poste ; `UNIQUE(club_id, match_id, licencie_id)` refuse qu'un même
   licencié cumule deux postes sur le même match.
+- Accès public sans compte (`licencie_public_tokens`) : `club_admin` peut
+  créer/lire des jetons pour son club (gestion des accès) ; un index
+  UNIQUE PARTIEL `(club_id, licencie_id) WHERE revoked_at IS NULL` refuse
+  un 2e jeton actif pour le même licencié (un nom déjà choisi ne peut plus
+  l'être tant qu'un admin ne le réinitialise pas). Cette RLS est PLUS
+  stricte que `table_assignments` : ni `responsable_tables`, ni aucun
+  autre membre du club, ne peut lire ces jetons — seul `club_admin`. Un
+  autre club ne les voit jamais, même en connaissant l'UUID. Le flux
+  public lui-même (choix du nom, auto-affectation) ne passe jamais par
+  cette RLS : il utilise le rôle service, vérifié manuellement dans
+  `modules/public-tables/routes.ts` (même précaution que
+  `fbi_credentials`).
 
 ## Option A — Via Supabase CLI (stack locale complète, recommandé)
 
