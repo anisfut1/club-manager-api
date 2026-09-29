@@ -107,6 +107,23 @@ describe("generateOpenApiDocument", () => {
     expect(doc.components?.schemas).toHaveProperty("PublicAccessListDto");
   });
 
+  it("expose la vue publique en lecture seule des matchs (retour du club, 2026-09-29) — aucune route sous /v1/public/clubs/{clubSlug}/matches|teams ne porte bearerAuth", () => {
+    const publicMatchesPaths = [
+      "/v1/public/clubs/{clubSlug}/teams",
+      "/v1/public/clubs/{clubSlug}/matches",
+      "/v1/public/clubs/{clubSlug}/matches/{matchId}",
+      "/v1/public/clubs/{clubSlug}/matches/{matchId}/documents",
+      "/v1/public/clubs/{clubSlug}/matches/{matchId}/derogation",
+    ];
+    for (const path of publicMatchesPaths) expect(doc.paths).toHaveProperty(path);
+
+    const publicMatchesOps = publicMatchesPaths.map((path) => doc.paths[path]!.get!);
+    for (const op of publicMatchesOps) expect(op.security ?? []).toEqual([]); // jamais de session Supabase sur ce flux
+
+    // Jamais de route d'écriture exposée publiquement (dérogation créer/répondre, vérifier sur FBI) — lecture seule uniquement.
+    expect(doc.paths["/v1/public/clubs/{clubSlug}/matches/{matchId}/derogation"]).not.toHaveProperty("post");
+  });
+
   it("génère un document valide (openapi 3.0.0, titre, au moins 15 routes)", () => {
     expect(doc.openapi).toBe("3.0.0");
     expect(doc.info.title).toBe("club-manager-api");

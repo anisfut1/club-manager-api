@@ -1,7 +1,5 @@
 import { Hono } from "hono";
-import type { MiddlewareHandler } from "hono";
 import type { DbClient } from "../../db/client.js";
-import { createServiceSupabaseClient } from "../../db/client.js";
 import { badRequest, conflict, notFound, unauthorized } from "../../api-error.js";
 import {
   ClaimLicencieDtoSchema,
@@ -11,6 +9,7 @@ import {
 } from "../../contracts/public-tables.js";
 import { assignTableRole, loadHomeMatchOrThrow, loadTableAssignmentsList, removeTableRole } from "../tables/shared.js";
 import { generatePublicToken, hashPublicToken } from "./token.js";
+import { resolvePublicClub, type PublicClub } from "../public/club-resolver.js";
 
 /**
  * Flux PUBLIC sans compte des Tables de marque (retour du club,
@@ -29,14 +28,6 @@ import { generatePublicToken, hashPublicToken } from "./token.js";
  * `/v1/public/clubs/:clubSlug` (voir src/api/v1/index.ts).
  */
 
-interface PublicClub {
-  id: string;
-  slug: string;
-  name: string;
-  logoUrl: string | null;
-  timezone: string;
-}
-
 interface PublicLicencie {
   id: string;
   firstName: string;
@@ -54,24 +45,8 @@ interface PublicEnv {
 
 export const publicTablesRouter = new Hono<PublicEnv>();
 
-/** Toute route de ce routeur commence par résoudre le club via son slug — jamais son UUID (le slug seul est distribué dans le lien, §"un seul lien envoyé à tout le monde"). */
-const resolvePublicClub: MiddlewareHandler<PublicEnv> = async (c, next) => {
-  const slug = c.req.param("clubSlug");
-  if (!slug) throw badRequest("Paramètre de route :clubSlug manquant.");
-
-  const supabase = createServiceSupabaseClient();
-  const { data: club } = await supabase.from("clubs").select("id, slug, name, logo_url, timezone, status").eq("slug", slug).maybeSingle();
-
-  // 404 générique, jamais de distinction "club inexistant" vs "club suspendu" — même prudence que requireClubContext côté admin.
-  if (!club || club.status !== "active") throw notFound("Club introuvable.");
-
-  c.set("supabase", supabase);
-  c.set("publicClub", { id: club.id, slug: club.slug, name: club.name, logoUrl: club.logo_url, timezone: club.timezone });
-
-  await next();
-};
-
-publicTablesRouter.use("*", resolvePublicClub);
+/** Toute route de ce routeur commence par résoudre le club via son slug — jamais son UUID (le slug seul est distribué dans le lien, §"un seul lien envoyé à tout le monde"). Voir `../public/club-resolver.ts`, partagé avec les autres modules publics. */
+publicTablesRouter.use("*", resolvePublicClub<PublicEnv>());
 
 /**
  * Résout l'identité depuis `?token=` — la SEULE preuve d'identité de ce

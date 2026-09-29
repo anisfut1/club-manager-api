@@ -137,6 +137,20 @@ export interface FakeProfileRow {
   display_name: string | null;
 }
 
+export interface FakeMatchDocumentRow {
+  id: string;
+  club_id: string;
+  match_id: string;
+  type: "emarque_zip" | "match_sheet" | "summary" | "shot_chart" | "other";
+  filename: string | null;
+  mime_type: string | null;
+  status: "downloaded" | "parsing" | "imported" | "error";
+  discovered_at: string;
+  downloaded_at: string | null;
+  storage_path: string;
+  source: "fbi";
+}
+
 export interface FakeFbiScheduleDiscrepancyRow {
   id: string;
   club_id: string;
@@ -237,6 +251,7 @@ export interface FakeClubSupabaseState {
   tableAssignments: FakeTableAssignmentRow[];
   refereeOverrides: FakeRefereeOverrideRow[];
   publicTokens: FakePublicTokenRow[];
+  matchDocuments: FakeMatchDocumentRow[];
   isPlatformAdmin: boolean;
   /** Clés `${clubId}:${integration}` actuellement verrouillées (voir try_acquire_sync_lock/release_sync_lock). */
   syncLocks: Set<string>;
@@ -262,6 +277,7 @@ export function makeFakeClubSupabaseState(overrides: Partial<FakeClubSupabaseSta
     tableAssignments: [],
     refereeOverrides: [],
     publicTokens: [],
+    matchDocuments: [],
     isPlatformAdmin: false,
     syncLocks: new Set(),
     ...overrides,
@@ -678,8 +694,38 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
       eq: (_c1: string, _clubId: string) => ({ eq: (_c2: string, _licencieId: string) => Promise.resolve({ data: [], error: null }) }),
     }),
   };
-  const playerMatchStatsTable = {
-    select: (_cols?: string) => ({ in: (_col: string, _ids: string[]) => Promise.resolve({ data: [], error: null }) }),
+  // `queryable([])` plutôt qu'un stub sur-mesure : couvre à la fois
+  // `.in("participant_id", ids)` (fiche joueur, modules/licencies/routes.ts)
+  // ET `.eq("match_id", ...).eq("club_id", ...)` (détail d'un match,
+  // modules/matches/shared.ts) — toujours vide dans les deux cas (même
+  // raison que `matchParticipantsTable` ci-dessus).
+  const playerMatchStatsTable = { select: (_cols?: string) => queryable<never>([]) };
+  // Mêmes stubs "toujours vides" que ci-dessus, même raison (jointures du
+  // détail d'un match non unit-testées en profondeur).
+  const matchCoachesTable = { select: (_cols?: string) => queryable<never>([]) };
+  const matchOfficialsTable = { select: (_cols?: string) => queryable<never>([]) };
+  const matchTableOfficialsTable = { select: (_cols?: string) => queryable<never>([]) };
+
+  let matchDocumentCounter = 0;
+  const matchDocumentsTable = {
+    select: (_cols?: string) => queryable(state.matchDocuments),
+    insert: (row: Partial<FakeMatchDocumentRow> & { club_id: string; match_id: string }) => {
+      matchDocumentCounter += 1;
+      const created: FakeMatchDocumentRow = {
+        id: `match-document-${matchDocumentCounter}`,
+        type: "match_sheet",
+        filename: null,
+        mime_type: null,
+        status: "downloaded",
+        discovered_at: new Date().toISOString(),
+        downloaded_at: null,
+        storage_path: `fake/${matchDocumentCounter}`,
+        source: "fbi",
+        ...row,
+      };
+      state.matchDocuments.push(created);
+      return Promise.resolve({ data: created, error: null });
+    },
   };
 
   let licencieCounter = 0;
@@ -789,6 +835,14 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
           return matchParticipantsTable;
         case "player_match_stats":
           return playerMatchStatsTable;
+        case "match_coaches":
+          return matchCoachesTable;
+        case "match_officials":
+          return matchOfficialsTable;
+        case "match_table_officials":
+          return matchTableOfficialsTable;
+        case "match_documents":
+          return matchDocumentsTable;
         default:
           throw new Error(`Table inattendue dans le fake Supabase de test : ${table}`);
       }

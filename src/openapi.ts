@@ -475,6 +475,62 @@ registry.registerPath({
   },
 });
 
+/**
+ * Vue PUBLIQUE en lecture seule des matchs (retour du club, 2026-09-29 :
+ * "je veux une vue publique avec toutes les infos en vue directe... sans
+ * compte, en libre service") — jamais de `security` ici, contrairement aux
+ * routes `/v1/clubs/{clubId}/matches...` équivalentes ci-dessus : aucune
+ * session Supabase requise. Mêmes DTOs de réponse (réutilisés tels quels,
+ * voir `modules/matches/shared.ts`), sauf `documents[].downloadUrl` toujours
+ * `null` ici (jamais d'URL signée pour un visiteur anonyme) et aucune route
+ * d'écriture (dérogation créer/répondre, vérifier sur FBI — `club_admin`
+ * uniquement, jamais exposées publiquement).
+ */
+registry.registerPath({
+  method: "get",
+  path: "/v1/public/clubs/{clubSlug}/teams",
+  request: { params: clubSlugParam },
+  responses: { 200: jsonResponse("Équipes du club (pour le filtre de la liste des matchs)", z.object({ teams: z.array(TeamDtoSchema) })), 404: jsonResponse("Introuvable", ErrorEnvelopeSchema) },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/public/clubs/{clubSlug}/matches",
+  request: { params: clubSlugParam, query: MatchesQueryDtoSchema },
+  responses: {
+    200: jsonResponse("Matchs du club (filtrés, paginés) — mêmes filtres que la route authentifiée", z.object({ matches: z.array(MatchListItemDtoSchema), pagination: MatchesPaginationDtoSchema })),
+    404: jsonResponse("Introuvable", ErrorEnvelopeSchema),
+    ...validationResponses,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/public/clubs/{clubSlug}/matches/{matchId}",
+  request: { params: clubSlugAndMatchIdParams },
+  responses: { 200: jsonResponse("Détail du match (composition, statistiques, officiels, e-Marque)", MatchDetailsDtoSchema), 404: jsonResponse("Introuvable", ErrorEnvelopeSchema) },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/public/clubs/{clubSlug}/matches/{matchId}/documents",
+  request: { params: clubSlugAndMatchIdParams },
+  responses: {
+    200: jsonResponse("Documents e-Marque du match — `downloadUrl` toujours `null` (jamais d'URL signée en public)", z.object({ documents: z.array(MatchDocumentDtoSchema) })),
+    404: jsonResponse("Introuvable", ErrorEnvelopeSchema),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/public/clubs/{clubSlug}/matches/{matchId}/derogation",
+  request: { params: clubSlugAndMatchIdParams },
+  responses: {
+    200: jsonResponse("Dernier état connu de la dérogation de ce match (null si aucune)", z.object({ derogation: DerogationStatusDtoSchema.nullable() })),
+    404: jsonResponse("Introuvable", ErrorEnvelopeSchema),
+  },
+});
+
 registry.registerPath({
   method: "post",
   path: "/v1/clubs/{clubId}/matches/{matchId}/derogation/create",
