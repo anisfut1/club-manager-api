@@ -1,20 +1,24 @@
-name: FBI frequent sync (dérogations, calendrier, découverte e-Marque)
+name: FBI frequent sync (dérogations, calendrier, e-Marque)
 
 # Le plan Vercel Hobby limite les crons vercel.json à une exécution par jour
-# (voir docs/DEPLOYMENT.md) — /internal/cron/fbi-enqueue et
-# /internal/cron/fbi-jobs y tournent donc une seule fois/jour, ce qui est
-# beaucoup trop lent pour des dérogations à vérifier plusieurs fois par jour
-# ou pour rattraper plusieurs matchs d'un même weekend (constaté le
-# 2026-09-29 : 9 matchs en attente auraient mis 9 jours à être traités au
-# rythme d'1 job/jour). GitHub Actions (gratuit, hors Vercel) prend le relai
-# ici toutes les 15 minutes — exactement la fréquence prévue à l'origine
-# avant la contrainte du plan Hobby.
+# (voir docs/DEPLOYMENT.md) — /internal/cron/fbi-enqueue, /internal/cron/
+# fbi-jobs et /internal/cron/emarque-parse y tournent donc une seule
+# fois/jour, ce qui est beaucoup trop lent pour des dérogations à vérifier
+# plusieurs fois par jour, pour rattraper plusieurs matchs d'un même weekend
+# (constaté le 2026-09-29 : 9 matchs en attente auraient mis 9 jours à être
+# traités au rythme d'1 job/jour), ou pour que les stats apparaissent peu
+# après le téléchargement du document plutôt qu'à un horaire fixe. GitHub
+# Actions (gratuit, hors Vercel) prend le relai ici toutes les 15 minutes —
+# exactement la fréquence prévue à l'origine avant la contrainte du plan
+# Hobby.
 #
-# Ne touche jamais à /internal/cron/emarque-parse (parsing des documents déjà
-# téléchargés en statistiques) : le club a explicitement demandé de le
-# laisser à une fois par jour (2026-09-29, "pour les stats, 1 fois par jour
-# ca suffit car c que sur les weekends les matchs") — il continue de tourner
-# via son cron vercel.json existant, inchangé.
+# Le parsing (emarque-parse) tourne dans CE MÊME workflow, juste après
+# fbi-jobs, plutôt qu'à part sur son propre horaire (retour du club,
+# 2026-09-29 : "le parsing doit etre appelé si des emarque ont été
+# téléchargés") — sans risque à l'appeler aussi souvent : pas de Playwright
+# ni de login FBI ici, juste de l'OCR/PDF local sur ce qui a déjà été
+# téléchargé, donc aucun risque de blocage anti-bot FBI contrairement à
+# fbi-jobs.
 on:
   schedule:
     - cron: "*/15 * * * *"
@@ -42,4 +46,13 @@ jobs:
         run: |
           curl --fail --silent --show-error --max-time 300 \
             -X GET "https://club-manager-api-two.vercel.app/internal/cron/fbi-jobs" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+
+      # Parse tout document e-Marque téléchargé mais pas encore importé en
+      # statistiques — un statut 200 avec "imported": 0 signifie juste qu'il
+      # n'y avait rien à parser, ce n'est jamais une erreur.
+      - name: Parser les documents e-Marque téléchargés
+        run: |
+          curl --fail --silent --show-error --max-time 60 \
+            -X GET "https://club-manager-api-two.vercel.app/internal/cron/emarque-parse" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
