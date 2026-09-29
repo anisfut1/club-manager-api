@@ -1,5 +1,6 @@
 import type { DocumentExtractor } from "../extractors/types.js";
-import { RESUME_STATS_TABLE } from "../layout/resume-layout.js";
+import { locateTeamTables } from "../layout/table-structure.js";
+import { RESUME_HEADER_GAP_FRACTION_RANGE, RESUME_MAX_ROWS_PER_TEAM, RESUME_TABLE_SCAN_ZONE, resumeCellZone, type ResumeStatColumn } from "../layout/resume-layout.js";
 import {
   extractJerseyNumber,
   extractSingleInteger,
@@ -13,12 +14,6 @@ export interface ResumeRowResult extends EMarquePlayerStat {
   isStarter: boolean;
 }
 
-interface TeamConfig {
-  rowTop: number;
-  rowHeight: number;
-  cellZone: (row: number, column: import("../layout/resume-layout.js").ResumeStatColumn) => import("../extractors/types.js").ZoneFraction;
-}
-
 /**
  * Lit chaque colonne d'une ligne SÉPARÉMENT (voir `resume-layout.ts` et
  * `extractSingleInteger`) plutôt que la ligne entière en un seul appel OCR
@@ -30,22 +25,25 @@ interface TeamConfig {
  * de la ligne, silencieusement. Chaque cellule isolée ne peut plus affecter
  * que sa propre valeur.
  */
-async function readRow(extractor: DocumentExtractor, team: TeamConfig, row: number): Promise<{ jerseyText: string; jerseyNumber: string | null }> {
-  const { text } = await extractor.extractZone(1, team.cellZone(row, "jerseyNumber"), { expectDigitsOnly: true });
-  return { jerseyText: text, jerseyNumber: extractJerseyNumber(text) };
+async function readRow(extractor: DocumentExtractor, rowTop: number, rowBottom: number): Promise<{ jerseyNumber: string | null }> {
+  const { text } = await extractor.extractZone(1, resumeCellZone(rowTop, rowBottom, "jerseyNumber"), { expectDigitsOnly: true });
+  return { jerseyNumber: extractJerseyNumber(text) };
 }
 
-async function readTeamStats(extractor: DocumentExtractor, teamSide: TeamSide, team: TeamConfig): Promise<ResumeRowResult[]> {
+async function readTeamStats(extractor: DocumentExtractor, teamSide: TeamSide, rowBoundaries: number[]): Promise<ResumeRowResult[]> {
   const rows: ResumeRowResult[] = [];
   let consecutiveUnreadable = 0;
 
-  for (let row = 0; row < RESUME_STATS_TABLE.maxRows; row++) {
+  for (let row = 0; row < rowBoundaries.length - 1 && row < RESUME_MAX_ROWS_PER_TEAM; row++) {
+    const rowTop = rowBoundaries[row]!;
+    const rowBottom = rowBoundaries[row + 1]!;
+
     // Le numéro de maillot sert de "porte d'entrée" : une ligne vide du
     // gabarit (lignes de réserve non utilisées par ce match, voir le
     // document réel) ou une ligne de synthèse ("Total Équipe"...) n'a pas
     // de numéro de maillot valide — inutile de payer le coût des 10 autres
     // appels OCR de cette ligne dans ce cas.
-    const { jerseyNumber } = await readRow(extractor, team, row);
+    const { jerseyNumber } = await readRow(extractor, rowTop, rowBottom);
 
     if (!jerseyNumber) {
       if (rows.length > 0) {
@@ -61,16 +59,17 @@ async function readTeamStats(extractor: DocumentExtractor, teamSide: TeamSide, t
     // rendu de page et un worker OCR uniques (PdfRasterOcrExtractor), des
     // appels concurrents s'y sont révélés source de résultats corrompus
     // pendant le développement (mélange de zones entre appels concurrents).
-    const nameText = (await extractor.extractZone(1, team.cellZone(row, "name"))).text;
-    const starterText = (await extractor.extractZone(1, team.cellZone(row, "starter"))).text;
-    const timeText = (await extractor.extractZone(1, team.cellZone(row, "secondsPlayed"), { expectDigitsOnly: true })).text;
-    const pointsText = (await extractor.extractZone(1, team.cellZone(row, "points"), { expectDigitsOnly: true })).text;
-    const shotsMadeText = (await extractor.extractZone(1, team.cellZone(row, "shotsMade"), { expectDigitsOnly: true })).text;
-    const threePointsText = (await extractor.extractZone(1, team.cellZone(row, "threePointsMade"), { expectDigitsOnly: true })).text;
-    const twoIntText = (await extractor.extractZone(1, team.cellZone(row, "twoPointsInteriorMade"), { expectDigitsOnly: true })).text;
-    const twoExtText = (await extractor.extractZone(1, team.cellZone(row, "twoPointsExteriorMade"), { expectDigitsOnly: true })).text;
-    const freeThrowsText = (await extractor.extractZone(1, team.cellZone(row, "freeThrowsMade"), { expectDigitsOnly: true })).text;
-    const foulsText = (await extractor.extractZone(1, team.cellZone(row, "foulsCommitted"), { expectDigitsOnly: true })).text;
+    const zone = (column: ResumeStatColumn) => resumeCellZone(rowTop, rowBottom, column);
+    const nameText = (await extractor.extractZone(1, zone("name"))).text;
+    const starterText = (await extractor.extractZone(1, zone("starter"))).text;
+    const timeText = (await extractor.extractZone(1, zone("secondsPlayed"), { expectDigitsOnly: true })).text;
+    const pointsText = (await extractor.extractZone(1, zone("points"), { expectDigitsOnly: true })).text;
+    const shotsMadeText = (await extractor.extractZone(1, zone("shotsMade"), { expectDigitsOnly: true })).text;
+    const threePointsText = (await extractor.extractZone(1, zone("threePointsMade"), { expectDigitsOnly: true })).text;
+    const twoIntText = (await extractor.extractZone(1, zone("twoPointsInteriorMade"), { expectDigitsOnly: true })).text;
+    const twoExtText = (await extractor.extractZone(1, zone("twoPointsExteriorMade"), { expectDigitsOnly: true })).text;
+    const freeThrowsText = (await extractor.extractZone(1, zone("freeThrowsMade"), { expectDigitsOnly: true })).text;
+    const foulsText = (await extractor.extractZone(1, zone("foulsCommitted"), { expectDigitsOnly: true })).text;
 
     const { lastName, firstName } = splitCommaSeparatedName(nameText);
     const timeMatch = timeText.match(/\d{1,3}:\d{2}/);
@@ -95,12 +94,30 @@ async function readTeamStats(extractor: DocumentExtractor, teamSide: TeamSide, t
   return rows;
 }
 
-/** Parse le document resume_*.pdf : statistiques individuelles par joueur. */
+/**
+ * Parse le document resume_*.pdf : statistiques individuelles par joueur.
+ *
+ * La position de chaque tableau (LOCAUX/VISITEURS) est détectée
+ * DYNAMIQUEMENT sur CE document (voir `table-structure.ts`) plutôt que
+ * supposée à une position fixe — retour du club, 2026-09-29 : un document
+ * réel à 12 joueurs LOCAUX (l'échantillon de calibrage en avait 8) décalait
+ * entièrement la lecture de l'équipe VISITEURS, dont la position dépend du
+ * nombre de lignes LOCAUX au-dessus.
+ */
 export async function parseResume(extractor: DocumentExtractor): Promise<ResumeRowResult[]> {
+  const lines = await extractor.detectHorizontalLines(1, RESUME_TABLE_SCAN_ZONE);
+  const tables = locateTeamTables(lines, RESUME_HEADER_GAP_FRACTION_RANGE);
+
+  // Structure du document non reconnue (moins de 2 tableaux détectés) :
+  // jamais deviner une position (ARCHITECTURE.md §22), retourner vide plutôt
+  // qu'une lecture au hasard — remonte comme avertissement qualité côté
+  // `persist-emarque-match.ts` (aucune statistique liée à aucun joueur).
+  if (tables.length < 2) return [];
+
   // Séquentiel, pas Promise.all : voir le commentaire équivalent dans
   // parse-feuillematch.ts (extracteur/worker OCR partagés).
-  const home = await readTeamStats(extractor, "home", RESUME_STATS_TABLE.teamA);
-  const away = await readTeamStats(extractor, "away", RESUME_STATS_TABLE.teamB);
+  const home = await readTeamStats(extractor, "home", tables[0]!.rowBoundaries);
+  const away = await readTeamStats(extractor, "away", tables[1]!.rowBoundaries);
 
   return [...home, ...away];
 }

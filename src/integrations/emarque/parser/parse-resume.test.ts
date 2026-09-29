@@ -183,3 +183,92 @@ describe("parseResume (document réel, rencontre n°1481)", () => {
     60_000,
   );
 });
+
+/**
+ * Test contre un SECOND document réel, fourni directement par le club
+ * (rencontre n°6, U15M1, SC Sète Basket vs Agde Basket, 27/09/2026,
+ * docs/EMARQUE.md "Correctifs d'import") — retour du club, 2026-09-29 :
+ * "les stats sont pas bonnes" sur ce match précis, avec les vraies valeurs
+ * du document collées en comparaison.
+ *
+ * Effectif DÉLIBÉRÉMENT différent de l'échantillon de calibrage (12 joueurs
+ * LOCAUX ici, contre 8 pour la rencontre 1481 ci-dessus, et 8 VISITEURS
+ * contre 7) : c'est exactement ce qui faisait échouer l'ancien calibrage à
+ * coordonnées Y FIXES — la position de l'équipe VISITEURS dépend du nombre
+ * de lignes LOCAUX au-dessus (voir `table-structure.ts`). Avant ce
+ * correctif, ce document produisait 3 lignes AU TOTAL au lieu de 20, avec
+ * des noms ("LEO SIMON", "METROP Basile") qui ne correspondent à RIEN dans
+ * le document réel — preuve que la lecture tombait hors du tableau.
+ */
+describe("parseResume (document réel, rencontre n°6 vs Agde — effectif différent de la calibration)", () => {
+  it(
+    "lit les 12 joueurs LOCAUX ET les 8 VISITEURS, sans aucun décalage malgré un effectif différent de l'échantillon de calibrage",
+    async () => {
+      const buf = fs.readFileSync(path.join(dirname, "..", "__fixtures__", "resume-agde-6.pdf"));
+      const extractor = new PdfRasterOcrExtractor(buf);
+
+      try {
+        const rows = await parseResume(extractor);
+        const home = rows.filter((r) => r.teamSide === "home");
+        const away = rows.filter((r) => r.teamSide === "away");
+
+        // Aucun joueur perdu, aucun joueur en trop, dans l'ordre du document.
+        expect(home.map((r) => r.jerseyNumber)).toEqual(["2", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"]);
+        expect(away.map((r) => r.jerseyNumber)).toEqual(["4", "5", "6", "10", "11", "12", "13", "15"]);
+
+        // Premier joueur LOCAUX (régression directe du bug rapporté : la
+        // lecture précédente ne trouvait AUCUN de ces 12 joueurs).
+        expect(home[0]).toMatchObject({ jerseyNumber: "2", lastName: "CAVALLIE", firstName: "Jimmy", points: 0, foulsCommitted: 1 });
+
+        // SINGH (maillot 9) : le plus gros score du match, ligne
+        // intégralement lisible sur cet échantillon.
+        const singh = home.find((r) => r.jerseyNumber === "9");
+        expect(singh).toMatchObject({
+          lastName: "SINGH",
+          points: 23,
+          shotsMade: 11,
+          threePointsMade: 1,
+          twoPointsInteriorMade: 10,
+          twoPointsExteriorMade: 0,
+          freeThrowsMade: 0,
+          foulsCommitted: 1,
+        });
+
+        // Dernier joueur LOCAUX (maillot 15, 12e ligne) : vérifie que la
+        // lecture reste correcte jusqu'au bout du tableau, pas seulement en
+        // tête — c'est justement la zone où l'ancien calibrage (8 lignes
+        // supposées) aurait déjà quitté le tableau réel.
+        expect(home[11]).toMatchObject({ jerseyNumber: "15", lastName: "DUPY", points: 0, foulsCommitted: 0 });
+
+        // Premier joueur VISITEURS (régression directe : la lecture
+        // précédente tombait dans l'en-tête/le texte "VISITEURS" lui-même,
+        // décalée par les 4 lignes LOCAUX supplémentaires par rapport à la
+        // calibration — ne trouvait jamais FRANCOISE).
+        expect(away[0]).toMatchObject({ jerseyNumber: "4", lastName: "FRANCOISE", points: 15, threePointsMade: 3, foulsCommitted: 3 });
+
+        // Petro (maillot 11) : deuxième plus gros score du match, côté
+        // VISITEURS — vérifie la lecture de bout en bout de CE tableau
+        // aussi, pas seulement son premier joueur.
+        const petro = away.find((r) => r.jerseyNumber === "11");
+        expect(petro).toMatchObject({ lastName: "Petro", points: 27, shotsMade: 11, twoPointsInteriorMade: 11, freeThrowsMade: 5, foulsCommitted: 2 });
+
+        // Dernier joueur VISITEURS (maillot 15, 8e ligne).
+        expect(away[7]).toMatchObject({ jerseyNumber: "15", lastName: "ISMAEL-CONDE", points: 7, foulsCommitted: 3 });
+
+        // Aucune statistique ne doit jamais porter la valeur d'une AUTRE
+        // ligne/colonne (même garde-fou que le test ci-dessus) : chaque
+        // valeur non-null reste dans une plage plausible pour une
+        // statistique de basket.
+        for (const row of rows) {
+          for (const value of [row.points, row.shotsMade, row.threePointsMade, row.twoPointsInteriorMade, row.twoPointsExteriorMade, row.freeThrowsMade, row.foulsCommitted]) {
+            if (value !== null) expect(value).toBeGreaterThanOrEqual(0);
+            if (value !== null) expect(value).toBeLessThanOrEqual(99);
+          }
+        }
+      } finally {
+        await extractor.dispose();
+      }
+    },
+    60_000,
+  );
+});

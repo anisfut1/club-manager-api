@@ -18,6 +18,7 @@ const qualityWarningCodeSchema = z.enum([
   "MINUTES_TOTAL_INCONSISTENT",
   "SHOT_CHART_PARSE_FAILED",
   "DOCUMENT_MISSING",
+  "NO_PLAYERS_EXTRACTED",
 ]);
 
 const playerSchema = z.object({

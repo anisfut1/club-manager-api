@@ -1,27 +1,29 @@
 import type { ZoneFraction } from "../extractors/types.js";
 
 /**
- * Coordonnées calibrées PIXEL PAR PIXEL contre un document "résumé" RÉEL de
+ * Colonnes calibrées PIXEL PAR PIXEL contre un document "résumé" RÉEL de
  * production (rencontre n°1481, § "Trente-et-unième déclenchement",
- * docs/FBI.md) — plus une estimation par symétrie sur un échantillon
- * générique comme avant. Mesurées en détectant automatiquement les lignes
- * de grille du tableau (contraste fort, longue portée horizontale/verticale)
- * sur le rendu produit par NOTRE PROPRE pipeline (`pdf-raster-ocr-
- * extractor.ts`, même échelle), puis vérifiées visuellement en superposant
- * ces coordonnées sur l'image d'origine — pas une estimation à l'œil.
+ * docs/FBI.md), mesurées en détectant les lignes de grille du tableau sur
+ * le rendu produit par NOTRE PROPRE pipeline (`pdf-raster-ocr-
+ * extractor.ts`, même échelle), puis vérifiées visuellement.
  *
  * Référence : page A4 rendue à 300dpi (RENDER_SCALE de
  * `pdf-raster-ocr-extractor.ts`), soit 2479×3508 px. Les deux tableaux
- * (LOCAUX/VISITEURS) partagent exactement les mêmes colonnes ; seule la
- * position verticale de départ et la hauteur de ligne diffèrent légèrement
- * entre les deux (mesurées séparément, jamais supposées identiques).
+ * (LOCAUX/VISITEURS) partagent exactement les mêmes colonnes.
+ *
+ * La position VERTICALE des lignes (rowTop/rowHeight) n'est PLUS calibrée
+ * ici depuis le retour du club, 2026-09-29 : un document réel à 12 joueurs
+ * LOCAUX (contre 8 sur l'échantillon de calibrage) décalait entièrement la
+ * lecture de l'équipe VISITEURS, dont la position dépend du nombre de
+ * lignes LOCAUX au-dessus. Voir `table-structure.ts` — la position de
+ * chaque ligne est désormais détectée PAR DOCUMENT, jamais supposée fixe.
  */
 
 const REF_WIDTH = 2479;
 const REF_HEIGHT = 3508;
 
-function zone(x: number, y: number, w: number, h: number): ZoneFraction {
-  return { xFrac: x / REF_WIDTH, yFrac: y / REF_HEIGHT, widthFrac: w / REF_WIDTH, heightFrac: h / REF_HEIGHT };
+function xFrac(px: number): number {
+  return px / REF_WIDTH;
 }
 
 /**
@@ -48,41 +50,41 @@ const COLUMN_BOUNDS = {
 
 export type ResumeStatColumn = keyof typeof COLUMN_BOUNDS;
 
-/** Marge intérieure (px) pour ne jamais inclure un pixel de ligne de grille dans le rognage OCR. */
-const COLUMN_INSET_X = 6;
-const ROW_INSET_Y = 4;
-
-interface TeamRowConfig {
-  /** Y du haut de la ligne 0 (juste sous la ligne de grille de l'en-tête). */
-  rowTop: number;
-  /** Hauteur moyenne d'une ligne, mesurée sur la plage réelle de lignes joueurs de CETTE équipe. */
-  rowHeight: number;
-}
-
-function cellZone(config: TeamRowConfig, row: number, column: ResumeStatColumn): ZoneFraction {
-  const [xStart, xEnd] = COLUMN_BOUNDS[column];
-  const yStart = config.rowTop + row * config.rowHeight;
-  return zone(xStart + COLUMN_INSET_X, yStart + ROW_INSET_Y, xEnd - xStart - 2 * COLUMN_INSET_X, config.rowHeight - 2 * ROW_INSET_Y);
-}
+/** Marge intérieure pour ne jamais inclure un pixel de ligne de grille dans le rognage OCR. */
+const COLUMN_INSET_X_FRAC = 6 / REF_WIDTH;
+const ROW_INSET_Y_FRAC = 4 / REF_HEIGHT;
 
 /**
- * `rowTop` VÉRIFIÉ par extraction OCR directe (pas seulement par inspection
- * visuelle) : un premier calibrage à 748 (borne visuellement prise pour le
- * bas de l'en-tête) plaçait en réalité la ligne 0 sur le DEUXIÈME joueur
- * (Convert, maillot 4) — l'en-tête lui-même s'étend au-dessus de 681, qui
- * est la vraie limite haute de la ligne 0 (Georges, maillot 1 — confirmé en
- * OCR-ant isolément cette cellule : "1", jamais "4"). Ce décalage d'une
- * ligne complète faisait disparaître le premier joueur de chaque relevé.
- * L'équipe VISITEURS n'avait PAS ce décalage (2060 confirmé de la même
- * façon : lecture isolée "4", le bon maillot du premier visiteur).
+ * Écart (fraction de PAGE, jamais de zone) entre deux lignes de grille
+ * consécutives correspondant à une ligne d'EN-TÊTE de colonnes — mesuré
+ * ~96px sur les deux documents réels utilisés (rencontre 1481 et rencontre
+ * 6 vs Agde Basket, docs/EMARQUE.md "Correctifs d'import"), contre ~58-67px
+ * pour une ligne de données (joueur ou synthèse "Total..."). Une marge
+ * généreuse (±20px) absorbe une variation de rendu/OCR mineure sans jamais
+ * chevaucher la plage "ligne de données" mesurée sur les deux échantillons.
  */
-const TEAM_A_CONFIG: TeamRowConfig = { rowTop: 681, rowHeight: (1189 - 681) / 8 };
-const TEAM_B_CONFIG: TeamRowConfig = { rowTop: 2060, rowHeight: (2510 - 2060) / 7 };
+export const RESUME_HEADER_GAP_FRACTION_RANGE: readonly [number, number] = [80 / REF_HEIGHT, 120 / REF_HEIGHT];
 
-export const RESUME_STATS_TABLE = {
-  /** Équipe "LOCAUX" — mesuré directement sur l'échantillon réel (8 lignes joueurs, 681→1189px). */
-  teamA: { ...TEAM_A_CONFIG, cellZone: (row: number, column: ResumeStatColumn) => cellZone(TEAM_A_CONFIG, row, column) },
-  /** Équipe "VISITEURS" — mesuré directement sur l'échantillon réel (7 lignes joueurs, 2060→2510px). */
-  teamB: { ...TEAM_B_CONFIG, cellZone: (row: number, column: ResumeStatColumn) => cellZone(TEAM_B_CONFIG, row, column) },
-  maxRows: 15,
-} as const;
+/** Zone couvrant toutes les colonnes du tableau, page entière — pour `DocumentExtractor#detectHorizontalLines`. */
+export const RESUME_TABLE_SCAN_ZONE: ZoneFraction = {
+  xFrac: xFrac(COLUMN_BOUNDS.jerseyNumber[0]),
+  yFrac: 0,
+  widthFrac: xFrac(COLUMN_BOUNDS.foulsCommitted[1] - COLUMN_BOUNDS.jerseyNumber[0]),
+  heightFrac: 1,
+};
+
+/** `rowTopFrac`/`rowBottomFrac` : bornes Y (fraction de page) d'UNE ligne détectée dynamiquement (voir `table-structure.ts`), jamais une position pré-calculée. */
+export function resumeCellZone(rowTopFrac: number, rowBottomFrac: number, column: ResumeStatColumn): ZoneFraction {
+  const [xStart, xEnd] = COLUMN_BOUNDS[column];
+  const rowHeightFrac = Math.max(rowBottomFrac - rowTopFrac, 2 * ROW_INSET_Y_FRAC + 0.001);
+
+  return {
+    xFrac: xFrac(xStart) + COLUMN_INSET_X_FRAC,
+    yFrac: rowTopFrac + ROW_INSET_Y_FRAC,
+    widthFrac: xFrac(xEnd - xStart) - 2 * COLUMN_INSET_X_FRAC,
+    heightFrac: rowHeightFrac - 2 * ROW_INSET_Y_FRAC,
+  };
+}
+
+/** Nombre maximal de lignes à lire par équipe avant d'abandonner (filet de sécurité, jamais atteint en pratique — un roster FFBB ne dépasse pas 15 joueurs). */
+export const RESUME_MAX_ROWS_PER_TEAM = 15;

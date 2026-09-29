@@ -47,6 +47,11 @@ export class PdfTextExtractor implements DocumentExtractor {
     return { text, confidence: text ? 100 : 0 };
   }
 
+  /** Aucun pixel de rendu ici (texte natif) — sans objet, voir la doc de l'interface. */
+  async detectHorizontalLines(): Promise<number[]> {
+    return [];
+  }
+
   async dispose(): Promise<void> {
     this.pageTextCache.clear();
   }

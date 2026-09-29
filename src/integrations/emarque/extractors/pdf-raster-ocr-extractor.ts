@@ -2,7 +2,7 @@ import path from "node:path";
 import { createCanvas, loadImage, type Canvas } from "@napi-rs/canvas";
 import { createWorker, PSM, type Worker } from "tesseract.js";
 import { loadPdfjs } from "./pdfjs-loader.js";
-import type { DocumentExtractor, ExtractedText, ExtractZoneOptions, ZoneFraction } from "./types.js";
+import type { DetectLinesOptions, DocumentExtractor, ExtractedText, ExtractZoneOptions, ZoneFraction } from "./types.js";
 
 /**
  * Résolution de rendu. Calibré empiriquement (voir docs/
@@ -160,6 +160,62 @@ export class PdfRasterOcrExtractor implements DocumentExtractor {
     }
 
     return { text: primaryText, confidence: primary.data.confidence };
+  }
+
+  /**
+   * Détecte les lignes de grille HORIZONTALES du tableau dans `zone`, en
+   * scannant chaque rangée de pixels pour une fraction sombre (texte noir
+   * sur fond blanc d'un document e-Marque) au-delà d'`options.minDarknessFraction`
+   * — une ligne de grille pleine largeur (contrairement à une lettre isolée)
+   * produit une rangée QUASI ENTIÈREMENT sombre. Validé pixel par pixel
+   * contre DEUX documents réels de compétitions différentes (rencontre 1481
+   * et rencontre 6 vs Agde Basket, docs/EMARQUE.md "Correctifs d'import") :
+   * les lignes détectées correspondent, à 1-2px près, aux bordures de
+   * tableau visibles à l'œil sur les deux, malgré des effectifs différents
+   * (8+7 puis 12+8 joueurs) — c'est précisément cette variation d'effectif
+   * qui rendait un calibrage à coordonnées FIXES incorrect (voir
+   * `layout/table-structure.ts`).
+   */
+  async detectHorizontalLines(pageNumber: number, zone: ZoneFraction, options?: DetectLinesOptions): Promise<number[]> {
+    const pageCanvas = await this.getPageCanvas(pageNumber);
+
+    const x = Math.round(zone.xFrac * pageCanvas.width);
+    const y = Math.round(zone.yFrac * pageCanvas.height);
+    const width = Math.max(Math.round(zone.widthFrac * pageCanvas.width), 1);
+    const height = Math.max(Math.round(zone.heightFrac * pageCanvas.height), 1);
+
+    const ctx = pageCanvas.getContext("2d");
+    const { data } = ctx.getImageData(x, y, width, height);
+    const minDarkness = options?.minDarknessFraction ?? 0.5;
+
+    const lines: number[] = [];
+    let inLine = false;
+    let lineStart = 0;
+
+    for (let row = 0; row < height; row++) {
+      let darkCount = 0;
+      const rowOffset = row * width * 4;
+      for (let col = 0; col < width; col++) {
+        const idx = rowOffset + col * 4;
+        // Luminance perceptuelle (ITU-R BT.601) — indifférent à la couleur exacte, seul le contraste noir/blanc du tableau compte ici.
+        const luminance = 0.299 * data[idx]! + 0.587 * data[idx + 1]! + 0.114 * data[idx + 2]!;
+        if (luminance < 128) darkCount += 1;
+      }
+
+      const isDark = darkCount / width >= minDarkness;
+      if (isDark && !inLine) {
+        inLine = true;
+        lineStart = row;
+      } else if (!isDark && inLine) {
+        inLine = false;
+        lines.push((y + Math.round((lineStart + row - 1) / 2)) / pageCanvas.height);
+      }
+    }
+    if (inLine) {
+      lines.push((y + Math.round((lineStart + height - 1) / 2)) / pageCanvas.height);
+    }
+
+    return lines;
   }
 
   async dispose(): Promise<void> {

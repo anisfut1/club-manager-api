@@ -1,5 +1,6 @@
 import type { DocumentExtractor, ZoneFraction } from "../extractors/types.js";
-import { FEUILLEMATCH_PAGE1, FEUILLEMATCH_ROSTER, OFFICIALS_TABLE_PAGE2, type RosterColumn } from "../layout/feuillematch-layout.js";
+import { FEUILLEMATCH_PAGE1, FEUILLEMATCH_ROSTER, OFFICIALS_TABLE_PAGE2, ROSTER_HEADER_GAP_FRACTION_RANGE, ROSTER_TABLE_SCAN_ZONE, type RosterColumn } from "../layout/feuillematch-layout.js";
+import { locateTeamTables } from "../layout/table-structure.js";
 import { parseFinalResultLine, parsePouleLabel, parseRencontreHeaderLine } from "../normalizers/header-fields.js";
 import { extractIsolatedLicenseNumber, extractJerseyNumber, extractLicenseNumber, findLicenseMatch, splitUppercaseAbbreviatedName } from "../normalizers/text-fields.js";
 import type {
@@ -61,16 +62,20 @@ function stripCoachRolePrefix(text: string): string {
 async function readTeamRosterAndCoaches(
   extractor: DocumentExtractor,
   teamSide: TeamSide,
-  team: { cellZone: (row: number, column: RosterColumn) => ZoneFraction; licenseNumberWideZone: (row: number) => ZoneFraction },
+  team: { cellZone: (rowTop: number, rowBottom: number, column: RosterColumn) => ZoneFraction; licenseNumberWideZone: (rowTop: number, rowBottom: number) => ZoneFraction },
+  rowBoundaries: number[],
 ): Promise<{ players: EMarquePlayer[]; coaches: EMarqueCoach[] }> {
   const players: EMarquePlayer[] = [];
   const coaches: EMarqueCoach[] = [];
 
-  for (let row = 0; row < FEUILLEMATCH_ROSTER.maxRows; row++) {
-    const licenseText = (await extractor.extractZone(1, team.cellZone(row, "licenseNumber"))).text;
+  for (let row = 0; row < rowBoundaries.length - 1 && row < FEUILLEMATCH_ROSTER.maxRows; row++) {
+    const rowTop = rowBoundaries[row]!;
+    const rowBottom = rowBoundaries[row + 1]!;
+
+    const licenseText = (await extractor.extractZone(1, team.cellZone(rowTop, rowBottom, "licenseNumber"))).text;
     let licenseNumber = extractIsolatedLicenseNumber(licenseText);
 
-    const { text: nameText, confidence } = await extractor.extractZone(1, team.cellZone(row, "name"));
+    const { text: nameText, confidence } = await extractor.extractZone(1, team.cellZone(rowTop, rowBottom, "name"));
     const coachRoleMatch = nameText.match(/entra[iî]neur\s*(principal|adjoint)?/i);
 
     // Repli UNIQUEMENT pour une ligne entraîneur (voir
@@ -80,7 +85,7 @@ async function readTeamRosterAndCoaches(
     // numéro de licence — jamais utilisé pour un joueur (où cette colonne
     // contient un vrai marqueur, contaminerait la lecture).
     if (!licenseNumber && coachRoleMatch) {
-      const wideLicenseText = (await extractor.extractZone(1, team.licenseNumberWideZone(row))).text;
+      const wideLicenseText = (await extractor.extractZone(1, team.licenseNumberWideZone(rowTop, rowBottom))).text;
       licenseNumber = extractLicenseNumber(wideLicenseText);
     }
 
@@ -93,7 +98,7 @@ async function readTeamRosterAndCoaches(
       continue;
     }
 
-    const jerseyText = (await extractor.extractZone(1, team.cellZone(row, "jerseyNumber"), { expectDigitsOnly: true })).text;
+    const jerseyText = (await extractor.extractZone(1, team.cellZone(rowTop, rowBottom, "jerseyNumber"), { expectDigitsOnly: true })).text;
     const { lastName, firstName } = splitUppercaseAbbreviatedName(cleanNameFragment(nameText));
 
     players.push({
@@ -177,8 +182,19 @@ export async function parseFeuillematch(extractor: DocumentExtractor): Promise<F
   const homeClubCode = normalizeClubCode(homeCodeText.text);
   const awayClubCode = normalizeClubCode(awayCodeText.text);
 
-  const { players: homeRoster, coaches: homeCoaches } = await readTeamRosterAndCoaches(extractor, "home", FEUILLEMATCH_ROSTER.teamA);
-  const { players: awayRoster, coaches: awayCoaches } = await readTeamRosterAndCoaches(extractor, "away", FEUILLEMATCH_ROSTER.teamB);
+  // Position de chaque tableau (équipe A/B) détectée DYNAMIQUEMENT sur CE
+  // document (voir `table-structure.ts`), jamais supposée fixe — retour du
+  // club, 2026-09-29 : la position de l'équipe B dépend du nombre de
+  // lignes de l'équipe A au-dessus, qui varie d'un match à l'autre.
+  const rosterLines = await extractor.detectHorizontalLines(1, ROSTER_TABLE_SCAN_ZONE);
+  const rosterTables = locateTeamTables(rosterLines, ROSTER_HEADER_GAP_FRACTION_RANGE);
+
+  const { players: homeRoster, coaches: homeCoaches } = rosterTables[0]
+    ? await readTeamRosterAndCoaches(extractor, "home", FEUILLEMATCH_ROSTER.teamA, rosterTables[0].rowBoundaries)
+    : { players: [], coaches: [] };
+  const { players: awayRoster, coaches: awayCoaches } = rosterTables[1]
+    ? await readTeamRosterAndCoaches(extractor, "away", FEUILLEMATCH_ROSTER.teamB, rosterTables[1].rowBoundaries)
+    : { players: [], coaches: [] };
   const officialsResult = await readOfficialsTable(extractor);
 
   return {

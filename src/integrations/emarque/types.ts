@@ -95,7 +95,8 @@ export type QualityWarningCode =
   | "OTM_LICENSE_MISSING"
   | "MINUTES_TOTAL_INCONSISTENT"
   | "SHOT_CHART_PARSE_FAILED"
-  | "DOCUMENT_MISSING";
+  | "DOCUMENT_MISSING"
+  | "NO_PLAYERS_EXTRACTED";
 
 export interface EMarqueQualityWarning {
   code: QualityWarningCode;

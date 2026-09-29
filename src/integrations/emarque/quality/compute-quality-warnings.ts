@@ -47,6 +47,19 @@ export function computeQualityWarnings(
     });
   }
 
+  // Retour du club, 2026-09-29 : un document dont la structure du tableau
+  // n'est pas reconnue (voir `table-structure.ts`) retourne désormais un
+  // effectif VIDE plutôt qu'une lecture au hasard (ARCHITECTURE.md §22) —
+  // sans ce signal, un tel échec silencieux passerait pour un import
+  // "réussi" sans aucun joueur, jamais renvoyé en `needs_review`.
+  if (data.players.length === 0) {
+    warnings.push({
+      code: "NO_PLAYERS_EXTRACTED",
+      message: "Aucun joueur extrait du document — structure du tableau non reconnue, jamais une lecture au hasard.",
+      severity: "error",
+    });
+  }
+
   for (const player of data.players) {
     if (!player.licenseNumber) {
       warnings.push({

@@ -77,6 +77,13 @@ describe("computeQualityWarnings", () => {
     expect(warnings).toContainEqual(expect.objectContaining({ code: "OTM_LICENSE_MISSING", severity: "warning" }));
   });
 
+  it("signale un effectif totalement vide (sévérité error) — jamais un import 'réussi' silencieux sans aucun joueur", () => {
+    const data = baseData();
+    data.players = [];
+    const warnings = computeQualityWarnings(data, { ffbbMatchNumero: "2813", ffbbScoreHome: 69, ffbbScoreAway: 101 });
+    expect(warnings).toContainEqual(expect.objectContaining({ code: "NO_PLAYERS_EXTRACTED", severity: "error" }));
+  });
+
   it("signale une confiance faible sans bloquer (sévérité info)", () => {
     const data = baseData();
     data.players[0]!.confidence = 10;

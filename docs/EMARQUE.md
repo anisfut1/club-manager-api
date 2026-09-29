@@ -233,6 +233,48 @@ apparent de succès. Trois bugs distincts, corrigés ensemble :
    marquer l'import en erreur — un match `error` n'affiche plus jamais de
    données partielles.
 
+## Détection dynamique des tableaux — retour du club, 2026-09-29 (second signalement, avec document réel à l'appui)
+
+Malgré les trois correctifs ci-dessus, un match (rencontre n°6, U15M1 vs
+Agde Basket, 12 joueurs LOCAUX + 8 VISITEURS) affichait encore une
+composition et des statistiques totalement méconnaissables — des noms
+("LEO SIMON", "METROP Basile") qui ne correspondent à RIEN dans le document
+réel fourni par le club en comparaison. Cause racine, commune à
+`resume-layout.ts` ET `feuillematch-layout.ts` : ces deux tableaux
+(LOCAUX/VISITEURS) étaient lus à des coordonnées Y **FIXES**, calibrées
+pixel par pixel contre UN SEUL document réel (rencontre n°1481 — 8 joueurs
+LOCAUX, 7 VISITEURS). Sur le gabarit FFBB, le tableau VISITEURS est imprimé
+**après** le tableau LOCAUX : sa position verticale dépend donc directement
+du nombre de lignes LOCAUX au-dessus. Un effectif LOCAUX différent de 8
+(la quasi-totalité des matchs réels) décalait donc TOUJOURS la lecture de
+l'équipe VISITEURS dans du texte sans rapport — jamais une erreur détectée,
+juste une lecture silencieusement fausse.
+
+**Corrigé par détection structurelle plutôt qu'un calibrage plus précis** —
+`layout/table-structure.ts` (`locateTeamTables`) repère la position de
+chaque tableau PAR DOCUMENT, à partir des lignes de grille horizontales
+détectées sur le rendu (`DocumentExtractor#detectHorizontalLines`, nouvelle
+méthode implémentée dans `pdf-raster-ocr-extractor.ts`) : une ligne d'EN-TÊTE
+de colonnes est systématiquement ~1,5× plus haute qu'une ligne de données
+(mesuré sur deux documents réels de compétitions différentes) — ce ratio,
+jamais un effectif supposé, sert à repérer où commence chaque tableau. Les
+coordonnées X (colonnes) restent calibrées comme avant, seule la position Y
+de chaque ligne est désormais dynamique. `resume-layout.ts` et
+`feuillematch-layout.ts` n'exposent plus de `rowTop`/`rowHeight` fixes.
+
+Un document dont la structure n'est pas reconnue (moins de 2 tableaux
+détectés) retourne un effectif VIDE plutôt qu'une lecture au hasard
+(ARCHITECTURE.md §22) — signalé par un nouvel avertissement qualité
+`NO_PLAYERS_EXTRACTED` (sévérité `error`, force `needs_review`) :
+auparavant, un tel échec silencieux aurait pu passer pour un import
+"réussi" sans aucun joueur.
+
+Validé contre DEUX documents réels de compétitions différentes (jamais un
+seul, précisément parce que c'est la variation entre eux qui avait révélé
+le bug) : `resume-1481.pdf`/`feuillematch-1481.pdf` (8+7 joueurs, régression)
+et le nouveau `resume-agde-6.pdf` (12+8 joueurs, fourni directement par le
+club) — `parser/parse-resume.test.ts`, `parser/parse-feuillematch.test.ts`.
+
 ## Nouvelle tentative des imports en erreur (`retryFailedEmarqueImports`)
 
 Avant ce correctif, aucun mécanisme ne relançait un match resté

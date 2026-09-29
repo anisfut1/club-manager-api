@@ -37,19 +37,21 @@ export const FEUILLEMATCH_PAGE1 = {
 /**
  * Table effectif (LICENCES/Noms des joueurs/N°/en jeu/Fautes) — référence
  * et méthodologie propres, DISTINCTES du reste de ce fichier (voir
- * `resume-layout.ts` pour la même approche) : coordonnées mesurées PIXEL
- * PAR PIXEL contre un document "feuillematch" RÉEL de production
- * (rencontre n°1481, § "Trente-quatrième déclenchement", docs/FBI.md) —
- * détection automatique des lignes de grille du tableau sur le rendu
- * produit par notre propre pipeline, vérifiées en superposant ces
- * coordonnées sur l'image d'origine ET en OCR-ant isolément des cellules
- * choisies (15 joueurs, 2 équipes) — jamais une estimation visuelle.
+ * `resume-layout.ts` pour la même approche) : colonnes X mesurées PIXEL PAR
+ * PIXEL contre un document "feuillematch" RÉEL de production (rencontre
+ * n°1481, § "Trente-quatrième déclenchement", docs/FBI.md).
  *
  * Référence : page A4 rendue à 300dpi (RENDER_SCALE de
  * `pdf-raster-ocr-extractor.ts`), soit 2479×3508 px — comme
  * `resume-layout.ts`, mais UNIQUEMENT pour cette table (le reste du
  * fichier reste sur l'ancienne référence 150dpi, jamais retouché faute de
  * preuve).
+ *
+ * La position VERTICALE des lignes (rowTop/rowHeight) n'est PLUS calibrée
+ * ici depuis le retour du club, 2026-09-29 : même bug que `resume-
+ * layout.ts` (voir sa note) — la position de l'équipe B dépend du nombre
+ * de lignes de l'équipe A au-dessus, jamais fixe d'un document à l'autre.
+ * Voir `table-structure.ts` — détection dynamique PAR DOCUMENT.
  *
  * Découverte importante : contrairement au document "résumé" (mêmes
  * colonnes pour les deux équipes), les deux encadrés "Équipe A"/"Équipe B"
@@ -62,10 +64,6 @@ export const FEUILLEMATCH_PAGE1 = {
  */
 const ROSTER_REF_WIDTH = 2479;
 const ROSTER_REF_HEIGHT = 3508;
-
-function rosterZone(x: number, y: number, w: number, h: number): ZoneFraction {
-  return { xFrac: x / ROSTER_REF_WIDTH, yFrac: y / ROSTER_REF_HEIGHT, widthFrac: w / ROSTER_REF_WIDTH, heightFrac: h / ROSTER_REF_HEIGHT };
-}
 
 const ROSTER_COLUMN_INSET_X = 6;
 const ROSTER_ROW_INSET_Y = 4;
@@ -100,44 +98,63 @@ const ROSTER_LICENSE_WIDE_TEAM_B: readonly [number, number] = [114, 460];
 
 export type RosterColumn = keyof typeof ROSTER_COLUMNS_TEAM_A;
 
-interface RosterTeamConfig {
-  rowTop: number;
-  rowHeight: number;
+interface RosterTeamColumns {
   columns: Record<RosterColumn, readonly [number, number]>;
   licenseWideColumn: readonly [number, number];
 }
 
-function columnZone(config: RosterTeamConfig, row: number, [xStart, xEnd]: readonly [number, number]): ZoneFraction {
-  const yStart = config.rowTop + row * config.rowHeight;
-  return rosterZone(
-    xStart + ROSTER_COLUMN_INSET_X,
-    yStart + ROSTER_ROW_INSET_Y,
-    xEnd - xStart - 2 * ROSTER_COLUMN_INSET_X,
-    config.rowHeight - 2 * ROSTER_ROW_INSET_Y,
-  );
-}
+/** `rowTopFrac`/`rowBottomFrac` : bornes Y (fraction de page) d'UNE ligne détectée dynamiquement (voir `table-structure.ts`), jamais une position pré-calculée. */
+function columnZone(team: RosterTeamColumns, rowTopFrac: number, rowBottomFrac: number, [xStart, xEnd]: readonly [number, number]): ZoneFraction {
+  const rowInsetYFrac = ROSTER_ROW_INSET_Y / ROSTER_REF_HEIGHT;
+  const rowHeightFrac = Math.max(rowBottomFrac - rowTopFrac, 2 * rowInsetYFrac + 0.001);
 
-/**
- * `rowTop`/`rowHeight` mesurés directement sur l'échantillon réel : équipe
- * A (8 lignes joueuses réelles, 860→1327px), équipe B (7 lignes, 2135→2544px).
- */
-const ROSTER_TEAM_A_CONFIG: RosterTeamConfig = { rowTop: 860, rowHeight: (1327 - 860) / 8, columns: ROSTER_COLUMNS_TEAM_A, licenseWideColumn: ROSTER_LICENSE_WIDE_TEAM_A };
-const ROSTER_TEAM_B_CONFIG: RosterTeamConfig = { rowTop: 2135, rowHeight: (2544 - 2135) / 7, columns: ROSTER_COLUMNS_TEAM_B, licenseWideColumn: ROSTER_LICENSE_WIDE_TEAM_B };
-
-function buildTeamRoster(config: RosterTeamConfig) {
   return {
-    ...config,
-    cellZone: (row: number, column: RosterColumn) => columnZone(config, row, config.columns[column]),
-    /** Repli pour une ligne entraîneur — voir `ROSTER_LICENSE_WIDE_TEAM_A`. */
-    licenseNumberWideZone: (row: number) => columnZone(config, row, config.licenseWideColumn),
+    xFrac: (xStart + ROSTER_COLUMN_INSET_X) / ROSTER_REF_WIDTH,
+    yFrac: rowTopFrac + rowInsetYFrac,
+    widthFrac: (xEnd - xStart - 2 * ROSTER_COLUMN_INSET_X) / ROSTER_REF_WIDTH,
+    heightFrac: rowHeightFrac - 2 * rowInsetYFrac,
   };
 }
 
+const ROSTER_TEAM_A: RosterTeamColumns = { columns: ROSTER_COLUMNS_TEAM_A, licenseWideColumn: ROSTER_LICENSE_WIDE_TEAM_A };
+const ROSTER_TEAM_B: RosterTeamColumns = { columns: ROSTER_COLUMNS_TEAM_B, licenseWideColumn: ROSTER_LICENSE_WIDE_TEAM_B };
+
+function buildTeamRoster(team: RosterTeamColumns) {
+  return {
+    cellZone: (rowTopFrac: number, rowBottomFrac: number, column: RosterColumn) => columnZone(team, rowTopFrac, rowBottomFrac, team.columns[column]),
+    /** Repli pour une ligne entraîneur — voir `ROSTER_LICENSE_WIDE_TEAM_A`. */
+    licenseNumberWideZone: (rowTopFrac: number, rowBottomFrac: number) => columnZone(team, rowTopFrac, rowBottomFrac, team.licenseWideColumn),
+  };
+}
+
+/**
+ * Écart (fraction de PAGE) entre deux lignes de grille consécutives
+ * correspondant à une ligne d'EN-TÊTE de ce tableau — mesuré ~141px sur
+ * l'échantillon réel (rencontre 1481), contre 17-66px pour toute autre
+ * ligne (donnée, séparateur, ligne entraîneur) — jamais dans la même plage,
+ * marge généreuse pour absorber une variation de rendu/OCR mineure.
+ */
+export const ROSTER_HEADER_GAP_FRACTION_RANGE: readonly [number, number] = [120 / ROSTER_REF_HEIGHT, 170 / ROSTER_REF_HEIGHT];
+
+/** Zone couvrant les deux jeux de colonnes (équipe A et B réunies), page entière — pour `DocumentExtractor#detectHorizontalLines`. */
+export const ROSTER_TABLE_SCAN_ZONE: ZoneFraction = {
+  xFrac: Math.min(ROSTER_COLUMNS_TEAM_A.licenseNumber[0], ROSTER_COLUMNS_TEAM_B.licenseNumber[0]) / ROSTER_REF_WIDTH,
+  yFrac: 0,
+  widthFrac:
+    (Math.max(ROSTER_COLUMNS_TEAM_A.jerseyNumber[1], ROSTER_COLUMNS_TEAM_B.jerseyNumber[1]) - Math.min(ROSTER_COLUMNS_TEAM_A.licenseNumber[0], ROSTER_COLUMNS_TEAM_B.licenseNumber[0])) /
+    ROSTER_REF_WIDTH,
+  heightFrac: 1,
+};
+
 export const FEUILLEMATCH_ROSTER = {
-  teamA: buildTeamRoster(ROSTER_TEAM_A_CONFIG),
-  teamB: buildTeamRoster(ROSTER_TEAM_B_CONFIG),
-  /** Nombre maximal de lignes à lire avant d'abandonner (filet de sécurité). */
-  maxRows: 15,
+  teamA: buildTeamRoster(ROSTER_TEAM_A),
+  teamB: buildTeamRoster(ROSTER_TEAM_B),
+  /**
+   * Nombre maximal de lignes à lire par équipe — filet de sécurité contre
+   * une détection de lignes de grille aberrante (jamais atteint sur un
+   * document réel : un effectif + 2 entraîneurs ne dépasse pas ce total).
+   */
+  maxRows: 40,
 } as const;
 
 /**
