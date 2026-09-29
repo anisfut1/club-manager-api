@@ -1,0 +1,45 @@
+name: FBI frequent sync (dérogations, calendrier, découverte e-Marque)
+
+# Le plan Vercel Hobby limite les crons vercel.json à une exécution par jour
+# (voir docs/DEPLOYMENT.md) — /internal/cron/fbi-enqueue et
+# /internal/cron/fbi-jobs y tournent donc une seule fois/jour, ce qui est
+# beaucoup trop lent pour des dérogations à vérifier plusieurs fois par jour
+# ou pour rattraper plusieurs matchs d'un même weekend (constaté le
+# 2026-09-29 : 9 matchs en attente auraient mis 9 jours à être traités au
+# rythme d'1 job/jour). GitHub Actions (gratuit, hors Vercel) prend le relai
+# ici toutes les 15 minutes — exactement la fréquence prévue à l'origine
+# avant la contrainte du plan Hobby.
+#
+# Ne touche jamais à /internal/cron/emarque-parse (parsing des documents déjà
+# téléchargés en statistiques) : le club a explicitement demandé de le
+# laisser à une fois par jour (2026-09-29, "pour les stats, 1 fois par jour
+# ca suffit car c que sur les weekends les matchs") — il continue de tourner
+# via son cron vercel.json existant, inchangé.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Empile les jobs récurrents (discover_emarque, reconcile_schedule,
+      # check_all_derogations) — idempotent : ne duplique jamais un job déjà
+      # en attente/en cours pour un club (contrainte unique côté DB).
+      - name: Empiler les jobs FBI récurrents
+        run: |
+          curl --fail --silent --show-error --max-time 60 \
+            -X GET "https://club-manager-api-two.vercel.app/internal/cron/fbi-enqueue" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+
+      # Traite UN job de la file (dérogation, calendrier ou téléchargement
+      # e-Marque — quel qu'il soit, le plus ancien en premier). Un statut 200
+      # avec "claimed": 0 signifie juste qu'il n'y avait rien à traiter, ce
+      # n'est jamais une erreur.
+      - name: Traiter un job FBI en attente
+        run: |
+          curl --fail --silent --show-error --max-time 300 \
+            -X GET "https://club-manager-api-two.vercel.app/internal/cron/fbi-jobs" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"

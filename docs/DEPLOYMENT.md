@@ -128,6 +128,29 @@ jour au lieu de quasi temps réel. Sur un plan Pro (ou supérieur), remettre
 les fréquences d'origine ci-dessus (en commentaire) pour retrouver une
 synchronisation toutes les 5 à 15 minutes.
 
+### Relai GitHub Actions pour `fbi-enqueue`/`fbi-jobs` (`*/15 * * * *`)
+
+Retour du club, 2026-09-29 : une fois par jour est bien trop lent pour les
+dérogations ("faut le faire tres souvent par jour") et pour rattraper
+plusieurs matchs d'un même weekend au rythme d'UN SEUL job traité par
+invocation (`JOB_BATCH_SIZE = 1`, voir `src/api/internal/index.ts` —
+constaté le 2026-09-29 : 9 matchs en attente auraient mis 9 jours à se
+vider au rythme du cron Vercel seul). `.github/workflows/fbi-frequent-
+sync.yml` (dans ce repo, gratuit, hors Vercel) appelle `/internal/cron/
+fbi-enqueue` puis `/internal/cron/fbi-jobs` toutes les 15 minutes — la
+fréquence prévue à l'origine avant la contrainte du plan Hobby. Requiert un
+secret de dépôt GitHub `CRON_SECRET` (Settings → Secrets and variables →
+Actions), IDENTIQUE à la variable d'environnement `CRON_SECRET` déjà
+configurée côté Vercel — jamais généré séparément, sinon les appels
+échouent en 401.
+
+Ne touche jamais à `/internal/cron/emarque-parse` : laissé à une fois par
+jour sur son cron `vercel.json` existant, à la demande explicite du club
+("pour les stats, 1 fois par jour ca suffit car c que sur les weekends les
+matchs") — seule l'ÉTAPE DE TÉLÉCHARGEMENT (`discover_emarque`, empilée/
+traitée par `fbi-enqueue`/`fbi-jobs`) profite du rythme plus rapide, jamais
+la transformation en statistiques elle-même.
+
 ## Ce que ce déploiement NE fait PAS
 
 - Ne crée pas de nouveau projet Supabase.
