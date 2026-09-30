@@ -3,6 +3,14 @@ import { logError } from "../logger.js";
 
 const UNIQUE_VIOLATION = "23505";
 
+/**
+ * Fenêtre "déjà lancé aujourd'hui" (voir `hasRecentJob` ci-dessous), en
+ * millisecondes — un peu sous 24h pour que la cadence dérive naturellement
+ * plus tôt dans la journée plutôt que de risquer de sauter un jour si le
+ * cron GitHub Actions a le moindre retard/jitter.
+ */
+const ALREADY_RAN_TODAY_WINDOW_MS = 20 * 60 * 60 * 1000;
+
 export interface EnqueueFbiVerificationJobsResult {
   reconcileScheduleCreated: boolean;
   reconcileScheduleAlreadyQueued: boolean;
@@ -25,9 +33,22 @@ export interface EnqueueFbiVerificationJobsResult {
  * Gate sur `fbi_integration_status.configured` uniquement (jamais
  * `auto_import_emarque`, propre à la récupération e-Marque — voir
  * `enqueueEmarqueDiscoveryJobsForClub` — sans rapport avec le calendrier ou
- * les dérogations). Idempotent : la contrainte unique de `fbi_jobs` (un
- * seul job actif de ce type par club) absorbe un appel répété le lendemain
- * sans dupliquer si la veille n'a pas encore été traitée.
+ * les dérogations).
+ *
+ * Idempotent "une fois par jour" via `hasRecentJob` (fenêtre glissante,
+ * `created_at`, TOUS statuts confondus) — PAS juste via la contrainte
+ * unique de `fbi_jobs` (un seul job ACTIF de ce type par club). Constaté en
+ * production le 2026-09-30 : depuis le passage du cron Vercel (1x/jour) au
+ * relai GitHub Actions (toutes les 15 minutes, voir fbi-frequent-sync.yml), un job
+ * `reconcile_schedule`/`check_all_derogations` qui RÉUSSIT libère
+ * IMMÉDIATEMENT la contrainte unique (elle ne couvre que pending/claimed/
+ * running) — le cycle suivant, 15 minutes plus tard, en recrée un neuf.
+ * Résultat sur une seule journée : 39 `check_all_derogations` + 23
+ * `reconcile_schedule` exécutés (au lieu d'1 chacun), qui doivent CHACUN se
+ * reconnecter à FBI — ces connexions à répétition monopolisaient la file
+ * `fbi_jobs` (traitée à 1 job/cycle, voir `JOB_BATCH_SIZE`) et empêchaient
+ * des `discover_emarque` bien plus anciens d'être ne serait-ce que
+ * réclamés une seule fois en 11h, malgré un ordre de priorité correct.
  */
 export async function enqueueFbiVerificationJobsForClub(supabase: DbClient, clubId: string): Promise<EnqueueFbiVerificationJobsResult> {
   const result: EnqueueFbiVerificationJobsResult = {
@@ -49,25 +70,46 @@ export async function enqueueFbiVerificationJobsForClub(supabase: DbClient, club
     return result;
   }
 
-  const { error: reconcileError } = await supabase.from("fbi_jobs").insert({ club_id: clubId, type: "reconcile_schedule" });
-  if (!reconcileError) {
-    result.reconcileScheduleCreated = true;
-  } else if (reconcileError.code === UNIQUE_VIOLATION) {
+  if (await hasRecentJob(supabase, clubId, "reconcile_schedule")) {
     result.reconcileScheduleAlreadyQueued = true;
   } else {
-    logError("Création du job de rapprochement calendrier échouée (cron)", reconcileError, { clubId });
+    const { error: reconcileError } = await supabase.from("fbi_jobs").insert({ club_id: clubId, type: "reconcile_schedule" });
+    if (!reconcileError) {
+      result.reconcileScheduleCreated = true;
+    } else if (reconcileError.code === UNIQUE_VIOLATION) {
+      result.reconcileScheduleAlreadyQueued = true;
+    } else {
+      logError("Création du job de rapprochement calendrier échouée (cron)", reconcileError, { clubId });
+    }
   }
 
-  const { error: derogationsError } = await supabase.from("fbi_jobs").insert({ club_id: clubId, type: "check_all_derogations" });
-  if (!derogationsError) {
-    result.checkAllDerogationsCreated = true;
-  } else if (derogationsError.code === UNIQUE_VIOLATION) {
+  if (await hasRecentJob(supabase, clubId, "check_all_derogations")) {
     result.checkAllDerogationsAlreadyQueued = true;
   } else {
-    logError("Création du job de vérification globale des dérogations échouée (cron)", derogationsError, { clubId });
+    const { error: derogationsError } = await supabase.from("fbi_jobs").insert({ club_id: clubId, type: "check_all_derogations" });
+    if (!derogationsError) {
+      result.checkAllDerogationsCreated = true;
+    } else if (derogationsError.code === UNIQUE_VIOLATION) {
+      result.checkAllDerogationsAlreadyQueued = true;
+    } else {
+      logError("Création du job de vérification globale des dérogations échouée (cron)", derogationsError, { clubId });
+    }
   }
 
   return result;
+}
+
+/** Un job de ce type a-t-il déjà été créé pour ce club dans la fenêtre "aujourd'hui" (tous statuts confondus) ? */
+async function hasRecentJob(supabase: DbClient, clubId: string, type: "reconcile_schedule" | "check_all_derogations"): Promise<boolean> {
+  const since = new Date(Date.now() - ALREADY_RAN_TODAY_WINDOW_MS).toISOString();
+  const { data, error } = await supabase.from("fbi_jobs").select("id").eq("club_id", clubId).eq("type", type).gte("created_at", since).limit(1);
+
+  if (error) {
+    logError("Vérification du job récent échouée (cron) — on suppose aucun job récent par sécurité", error, { clubId, type });
+    return false;
+  }
+
+  return (data?.length ?? 0) > 0;
 }
 
 export interface EnqueueFbiVerificationJobsAllClubsResult {
