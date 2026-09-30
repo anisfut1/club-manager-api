@@ -617,6 +617,29 @@ export function seasonSelect(page: Page): Locator {
 }
 
 /**
+ * Sélecteur de division/poule du formulaire de recherche — `select` dont
+ * le `name` contient "division" (`...rechercherRencontreSaisieResultatBean.idDivision`).
+ * Vide par défaut ("Division"), ses options portent un LIBELLÉ du type
+ * "0034 - Plateaux - BU15MN1" (jamais une valeur devinable, un ID interne
+ * FFBB opaque type "200000002899671") et une valeur (`value`) VIDE laisse
+ * le filtre non appliqué côté serveur.
+ *
+ * Constaté en production le 2026-09-30 (job 3f0d54ad, match 312f32c0) :
+ * laisser ce filtre VIDE en misant uniquement sur la comparaison de la
+ * colonne "Division" du tableau de RÉSULTATS (voir `resultsTableColumns`)
+ * ne suffit pas — une recherche par numéro seul, sans division sélectionnée
+ * ICI dans le FORMULAIRE, peut renvoyer un tableau de résultats
+ * COMPLÈTEMENT VIDE (aucune ligne, quelle que soit sa division) plutôt que
+ * "toutes les divisions confondues" comme on pourrait le supposer — la
+ * page semble nécessiter une division explicite pour retourner quoi que ce
+ * soit de fiable. Sélectionner la division ICI, en amont, est donc requis
+ * en plus du filtre en aval sur le tableau de résultats.
+ */
+export function divisionSelect(page: Page): Locator {
+  return page.locator('select[name*="division" i]').first();
+}
+
+/**
  * Diagnostic — dump du HTML BRUT du formulaire de RECHERCHE (jamais "le
  * premier `<form>` de la page"), plafonné.
  *

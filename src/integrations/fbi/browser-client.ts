@@ -307,7 +307,7 @@ export class BrowserFbiClient {
 
     const trace: string[] = [];
     trace.push(await this.tryNavigateToSearchScreen(page));
-    trace.push(await this.tryPrepareSearchFilters(page, season));
+    trace.push(await this.tryPrepareSearchFilters(page, season, division));
     trace.push(await this.trySearchByMatchNumber(page, matchNumber));
     const openResult = await this.tryOpenMatchResult(page, matchNumber, division);
     trace.push(openResult.trace);
@@ -566,8 +566,17 @@ export class BrowserFbiClient {
    *    `match.match_datetime` via `resolveSeasonLabel`) est utilisé pour
    *    choisir l'option dont le LIBELLÉ contient cette saison (jamais une
    *    valeur de `<option>` devinée).
+   * 3. Constaté en production le 2026-09-30 (job 3f0d54ad, match 312f32c0,
+   *    "Page de résultat introuvable") : une recherche par numéro SEUL,
+   *    sans division sélectionnée ICI, peut renvoyer un tableau de
+   *    résultats ENTIÈREMENT VIDE (zéro ligne, quelle que soit la
+   *    division) — voir `selectors.divisionSelect`. `division` (le CODE
+   *    de compétition, ex "BU15MN1") est donc AUSSI utilisé pour choisir
+   *    l'option de la division dont le libellé le CONTIENT, même principe
+   *    que la saison. `null` (compétition inconnue) laisse ce filtre non
+   *    appliqué — repli best-effort, jamais un échec.
    */
-  private async tryPrepareSearchFilters(page: Page, season: string | null): Promise<string> {
+  private async tryPrepareSearchFilters(page: Page, season: string | null, division: string | null = null): Promise<string> {
     const notes: string[] = [];
 
     try {
@@ -596,7 +605,15 @@ export class BrowserFbiClient {
             if (!label.includes(season)) continue;
 
             const value = await options.nth(i).getAttribute("value").catch(() => null);
-            await select.selectOption(value !== null ? { value } : { label });
+            // `force: true` : le VRAI select FBI est enveloppé par un widget
+            // "bootstrap-select" (`<div class="dropdown bootstrap-select ...">`,
+            // confirmé par le dump de formulaire capturé en production le
+            // 2026-09-30) qui cache le `<select>` natif (display:none) derrière
+            // un faux bouton/menu déroulant — Playwright refuse d'interagir
+            // avec un élément non visible sans ce flag, même si la valeur se
+            // soumet correctement une fois forcée (c'est le `<select>` natif,
+            // pas le widget visuel, qui compte pour la soumission du formulaire).
+            await select.selectOption(value !== null ? { value } : { label }, { force: true });
             matchedLabel = label;
             break;
           }
@@ -608,8 +625,39 @@ export class BrowserFbiClient {
       }
     }
 
+    if (division) {
+      try {
+        const select = selectors.divisionSelect(page);
+        const selectCount = await select.count().catch(() => 0);
+        if (selectCount === 0) {
+          notes.push("aucun sélecteur de division trouvé");
+        } else {
+          const options = select.locator("option");
+          const optionCount = await options.count().catch(() => 0);
+          let matchedLabel: string | null = null;
+
+          for (let i = 0; i < optionCount; i += 1) {
+            const label = (await options.nth(i).textContent().catch(() => null))?.trim() ?? "";
+            if (!label.includes(division)) continue;
+
+            const value = await options.nth(i).getAttribute("value").catch(() => null);
+            // `force: true` : voir le commentaire équivalent sur la saison
+            // ci-dessus — le vrai select "division" FBI est lui aussi caché
+            // derrière un widget bootstrap-select.
+            await select.selectOption(value !== null ? { value } : { label }, { force: true });
+            matchedLabel = label;
+            break;
+          }
+
+          notes.push(matchedLabel ? `division "${matchedLabel}" sélectionnée` : `aucune option de division ne contient "${division}"`);
+        }
+      } catch (error) {
+        notes.push(`sélecteur de division trouvé mais la sélection a échoué : ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
     await this.settle(page);
-    return notes.length > 0 ? notes.join(" ; ") : "aucun filtre à ajuster (case non joué déjà décochée, pas de saison fournie)";
+    return notes.length > 0 ? notes.join(" ; ") : "aucun filtre à ajuster (case non joué déjà décochée, pas de saison/division fournie)";
   }
 
   private async trySearchByMatchNumber(page: Page, matchNumber: string): Promise<string> {

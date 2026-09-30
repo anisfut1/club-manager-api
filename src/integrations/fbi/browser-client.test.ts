@@ -312,6 +312,22 @@ describe("BrowserFbiClient.findEmarqueDocuments (§ 'Dix-huitième déclenchemen
 
     await client.closeSession(session);
   });
+
+  it("sélectionne aussi la division du match AVANT de chercher — constaté en production le 2026-09-30 (job 3f0d54ad, match 312f32c0) : une recherche par numéro seul, sans division sélectionnée ICI, peut renvoyer un tableau de résultats entièrement VIDE, pas juste 'toutes divisions confondues'", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 100 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    const error = await client.findEmarqueDocuments(session, "77777", null, "Division 42").catch((e: unknown) => e);
+
+    expect(error).toMatchObject({ code: "EMARQUE_MATCH_PAGE_NOT_REACHED" });
+    const message = (error as Error).message;
+    expect(message).toContain('division "Division 42 - Some Long Descriptive Label For Padding" sélectionnée');
+    // Même preuve que pour la saison : l'URL après soumission inclut la
+    // valeur ("42") de l'option choisie, donc réellement soumise au serveur.
+    expect(message).toContain("idDivision=42");
+
+    await client.closeSession(session);
+  });
 });
 
 describe("BrowserFbiClient.fetchScheduleRows (rapprochement calendrier FFBB/FBI, voir docs/FBI.md)", () => {
