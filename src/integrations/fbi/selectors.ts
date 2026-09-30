@@ -336,7 +336,7 @@ export function searchSubmitControl(page: Page): Locator {
  * `matchNumberInResultsTable`. `null` quand la page courante n'a pas cette
  * forme (pas la bonne page).
  */
-async function resultsTableColumns(page: Page): Promise<{ numeroColIndex: number; emColIndex: number } | null> {
+async function resultsTableColumns(page: Page): Promise<{ numeroColIndex: number; emColIndex: number; divisionColIndex: number } | null> {
   const headerCells = page.locator("table th, table thead td");
   const headerTexts = await headerCells.allTextContents().catch(() => []);
   const trimmedHeaders = headerTexts.map((t) => t.trim());
@@ -345,7 +345,16 @@ async function resultsTableColumns(page: Page): Promise<{ numeroColIndex: number
   const emColIndex = trimmedHeaders.findIndex((t) => t === "EM");
   if (numeroColIndex === -1 || emColIndex === -1) return null;
 
-  return { numeroColIndex, emColIndex };
+  // "Division" (§ "82 vs 51", docs/FBI.md, 2026-09-27 — même bug que
+  // rechercherDerogation.fbi, jamais corrigé ici avant le retour du club du
+  // 2026-09-30 : "tu confonds les matchs") : `N°` n'est PAS unique au club,
+  // le même numéro existe dans plusieurs divisions/catégories. `-1` (colonne
+  // absente) laisse `emarqueColumnLinkForMatch`/`matchNumberInResultsTable`
+  // ignorer ce filtre plutôt que d'échouer — même repli best-effort que
+  // `fetchDerogationForMatch`.
+  const divisionColIndex = trimmedHeaders.findIndex((t) => t === "Division");
+
+  return { numeroColIndex, emColIndex, divisionColIndex };
 }
 
 /**
@@ -364,7 +373,7 @@ async function resultsTableColumns(page: Page): Promise<{ numeroColIndex: number
  * numéro, ou quand la colonne "EM" de la ligne trouvée est vide (match
  * pas encore joué/sans e-Marque — cas légitime, pas un échec).
  */
-export async function emarqueColumnLinkForMatch(page: Page, matchNumber: string): Promise<Locator | null> {
+export async function emarqueColumnLinkForMatch(page: Page, matchNumber: string, division: string | null = null): Promise<Locator | null> {
   const columns = await resultsTableColumns(page);
   if (!columns) return null;
 
@@ -376,6 +385,16 @@ export async function emarqueColumnLinkForMatch(page: Page, matchNumber: string)
     const cells = row.locator("td");
     const numeroText = (await cells.nth(columns.numeroColIndex).textContent().catch(() => null))?.trim();
     if (numeroText !== matchNumber) continue;
+
+    // `division` (§ "82 vs 51", docs/FBI.md, 2026-09-27) : même désambiguïsation
+    // que `fetchDerogationForMatch` — `N°` seul n'est PAS unique au club (retour
+    // du club, 2026-09-30 : stats d'un match U11 attachées à un match U15
+    // partageant le même numéro). `null`/colonne absente : repli best-effort,
+    // jamais un échec.
+    if (division !== null && columns.divisionColIndex !== -1) {
+      const divisionText = (await cells.nth(columns.divisionColIndex).textContent().catch(() => null))?.trim();
+      if (divisionText !== division) continue;
+    }
 
     const emCell = cells.nth(columns.emColIndex);
     const emLink = emCell.locator("a, button").first();
@@ -405,7 +424,7 @@ export async function emarqueColumnLinkForMatch(page: Page, matchNumber: string)
  * "1" ne correspond jamais exactement à une cellule contenant "2813" ou
  * "9999".
  */
-export async function matchNumberInResultsTable(page: Page, matchNumber: string): Promise<boolean | null> {
+export async function matchNumberInResultsTable(page: Page, matchNumber: string, division: string | null = null): Promise<boolean | null> {
   const columns = await resultsTableColumns(page);
   if (!columns) return null;
 
@@ -415,7 +434,15 @@ export async function matchNumberInResultsTable(page: Page, matchNumber: string)
   for (let i = 0; i < rowCount; i += 1) {
     const cells = rows.nth(i).locator("td");
     const numeroText = (await cells.nth(columns.numeroColIndex).textContent().catch(() => null))?.trim();
-    if (numeroText === matchNumber) return true;
+    if (numeroText !== matchNumber) continue;
+
+    // Même désambiguïsation par division que `emarqueColumnLinkForMatch` — voir sa doc.
+    if (division !== null && columns.divisionColIndex !== -1) {
+      const divisionText = (await cells.nth(columns.divisionColIndex).textContent().catch(() => null))?.trim();
+      if (divisionText !== division) continue;
+    }
+
+    return true;
   }
 
   return false;

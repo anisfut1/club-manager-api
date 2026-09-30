@@ -68,13 +68,24 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
 
   const { data: match, error: matchError } = await supabase
     .from("matches")
-    .select("id, club_id, numero, match_datetime")
+    .select("id, club_id, numero, match_datetime, competition_id")
     .eq("id", job.match_id)
     .single();
 
   if (matchError || !match || !match.numero) {
     await failJob(supabase, job, `Match introuvable ou sans numéro de rencontre : ${matchError?.message ?? "numero manquant"}`);
     return false;
+  }
+
+  // `division` (§ "82 vs 51", docs/FBI.md, 2026-09-27 ; retour du club,
+  // 2026-09-30 : "tu confonds les matchs") désambiguïse un numéro de
+  // rencontre qui n'est PAS unique au club — même dérivation que
+  // `process-check-derogation.ts`. `null` (compétition inconnue) reste un
+  // repli best-effort, jamais un échec du job.
+  let division: string | null = null;
+  if (match.competition_id) {
+    const { data: competition } = await supabase.from("competitions").select("code").eq("id", match.competition_id).maybeSingle();
+    division = competition?.code ?? null;
   }
 
   const credentials = await getFbiCredentials(supabase, job.club_id);
@@ -112,7 +123,7 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
 
   try {
     const season = resolveSeasonLabel(match.match_datetime);
-    const { documents, diagnostic } = await client.findEmarqueDocuments(session, match.numero, season);
+    const { documents, diagnostic } = await client.findEmarqueDocuments(session, match.numero, season, division);
 
     if (documents.length === 0) {
       await supabase.from("matches").update({ emarque_status: "waiting_for_emarque" }).eq("id", job.match_id);

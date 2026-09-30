@@ -115,7 +115,7 @@ export interface FbiDerogationRow extends FbiDerogationDetailFields {
 export interface FbiAutomationClient<TSession> {
   login(credentials: FbiCredentialsInput): Promise<TSession>;
   isSessionValid(session: TSession): Promise<boolean>;
-  findEmarqueDocuments(session: TSession, matchNumber: string): Promise<EmarqueDocumentRef[]>;
+  findEmarqueDocuments(session: TSession, matchNumber: string, division?: string | null): Promise<EmarqueDocumentRef[]>;
   downloadDocument(session: TSession, url: string): Promise<Buffer>;
   /**
    * Récupère TOUTES les rencontres du club listées par FBI (calendrier

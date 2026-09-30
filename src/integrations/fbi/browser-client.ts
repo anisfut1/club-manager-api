@@ -276,6 +276,18 @@ export class BrowserFbiClient {
    * `season` (format "2025-2026", voir `resolveSeasonLabel` côté appelant)
    * est OPTIONNEL mais fortement recommandé : voir `tryPrepareSearchFilters`.
    *
+   * `division` (§ "82 vs 51", docs/FBI.md, 2026-09-27 — même désambiguïsation
+   * que `fetchDerogationForMatch`, jamais appliquée ICI avant le retour du
+   * club du 2026-09-30, "tu confonds les matchs") : un numéro de rencontre
+   * n'est PAS unique au club — confirmé en base le 2026-09-30, un même club
+   * pouvant avoir 4 matchs de catégories différentes portant le numéro "6"
+   * la même saison. Sans ce filtre, la première ligne du tableau de
+   * résultats partageant ce numéro était acceptée, quelle que soit sa
+   * catégorie/poule — les stats et licences d'UN AUTRE match (autre
+   * catégorie, même club) s'attachaient alors silencieusement au mauvais
+   * match. `null` (compétition inconnue) reste un repli best-effort, jamais
+   * un échec du job.
+   *
    * `diagnostic` (§ "Vingt-septième déclenchement", docs/FBI.md) : rempli
    * UNIQUEMENT quand `documents` est vide, avec la même trace/dump riche
    * qu'un échec dur — l'appelant (`process-discover-emarque.ts`) le
@@ -285,14 +297,19 @@ export class BrowserFbiClient {
    * et coller manuellement — un aller-retour coûteux répété à chaque
    * itération de correctif).
    */
-  async findEmarqueDocuments(session: BrowserFbiSession, matchNumber: string, season: string | null = null): Promise<{ documents: { url: string; fileName: string }[]; diagnostic: string | null }> {
+  async findEmarqueDocuments(
+    session: BrowserFbiSession,
+    matchNumber: string,
+    season: string | null = null,
+    division: string | null = null,
+  ): Promise<{ documents: { url: string; fileName: string }[]; diagnostic: string | null }> {
     const { page } = session;
 
     const trace: string[] = [];
     trace.push(await this.tryNavigateToSearchScreen(page));
     trace.push(await this.tryPrepareSearchFilters(page, season));
     trace.push(await this.trySearchByMatchNumber(page, matchNumber));
-    const openResult = await this.tryOpenMatchResult(page, matchNumber);
+    const openResult = await this.tryOpenMatchResult(page, matchNumber, division);
     trace.push(openResult.trace);
 
     /**
@@ -318,7 +335,7 @@ export class BrowserFbiClient {
      * le seul recours sur une page SANS tableau (ex : page de détail après
      * clic sur le lien EM).
      */
-    const tableMatch = await selectors.matchNumberInResultsTable(page, matchNumber);
+    const tableMatch = await selectors.matchNumberInResultsTable(page, matchNumber, division);
     const pageConfirmsMatch = tableMatch !== null ? tableMatch : await selectors.pageMentionsMatchNumber(page, matchNumber);
     if (!pageConfirmsMatch) {
       const title = await page.title().catch(() => "?");
@@ -694,7 +711,7 @@ export class BrowserFbiClient {
     }
   }
 
-  private async tryOpenMatchResult(page: Page, matchNumber: string): Promise<{ trace: string; discoveredDocument: { url: string; fileName: string } | null }> {
+  private async tryOpenMatchResult(page: Page, matchNumber: string, division: string | null = null): Promise<{ trace: string; discoveredDocument: { url: string; fileName: string } | null }> {
     /**
      * Constaté en production le 2026-09-24 (capture d'écran du VRAI FBI
      * fournie par le club) : le tableau de résultats a une colonne "EM"
@@ -706,7 +723,7 @@ export class BrowserFbiClient {
      * cliquer n'importe quoi sur la ligne, jamais spécifiquement la
      * colonne e-Marque).
      */
-    const emLink = await selectors.emarqueColumnLinkForMatch(page, matchNumber).catch(() => null);
+    const emLink = await selectors.emarqueColumnLinkForMatch(page, matchNumber, division).catch(() => null);
     if (!emLink) {
       return {
         trace: `pas de lien e-Marque trouvé pour la rencontre "${matchNumber}" (colonne EM absente, ligne introuvable, ou colonne EM vide — match pas encore joué)`,
