@@ -1918,14 +1918,48 @@ export class BrowserFbiClient {
    * touché par ce module est celui de @sparticuz/chromium dans `/tmp`,
    * voir browser-launcher.ts).
    */
+  /**
+   * Jusqu'à 3 tentatives, UNIQUEMENT sur une erreur réseau (`connect
+   * ETIMEDOUT`/`ECONNRESET`...) — jamais sur une vraie réponse HTTP
+   * (`!response.ok()`, ex : 404/403), qu'un retry ne corrigerait jamais.
+   * Retour du club, 2026-09-30 : plusieurs `connect ETIMEDOUT` consécutifs
+   * vers `extranet.ffbb.com` depuis cette fonction Vercel (voir aussi
+   * `vercel.json` — région fixée sur Paris pour rapprocher le trajet réseau
+   * du serveur FFBB) — un blip isolé de quelques secondes ne doit pas
+   * coûter tout un cycle de replanification `discover_emarque` (plusieurs
+   * minutes de backoff) quand une nouvelle tentative immédiate suffit
+   * souvent.
+   */
   async downloadDocument(session: BrowserFbiSession, url: string): Promise<Buffer> {
-    const response = await session.context.request.get(url);
+    const maxAttempts = 3;
+    let lastNetworkError: unknown;
 
-    if (!response.ok()) {
-      throw new FbiError(`Téléchargement FBI : réponse HTTP ${response.status()} (${url})`, "REQUEST_FAILED");
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      let response;
+      try {
+        response = await session.context.request.get(url);
+      } catch (error) {
+        lastNetworkError = error;
+        if (attempt < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+          continue;
+        }
+        throw new FbiError(
+          `Téléchargement FBI : échec réseau après ${maxAttempts} tentatives (${url}) : ${error instanceof Error ? error.message : String(error)}`,
+          "REQUEST_FAILED",
+          error,
+        );
+      }
+
+      if (!response.ok()) {
+        throw new FbiError(`Téléchargement FBI : réponse HTTP ${response.status()} (${url})`, "REQUEST_FAILED");
+      }
+
+      return response.body();
     }
 
-    return response.body();
+    // Jamais atteint (la dernière itération lève toujours) — TypeScript ne le sait pas.
+    throw new FbiError(`Téléchargement FBI : échec réseau après ${maxAttempts} tentatives (${url})`, "REQUEST_FAILED", lastNetworkError);
   }
 
   async closeSession(session: BrowserFbiSession): Promise<void> {
