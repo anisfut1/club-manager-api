@@ -754,6 +754,28 @@ export class BrowserFbiClient {
       await input.fill(matchNumber);
 
       /**
+       * Attente EXPLICITE de la vraie requête DataTables (§ 2026-09-30,
+       * job 3f0d54ad/match 312f32c0, multiples tentatives à code
+       * STRICTEMENT identique tantôt réussies tantôt échouées avec "aucune
+       * ligne trouvée") : le tableau de résultats est peuplé en deux temps
+       * — une réponse STATIQUE vide au clic "Rechercher" (juste la
+       * structure HTML), suivie d'un appel AJAX SÉPARÉ DataTables
+       * (`...action=executeRecherche&...`) qui apporte les VRAIES lignes
+       * (`aaData`). `this.settle(page)` + `networkidle` (ci-dessous) ne
+       * garantissent PAS que CET appel précis a eu le temps de se
+       * terminer ET d'être rendu dans le DOM avant que
+       * `tryOpenMatchResult` ne lise le tableau — d'où l'instabilité
+       * observée (parfois la course est gagnée, parfois perdue). Armé
+       * AVANT le clic (jamais après, pour ne pas rater une réponse trop
+       * rapide) plutôt qu'un simple délai — best-effort : `null` si non
+       * détecté, `trySearchByMatchNumber` continue quand même (repli sur
+       * l'ancien comportement settle/networkidle).
+       */
+      const dataTablesResponsePromise = page
+        .waitForResponse((response) => response.url().includes("action=executeRecherche"), { timeout: 8000 })
+        .catch(() => null);
+
+      /**
        * Constaté en production le 2026-09-24 (capture d'écran du VRAI FBI) :
        * un bouton "RECHERCHER" explicite valide le formulaire — `press
        * ("Enter")` seul ne suffit pas toujours à soumettre un formulaire
@@ -772,6 +794,8 @@ export class BrowserFbiClient {
         await input.press("Enter");
       }
 
+      const dataTablesResponse = await dataTablesResponsePromise;
+
       /**
        * Attente réseau EN PLUS du délai fixe (§ "Vingtième déclenchement",
        * docs/FBI.md) : les noms de champs réels
@@ -786,6 +810,13 @@ export class BrowserFbiClient {
        */
       await this.settle(page);
       await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+      /**
+       * Si la réponse DataTables est arrivée APRÈS `networkidle` (elle
+       * peut très bien suivre une pause réseau de 500ms puis reprendre),
+       * laisse un court instant supplémentaire au rendu DOM de se faire
+       * avant que `tryOpenMatchResult` ne lise le tableau.
+       */
+      if (dataTablesResponse) await this.settle(page);
 
       const urlAfter = page.url();
       const submitNote = submitText ? ` (bouton "${submitText}" cliqué)` : " (aucun bouton trouvé, Entrée pressée)";
