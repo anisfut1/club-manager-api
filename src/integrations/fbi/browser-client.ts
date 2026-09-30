@@ -2051,7 +2051,34 @@ export class BrowserFbiClient {
     throw new FbiError(`Téléchargement FBI : échec réseau après ${maxAttempts} tentatives (${url})`, "REQUEST_FAILED", lastNetworkError);
   }
 
+  /**
+   * Déconnexion RÉELLE côté serveur FBI avant de fermer le contexte
+   * Playwright local — jamais fait jusqu'ici (§ 2026-09-30, investigation
+   * du match 312f32c0/job 3f0d54ad) : `closeSession` se contentait de
+   * `context.close()`, qui ferme le navigateur LOCAL mais ne révoque
+   * jamais la session serveur FBI (cookie JSESSIONID toujours valide côté
+   * FBI jusqu'à son expiration naturelle). Chaque job (`discover_emarque`,
+   * `reconcile_schedule`, `check_all_derogations`, `test_connection`) se
+   * reconnecte à chaque fois — plusieurs dizaines de connexions par jour
+   * pour ce club, JAMAIS refermées côté serveur. Sur une appli legacy
+   * (JSF/Struts, noms de champs `identificationForm.identificationBean...`)
+   * une accumulation de sessions actives pour le MÊME compte est un
+   * terrain connu pour des comportements dégradés/incohérents (état
+   * DataTables corrompu par un thread serveur concurrent, limite de
+   * sessions actives, etc.) — cohérent avec l'instabilité constatée ce
+   * jour même sur CE match (résultats de recherche tantôt trouvés tantôt
+   * vides, clic EM tantôt capté tantôt silencieux, sans changement de
+   * code entre deux essais identiques). Navigation directe (même
+   * principe que `tryNavigateToSearchScreen`) plutôt que de chercher un
+   * lien "Déconnexion" à cliquer — best-effort strict : jamais bloquer la
+   * fermeture du contexte local si la déconnexion serveur échoue.
+   */
   async closeSession(session: BrowserFbiSession): Promise<void> {
+    try {
+      await session.page.goto(`${this.baseUrl}/deconnexion.fbi`, { waitUntil: "domcontentloaded", timeout: 10000 });
+    } catch {
+      // Best effort — la fermeture du contexte local ci-dessous reste la priorité.
+    }
     await session.context.close();
   }
 }
