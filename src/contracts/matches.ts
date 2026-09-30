@@ -46,6 +46,16 @@ export const MatchListItemDtoSchema = z
     matchDatetime: z.string().nullable(),
     isHome: z.boolean().nullable(),
     teamName: z.string().nullable(),
+    /**
+     * Compétition FFBB du match (`competitions.name`) et sa catégorie
+     * (`competitions.category_label`, ex. "U9") — retour du club, 2026-10-01 :
+     * "sur des matchs extérieur, on sait pas c quelle équipe qui joue". Certains
+     * matchs (plateaux U9, brassages) n'ont pas d'équipe du club rattachée
+     * (`team_id` null) : la compétition reste la seule donnée FFBB fiable pour
+     * savoir de quelle catégorie il s'agit. `null` si aucune compétition liée.
+     */
+    competitionName: z.string().nullable(),
+    categoryLabel: z.string().nullable(),
     opponentName: z.string().nullable(),
     /**
      * URL construite ({FFBB_API_BASE_URL}assets/{id}) — pas encore confirmé
@@ -154,6 +164,16 @@ export const MatchDetailsDtoSchema = z
     matchDatetime: z.string().nullable(),
     isHome: z.boolean().nullable(),
     teamName: z.string().nullable(),
+    /**
+     * Compétition FFBB du match (`competitions.name`) et sa catégorie
+     * (`competitions.category_label`, ex. "U9") — retour du club, 2026-10-01 :
+     * "sur des matchs extérieur, on sait pas c quelle équipe qui joue". Certains
+     * matchs (plateaux U9, brassages) n'ont pas d'équipe du club rattachée
+     * (`team_id` null) : la compétition reste la seule donnée FFBB fiable pour
+     * savoir de quelle catégorie il s'agit. `null` si aucune compétition liée.
+     */
+    competitionName: z.string().nullable(),
+    categoryLabel: z.string().nullable(),
     opponentName: z.string().nullable(),
     opponentLogoUrl: z.string().nullable(),
     venueLabel: z.string().nullable(),

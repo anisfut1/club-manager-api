@@ -93,7 +93,7 @@ export async function listMatchesForClub(supabase: DbClient, club: ClubRef, quer
   let builder = supabase
     .from("matches")
     .select(
-      "id, numero, journee, match_datetime, is_home, opponent_name, opponent_logo_url, venue_raw_label, score_home, score_away, status, emarque_status, team_id",
+      "id, numero, journee, match_datetime, is_home, opponent_name, opponent_logo_url, venue_raw_label, score_home, score_away, status, emarque_status, team_id, competition_id",
       { count: "exact" },
     )
     .eq("club_id", club.id);
@@ -116,6 +116,9 @@ export async function listMatchesForClub(supabase: DbClient, club: ClubRef, quer
     : { data: [] };
   const teamNameById = new Map((teams ?? []).map((t) => [t.id, formatTeamNameWithGender(t.name, t.sexe)]));
 
+  const competitionIds = [...new Set((data ?? []).map((m) => m.competition_id).filter((id): id is string => Boolean(id)))];
+  const competitionById = await loadCompetitionLabels(supabase, competitionIds);
+
   const matchIds = (data ?? []).map((m) => m.id);
   const { data: derogationEtats } = matchIds.length
     ? await supabase.from("fbi_derogation_checks").select("match_id, etat").eq("club_id", club.id).in("match_id", matchIds)
@@ -137,6 +140,8 @@ export async function listMatchesForClub(supabase: DbClient, club: ClubRef, quer
     matchDatetime: m.match_datetime,
     isHome: m.is_home,
     teamName: m.team_id ? (teamNameById.get(m.team_id) ?? null) : null,
+    competitionName: m.competition_id ? (competitionById.get(m.competition_id)?.name ?? null) : null,
+    categoryLabel: m.competition_id ? (competitionById.get(m.competition_id)?.categoryLabel ?? null) : null,
     opponentName: m.opponent_name,
     opponentLogoUrl: m.opponent_logo_url,
     venueLabel: m.venue_raw_label,
@@ -155,7 +160,7 @@ export async function loadMatchDetails(supabase: DbClient, club: ClubRef, matchI
   const { data: match } = await supabase
     .from("matches")
     .select(
-      "id, numero, journee, match_datetime, is_home, opponent_name, opponent_logo_url, venue_raw_label, score_home, score_away, status, emarque_status, team_id",
+      "id, numero, journee, match_datetime, is_home, opponent_name, opponent_logo_url, venue_raw_label, score_home, score_away, status, emarque_status, team_id, competition_id",
     )
     .eq("id", matchId)
     .eq("club_id", club.id)
@@ -166,6 +171,7 @@ export async function loadMatchDetails(supabase: DbClient, club: ClubRef, matchI
   const { data: team } = match.team_id
     ? await supabase.from("teams").select("name, sexe").eq("id", match.team_id).eq("club_id", club.id).maybeSingle()
     : { data: null };
+  const competition = match.competition_id ? (await loadCompetitionLabels(supabase, [match.competition_id])).get(match.competition_id) : undefined;
 
   const [{ data: participants }, { data: coaches }, { data: officials }, { data: tableOfficials }, { data: stats }, { data: documents }, { data: latestImport }] =
     await Promise.all([
@@ -202,6 +208,8 @@ export async function loadMatchDetails(supabase: DbClient, club: ClubRef, matchI
     matchDatetime: match.match_datetime,
     isHome: match.is_home,
     teamName: team ? formatTeamNameWithGender(team.name, team.sexe) : null,
+    competitionName: competition?.name ?? null,
+    categoryLabel: competition?.categoryLabel ?? null,
     opponentName: match.opponent_name,
     opponentLogoUrl: match.opponent_logo_url,
     venueLabel: match.venue_raw_label,
@@ -313,4 +321,15 @@ export async function resolveDerogationStatus(supabase: DbClient, club: ClubRef,
     motifRefus: data.motif_refus,
     checkedAt: data.checked_at,
   };
+}
+
+/**
+ * Nom + catégorie des compétitions FFBB (table de référence partagée, sans
+ * `club_id` — les ids viennent toujours de matchs déjà filtrés sur le club).
+ * Une lecture en échec n'empêche jamais l'affichage des matchs : map vide.
+ */
+async function loadCompetitionLabels(supabase: DbClient, ids: string[]): Promise<Map<string, { name: string | null; categoryLabel: string | null }>> {
+  if (ids.length === 0) return new Map();
+  const { data } = await supabase.from("competitions").select("id, name, category_label").in("id", ids);
+  return new Map((data ?? []).map((c) => [c.id, { name: c.name ?? null, categoryLabel: c.category_label ?? null }]));
 }
