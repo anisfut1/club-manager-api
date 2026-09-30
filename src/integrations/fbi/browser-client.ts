@@ -817,13 +817,25 @@ export class BrowserFbiClient {
     page.on("response", onResponse);
 
     /**
-     * 3s (pas 8+) : un téléchargement natif ou une popup surviennent
-     * quasi immédiatement après le clic qui les déclenche — un délai plus
-     * long ne fait qu'allonger inutilement CHAQUE job réel (et le temps
-     * des tests) sans jamais rien détecter de plus.
+     * 10s (pas 3s) : revu à la hausse après un échec constaté en
+     * production le 2026-09-30 (job 3f0d54ad, match 312f32c0) — le clic EM
+     * a bien eu lieu (aucune erreur), mais ni téléchargement, ni popup, ni
+     * requête XHR/fetch/POST n'a été capturé dans la fenêtre de 3s
+     * d'alors. La trace de CE run montrait une activité réseau de fond
+     * significative (widget tiers "Lemon Learning" embarqué sur FBI,
+     * plusieurs appels `api.lemonlearning.com`/`player.lemonlearning.com`
+     * juste avant le clic) qui a pu retarder l'exécution JS de
+     * `telechargerMatch()` au-delà de 3s — et `page.waitForLoadState(
+     * "networkidle", { timeout: 5000 })`, exécuté AVANT ce Promise.all,
+     * peut lui-même consommer une bonne partie de ces 5s si ce widget
+     * continue de faire du bruit réseau en tâche de fond, laissant encore
+     * moins de marge réelle aux 3s d'alors. Manquer un téléchargement réel
+     * coûte un job ENTIER (replanification + nouvelle connexion FBI
+     * complète) — un délai plus généreux ici est largement rentable face à
+     * ce coût, contrairement au raisonnement initial ("3s pas 8+").
      */
-    const downloadPromise = page.waitForEvent("download", { timeout: 3000 }).catch(() => null);
-    const popupPromise = page.waitForEvent("popup", { timeout: 3000 }).catch(() => null);
+    const downloadPromise = page.waitForEvent("download", { timeout: 10000 }).catch(() => null);
+    const popupPromise = page.waitForEvent("popup", { timeout: 10000 }).catch(() => null);
 
     try {
       /**
