@@ -90,6 +90,21 @@ export async function parseEmarqueZip(zipBuffer: Buffer, context: QualityCheckCo
     await feuillematchExtractor.dispose();
   }
 
+  // TEMPORAIRE (retour du club, 2026-09-30 : "les stats sont pas rattachées
+  // au licencié" — l'équipe locale perd systématiquement sa licence sur
+  // certains documents réels alors que l'équipe visiteuse la lit
+  // correctement) — capture en base (quality_warnings, déjà lisible via
+  // Supabase MCP) les lignes de roster abandonnées faute de licence
+  // lisible, avec le texte OCR brut tenté. À supprimer une fois le
+  // diagnostic terminé — voir `debugSkippedRoster` dans parse-feuillematch.ts.
+  for (const entry of feuillematchResult.debugSkippedRoster.slice(0, 20)) {
+    warnings.push({
+      code: "DEBUG_TEMP_SKIPPED_ROW",
+      message: `[DEBUG] ${entry.teamSide} row=${entry.row} licenseText=${JSON.stringify(entry.licenseText)} nameText=${JSON.stringify(entry.nameText)}`,
+      severity: "warning",
+    });
+  }
+
   let players = feuillematchResult.players;
   let playerStats: EMarqueMatchData["playerStats"] = [];
 

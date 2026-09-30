@@ -96,7 +96,9 @@ export type QualityWarningCode =
   | "MINUTES_TOTAL_INCONSISTENT"
   | "SHOT_CHART_PARSE_FAILED"
   | "DOCUMENT_MISSING"
-  | "NO_PLAYERS_EXTRACTED";
+  | "NO_PLAYERS_EXTRACTED"
+  /** TEMPORAIRE — voir parse-emarque-zip.ts, à retirer une fois le diagnostic du 2026-09-30 terminé. */
+  | "DEBUG_TEMP_SKIPPED_ROW";
 
 export interface EMarqueQualityWarning {
   code: QualityWarningCode;

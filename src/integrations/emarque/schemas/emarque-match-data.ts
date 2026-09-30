@@ -19,6 +19,7 @@ const qualityWarningCodeSchema = z.enum([
   "SHOT_CHART_PARSE_FAILED",
   "DOCUMENT_MISSING",
   "NO_PLAYERS_EXTRACTED",
+  "DEBUG_TEMP_SKIPPED_ROW",
 ]);
 
 const playerSchema = z.object({
