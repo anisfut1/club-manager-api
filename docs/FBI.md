@@ -3818,3 +3818,41 @@ en bandeau sur `/admin/integrations/fbi` ("En cours : ... — depuis X min").
 Rendu côté serveur (page non auto-rafraîchie) : un rechargement de page
 suffit à revoir l'état à jour, pas de polling client pour un simple
 indicatif.
+
+## Régression critique : la garde de fraîcheur 10 min avait disparu — retour du club, 2026-09-30
+
+Retour du club le lendemain matin : "jai laissé tourner la nuit et jai tjr
+pas les stats sur les matchs joués", alors que le relai GitHub Actions
+(`fbi-frequent-sync.yml`, toutes les 15-20 min) avait tourné avec succès
+48 fois cette nuit-là sans interruption. Investigation en base
+(`fbi_jobs`) : 37 jobs `discover_emarque` et 1 `check_all_derogations`
+étaient `pending` avec `claimed_at IS NULL` depuis 15h la veille — JAMAIS
+réclamés, malgré des dizaines d'exécutions du cron. Un job
+`reconcile_schedule` était resté bloqué en `status = 'claimed'` depuis
+2026-09-30 01:30:34 (très probablement tué par un timeout Vercel, comme
+dans le cas documenté en 20260924140000) — plus de 6h avant d'être
+constaté.
+
+Cause racine : la migration `20260927020000_fbi_jobs_priority_by_type.sql`
+(ajout de la priorité de type dans l'`ORDER BY` de
+`claim_next_fbi_job`/`claim_next_fbi_job_for_club`) a été écrite à partir
+d'une copie de la fonction ANTÉRIEURE à
+`20260924140000_fbi_jobs_claim_stale_recovery.sql` — la clause
+`and claimed_at > now() - interval '10 minutes'` de la garde anti-blocage
+a été perdue silencieusement dans le `create or replace function`, le
+diff de cette migration se concentrant sur le nouvel `ORDER BY` sans que
+personne ne remarque la régression sur la clause `WHERE`. Résultat : un
+job `claimed`/`running` bloquait la file **indéfiniment** au lieu de 10
+minutes maximum, pour n'importe quel club touché par un job tué par un
+timeout Vercel.
+
+Corrigé par `20260930080000_fbi_jobs_claim_priority_and_staleness_fix.sql`
+— recombine les deux correctifs qui n'auraient jamais dû être perdus l'un
+pour l'autre. Vérifié en production : dès application de la migration, le
+prochain déclenchement du workflow a immédiatement réclamé un nouveau job
+pour le club malgré le job fantôme de 01:30 toujours présent en base (trace
+d'audit conservée, comme prévu). **Leçon pour toute future migration
+touchant `claim_next_fbi_job`/`claim_next_fbi_job_for_club`** : repartir
+de la dernière version en base (`pg_get_functiondef`), jamais d'un fichier
+de migration antérieur pris isolément — un `create or replace function`
+écrase silencieusement tout correctif qui n'est pas explicitement repris.
