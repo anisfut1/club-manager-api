@@ -817,6 +817,29 @@ export class BrowserFbiClient {
     page.on("response", onResponse);
 
     /**
+     * Diagnostic (§ 2026-09-30, job 3f0d54ad, match 312f32c0) : deux
+     * fenêtres élargies (recherche par division, capture download/popup
+     * 3s→10s) ont toutes deux échoué à faire apparaître le moindre
+     * téléchargement/popup/XHR après le clic EM — le clic "réussit"
+     * (aucune exception Playwright) mais `telechargerMatch()` ne produit
+     * RIEN d'observable. Capture maintenant aussi les erreurs JS
+     * (`pageerror`, ex: fonction non définie) et les messages console
+     * autour de CE clic précis — jamais fait jusqu'ici, alors que le
+     * "clic silencieux" est exactement la signature d'un gestionnaire
+     * `onclick` qui lève une exception JS avalée par le navigateur.
+     */
+    const consoleMessages: string[] = [];
+    const onConsole = (message: import("playwright-core").ConsoleMessage): void => {
+      if (message.type() === "error" || message.type() === "warning") consoleMessages.push(`[${message.type()}] ${message.text()}`);
+    };
+    const pageErrors: string[] = [];
+    const onPageError = (error: Error): void => {
+      pageErrors.push(error.message);
+    };
+    page.on("console", onConsole);
+    page.on("pageerror", onPageError);
+
+    /**
      * 10s (pas 3s) : revu à la hausse après un échec constaté en
      * production le 2026-09-30 (job 3f0d54ad, match 312f32c0) — le clic EM
      * a bien eu lieu (aucune erreur), mais ni téléchargement, ni popup, ni
@@ -871,6 +894,8 @@ export class BrowserFbiClient {
         capturedRequests.length > 0
           ? ` — requêtes réseau capturées après le clic EM : ${capturedRequests.join(" || ")}`
           : " — aucune requête XHR/fetch/POST capturée après le clic EM";
+      const pageErrorNote = pageErrors.length > 0 ? ` — erreurs JS après le clic EM : ${pageErrors.join(" || ")}` : "";
+      const consoleNote = consoleMessages.length > 0 ? ` — messages console après le clic EM : ${consoleMessages.join(" || ")}` : "";
 
       const urlAfter = page.url();
       return {
@@ -878,7 +903,9 @@ export class BrowserFbiClient {
           (urlAfter === urlBefore ? `lien EM "${text}" cliqué, mais l'URL n'a pas changé (${urlAfter})` : `lien EM "${text}" cliqué, url → ${urlAfter}`) +
           downloadNote +
           popupNote +
-          networkNote,
+          networkNote +
+          pageErrorNote +
+          consoleNote,
         discoveredDocument,
       };
     } catch (error) {
@@ -887,6 +914,8 @@ export class BrowserFbiClient {
         discoveredDocument: null,
       };
     } finally {
+      page.off("console", onConsole);
+      page.off("pageerror", onPageError);
       page.off("response", onResponse);
     }
   }
