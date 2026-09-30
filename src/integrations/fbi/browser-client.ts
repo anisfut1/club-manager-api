@@ -220,7 +220,28 @@ export class BrowserFbiClient {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${this.baseUrl}/connexion.fbi`, { waitUntil: "domcontentloaded" });
+      /**
+       * Retry réseau (§ 2026-09-30, job 3f0d54ad) : même raisonnement que
+       * `tryNavigateToSearchScreen` — un `net::ERR_CONNECTION_TIMED_OUT`
+       * (blip TCP Vercel→FFBB, pas une panne FBI ni un souci de compte,
+       * confirmé par une connexion manuelle réussie au même moment) peut
+       * survenir sur N'IMPORTE QUELLE navigation vers FFBB, pas seulement
+       * le téléchargement — la toute PREMIÈRE navigation d'un job
+       * (connexion.fbi) n'avait jusqu'ici aucun retry, faisant échouer le
+       * job entier pour un blip d'une poignée de secondes.
+       */
+      let lastNetworkError: unknown;
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          await page.goto(`${this.baseUrl}/connexion.fbi`, { waitUntil: "domcontentloaded" });
+          lastNetworkError = undefined;
+          break;
+        } catch (error) {
+          lastNetworkError = error;
+          if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+        }
+      }
+      if (lastNetworkError) throw lastNetworkError;
     } catch (error) {
       await context.close();
       throw new FbiError("Page de connexion FBI injoignable", "LOGIN_PAGE_UNREACHABLE", error);
@@ -510,7 +531,32 @@ export class BrowserFbiClient {
      */
     const targetUrl = `${this.baseUrl}/rechercherRencontreSaisieResultat.fbi`;
     try {
-      await page.goto(targetUrl, { waitUntil: "domcontentloaded" });
+      /**
+       * Retry réseau (§ 2026-09-30, job 3f0d54ad/match 312f32c0, 6ᵉ
+       * tentative) : `net::ERR_CONNECTION_TIMED_OUT` observé ici en
+       * production — un timeout TCP, pas une lenteur applicative, même
+       * signature que le blip déjà corrigé côté téléchargement
+       * (`downloadDocument`, région Vercel Paris + retry réseau) — mais
+       * cette navigation-ci n'avait encore aucun retry. Le club a confirmé
+       * pouvoir se connecter à FBI manuellement au même moment, écartant
+       * un souci FBI/compte : un blip réseau ponctuel Vercel→FFBB reste
+       * l'explication la plus probable. 3 tentatives rapprochées, jamais
+       * sur une vraie réponse HTTP (seulement sur une exception réseau de
+       * `page.goto`), même principe que `downloadDocument`.
+       */
+      let lastNetworkError: unknown;
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          await page.goto(targetUrl, { waitUntil: "domcontentloaded" });
+          lastNetworkError = undefined;
+          break;
+        } catch (error) {
+          lastNetworkError = error;
+          if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+        }
+      }
+      if (lastNetworkError) throw lastNetworkError;
+
       await this.settle(page);
       return `navigation directe vers ${targetUrl} réussie, url → ${page.url()}`;
     } catch (error) {
