@@ -320,3 +320,29 @@ describe("DELETE /v1/clubs/:clubId/licencies/:licencieId (club_admin) — suppre
     expect(state.licencies).toHaveLength(1);
   });
 });
+
+describe("POST /v1/clubs/:clubId/licencies (club_admin) — ajout manuel (coach non licencié dans ce club)", () => {
+  const post = (body: unknown) => request("", { method: "POST", body: JSON.stringify(body), headers: { authorization: "Bearer test-jwt", "content-type": "application/json" } });
+
+  it("crée la personne avec ses rôles, sans donnée FFBB", async () => {
+    state.licencies = [];
+    const res = await post({ firstName: "Karim", lastName: "Benali", email: "karim@example.test", publicCoach: true });
+    expect(res.status).toBe(201);
+    const created = (await res.json()) as { id: string; firstName: string; publicCoach: boolean; publicCoordinator: boolean; ffbbLicenceId: string | null; licenseNumber: string | null; active: boolean };
+    expect(created).toMatchObject({ firstName: "Karim", publicCoach: true, publicCoordinator: false, ffbbLicenceId: null, licenseNumber: null, active: true });
+    expect(state.licencies).toHaveLength(1);
+    expect(state.licencies[0]).toMatchObject({ club_id: CLUB_A.id, last_name: "Benali", email: "karim@example.test", public_coach: true });
+  });
+
+  it("400 sans nom, équipe d'un autre club refusée", async () => {
+    expect((await post({ firstName: "Karim" })).status).toBe(400);
+    expect((await post({ firstName: "Karim", lastName: "B", teamId: "99999999-9999-4999-8999-999999999999" })).status).toBe(400);
+  });
+
+  it("refuse (403) à un membre non club_admin", async () => {
+    currentUserId = "user-plain";
+    state.licencies = [];
+    expect((await post({ firstName: "Karim", lastName: "Benali" })).status).toBe(403);
+    expect(state.licencies).toHaveLength(0);
+  });
+});

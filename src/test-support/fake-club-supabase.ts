@@ -240,6 +240,7 @@ export interface FakePublicTokenRow {
   club_id: string;
   licencie_id: string;
   token_hash: string;
+  token_ciphertext?: { ciphertext: string; iv: string; authTag: string } | null;
   email: string | null;
   created_at: string;
   revoked_at: string | null;
@@ -883,7 +884,11 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
         return { id: `licencie-auto-${licencieCounter}`, active: true, ...row } as FakeLicencieRow;
       });
       state.licencies.push(...inserted);
-      return Promise.resolve({ data: inserted, error: null });
+      const result = { data: inserted, error: null };
+      // Thenable (insert simple) ET chaînable `.select().single()` (ajout manuel).
+      return Object.assign(Promise.resolve(result), {
+        select: () => ({ single: () => Promise.resolve({ data: inserted[0] ?? null, error: null }) }),
+      });
     },
     update: (patch: Partial<FakeLicencieRow>) => {
       const filters: { col: string; value: unknown; op: "eq" | "in" }[] = [];

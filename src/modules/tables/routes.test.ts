@@ -1,3 +1,4 @@
+import { hashPublicToken } from "../public-tables/token.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildFakeClubSupabase, makeFakeClubSupabaseState, type FakeClubSupabaseState, type FakeLicencieRow, type FakeMatchRow, type FakeTeamRow } from "../../test-support/fake-club-supabase.js";
 
@@ -404,5 +405,41 @@ describe("POST .../public-access/:licencieId/reset — retour du club : \"sauf s
     state.licencies = [licencie({ id: L_CLUB_B, club_id: CLUB_B.id })];
     const res = await request(`/table-assignments/public-access/${L_CLUB_B}/reset`, { method: "POST" });
     expect(res.status).toBe(404);
+  });
+});
+
+describe("POST .../public-access/:licencieId/link — retour du club : « l'admin doit avoir accès au lien unique par joueur »", () => {
+  it("émet un lien s'il n'y en a pas, puis réaffiche LE MÊME (lien déjà utilisé toujours valable)", async () => {
+    state.licencies = [licencie({ id: L1, team_id: null })];
+    const first = await request(`/table-assignments/public-access/${L1}/link`, { method: "POST" });
+    expect(first.status).toBe(200);
+    const a = (await first.json()) as { link: string; created: boolean };
+    expect(a.created).toBe(true);
+    expect(a.link).toMatch(/\/public\/[^/]+\/tables\?token=/);
+    const token = new URL(a.link).searchParams.get("token")!;
+    expect(state.publicTokens).toHaveLength(1);
+    expect(state.publicTokens[0]).toMatchObject({ token_hash: hashPublicToken(token), revoked_at: null });
+    expect(JSON.stringify(state.publicTokens[0]?.token_ciphertext)).not.toContain(token); // jamais en clair
+
+    const again = (await (await request(`/table-assignments/public-access/${L1}/link`, { method: "POST" })).json()) as { link: string; created: boolean };
+    expect(again).toEqual({ link: a.link, created: false });
+    expect(state.publicTokens.filter((t) => t.revoked_at === null)).toHaveLength(1);
+  });
+
+  it("ancien lien sans copie chiffrée → remplacé (révoqué) par un nouveau", async () => {
+    state.licencies = [licencie({ id: L1, team_id: null })];
+    state.publicTokens = [{ id: "legacy", club_id: CLUB_A.id, licencie_id: L1, token_hash: "legacy-hash", email: null, created_at: "2026-09-29T10:00:00Z", revoked_at: null, revoked_by: null }];
+    const body = (await (await request(`/table-assignments/public-access/${L1}/link`, { method: "POST" })).json()) as { created: boolean };
+    expect(body.created).toBe(true);
+    expect(state.publicTokens.find((t) => t.id === "legacy")?.revoked_at).not.toBeNull();
+  });
+
+  it("403 pour responsable_tables ; 404 pour un licencié d'un autre club", async () => {
+    currentUserId = "user-table-manager";
+    state.licencies = [licencie({ id: L1, team_id: null }), licencie({ id: L_CLUB_B, club_id: CLUB_B.id })];
+    expect((await request(`/table-assignments/public-access/${L1}/link`, { method: "POST" })).status).toBe(403);
+    currentUserId = "user-admin";
+    expect((await request(`/table-assignments/public-access/${L_CLUB_B}/link`, { method: "POST" })).status).toBe(404);
+    expect(state.publicTokens).toHaveLength(0);
   });
 });

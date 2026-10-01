@@ -150,6 +150,30 @@ export type UpdateLicencieProfileDto = z.infer<typeof UpdateLicencieProfileDtoSc
  * un import répété créerait des doublons à chaque exécution, exactement ce
  * que le club a demandé d'éviter.
  */
+/**
+ * Ajout MANUEL d'une personne (club_admin) — retour du club, 2026-10-01 :
+ * « j'ai des coachs qui ne sont pas licenciés dans ce club, donc dans joueurs
+ * faut pouvoir en ajouter un manuellement ». Aucune donnée FFBB : pas de
+ * `ffbbLicenceId`, numéro de licence facultatif. Rôles de l'espace public
+ * posables dès la création.
+ */
+export const CreateLicencieDtoSchema = z
+  .object({
+    firstName: z.string().trim().min(1, "Le prénom est obligatoire.").max(80),
+    lastName: z.string().trim().min(1, "Le nom est obligatoire.").max(80),
+    email: z.string().trim().email("email doit être une adresse valide.").nullable().optional(),
+    phone: z.string().trim().min(1).max(40).nullable().optional(),
+    licenseNumber: z.string().trim().min(1).max(40).nullable().optional(),
+    teamId: z.string().uuid().nullable().optional(),
+    publicAdmin: z.boolean().optional(),
+    publicCoach: z.boolean().optional(),
+    publicCoordinator: z.boolean().optional(),
+  })
+  .strict()
+  .openapi("CreateLicencieDto");
+
+export type CreateLicencieDto = z.infer<typeof CreateLicencieDtoSchema>;
+
 export const ImportLicencieRowDtoSchema = z.object({
   ffbbLicenceId: z.string().trim().min(1, "ffbbLicenceId (N° national) est obligatoire."),
   licenseNumber: z.string().trim().min(1).nullable().optional(),

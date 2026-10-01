@@ -38,6 +38,7 @@ import {
   LicencieProfileDtoSchema,
   UpdateLicencieProfileDtoSchema,
   ImportLicenciesDtoSchema,
+  CreateLicencieDtoSchema,
   ImportLicenciesResultDtoSchema,
   AutoAssignTeamsResultDtoSchema,
   DeleteLicencieResultDtoSchema,
@@ -126,6 +127,9 @@ const errorResponses = {
 };
 /** Ajouté aux routes qui valident un payload/query (zod) ou une précondition métier (ex: FBI_NOT_CONFIGURED). */
 const validationResponses = { 400: jsonResponse("Requête invalide", ErrorEnvelopeSchema), 409: jsonResponse("Conflit métier", ErrorEnvelopeSchema) };
+
+/** Lien personnel réaffiché pour un club_admin (`created` : un nouveau lien vient d'être émis). */
+const PersonalLinkDtoSchema = z.object({ link: z.string().url(), created: z.boolean() }).openapi("PersonalLinkDto");
 
 registry.registerPath({
   method: "get",
@@ -428,6 +432,15 @@ registry.registerPath({
   responses: { 200: jsonResponse("Accès public réinitialisé", PublicAccessResetResultDtoSchema), ...errorResponses },
 });
 
+registry.registerPath({
+  method: "post",
+  path: "/v1/clubs/{clubId}/table-assignments/public-access/{licencieId}/link",
+  security: bearerAuth,
+  // club_admin : réaffiche le lien personnel actif du licencié (ou en émet un s'il n'en a pas) pour le lui envoyer soi-même.
+  request: { params: clubAndLicencieIdParams },
+  responses: { 200: jsonResponse("Lien personnel du licencié", PersonalLinkDtoSchema), ...errorResponses },
+});
+
 /**
  * Flux PUBLIC sans compte (retour du club, 2026-09-29) — AUCUNE de ces
  * routes ne porte `security: bearerAuth` : il n'y a pas de session
@@ -675,6 +688,15 @@ registry.registerPath({
     ...errorResponses,
     ...validationResponses,
   },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/clubs/{clubId}/licencies",
+  security: bearerAuth,
+  // Ajout manuel (ex. coach non licencié dans ce club), club_admin uniquement.
+  request: { params: clubIdParam, body: { content: { "application/json": { schema: CreateLicencieDtoSchema } } } },
+  responses: { 201: jsonResponse("Licencié créé", LicencieDtoSchema), ...errorResponses, ...validationResponses, 409: jsonResponse("Numéro de licence déjà utilisé (LICENSE_NUMBER_TAKEN)", ErrorEnvelopeSchema) },
 });
 
 registry.registerPath({

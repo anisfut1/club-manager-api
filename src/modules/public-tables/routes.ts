@@ -9,6 +9,7 @@ import {
 } from "../../contracts/public-tables.js";
 import { assignTableRole, loadHomeMatchOrThrow, loadTableAssignmentsList, removeTableRole } from "../tables/shared.js";
 import { generatePublicToken, hashPublicToken } from "./token.js";
+import { encryptPublicToken } from "./personal-link.js";
 import { resolvePublicClub, type PublicClub } from "../public/club-resolver.js";
 import { getEnv } from "../../config/env.js";
 import { isEmailConfigured, sendEmail } from "../../email/resend.js";
@@ -176,7 +177,7 @@ publicTablesRouter.post("/licencies/:licencieId/request-link", async (c) => {
 
   const token = generatePublicToken();
   const tokenHash = hashPublicToken(token);
-  const { error } = await supabase.from("licencie_public_tokens").insert({ club_id: club.id, licencie_id: licencie.id, token_hash: tokenHash, email: targetEmail });
+  const { error } = await supabase.from("licencie_public_tokens").insert({ club_id: club.id, licencie_id: licencie.id, token_hash: tokenHash, token_ciphertext: encryptPublicToken(token, club.id, licencie.id), email: targetEmail });
   if (error) {
     // Deux demandes simultanées pour le même nom : la seconde perd la course (index unique partiel), l'autre lien est le bon.
     if (error.code === "23505") throw tooManyRequests("Une demande de lien est déjà en cours pour ce nom. Réessaie dans une minute.", "LINK_RECENTLY_SENT");

@@ -2,9 +2,10 @@ import { Hono } from "hono";
 import type { AppEnv } from "../../auth/context.js";
 import { requireAuth, requireClubMembership } from "../../auth/middleware.js";
 import { createServiceSupabaseClient, type DbClient } from "../../db/client.js";
-import { badRequest, forbidden, notFound } from "../../api-error.js";
+import { badRequest, conflict, forbidden, notFound } from "../../api-error.js";
 import { isClubAdmin } from "../../tenancy/roles.js";
 import {
+  CreateLicencieDtoSchema,
   UpdateLicencieProfileDtoSchema,
   ImportLicenciesDtoSchema,
   type LicencieDto,
@@ -263,6 +264,48 @@ licenciesRouter.patch("/:licencieId/profile", async (c) => {
   if (error) throw new Error(`Mise à jour du profil du licencié échouée : ${error.message}`);
 
   return c.json(mapLicencieRow(data));
+});
+
+/**
+ * POST /v1/clubs/:clubId/licencies — ajout MANUEL d'une personne
+ * (club_admin), ex. un coach non licencié dans ce club (retour du club,
+ * 2026-10-01). Sans `ffbb_licence_id` : jamais touchée ni dédoublonnée par
+ * les imports FFBB. Un numéro de licence déjà utilisé dans le club → 409.
+ */
+licenciesRouter.post("/", requireClubRole("club_admin"), async (c) => {
+  const { club } = c.get("club");
+  const body = CreateLicencieDtoSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!body.success) throw badRequest(body.error.issues[0]?.message ?? "Corps de requête invalide.");
+  const input = body.data;
+
+  const serviceSupabase = createServiceSupabaseClient();
+  if (input.teamId) {
+    const { data: team } = await serviceSupabase.from("teams").select("id").eq("id", input.teamId).eq("club_id", club.id).maybeSingle();
+    if (!team) throw badRequest("teamId ne correspond à aucune équipe de ce club.");
+  }
+
+  const { data, error } = await serviceSupabase
+    .from("licencies")
+    .insert({
+      club_id: club.id,
+      first_name: input.firstName,
+      last_name: input.lastName,
+      email: input.email ?? null,
+      phone: input.phone ?? null,
+      license_number: input.licenseNumber ?? null,
+      team_id: input.teamId ?? null,
+      ffbb_licence_id: null,
+      active: true,
+      public_admin: input.publicAdmin ?? false,
+      public_coach: input.publicCoach ?? false,
+      public_coordinator: input.publicCoordinator ?? false,
+    })
+    .select(LICENCIE_COLUMNS)
+    .single();
+  if (error?.code === "23505") throw conflict("Ce numéro de licence est déjà utilisé par un licencié du club.", "LICENSE_NUMBER_TAKEN");
+  if (error || !data) throw new Error(`Création du licencié échouée : ${error?.message}`);
+
+  return c.json(mapLicencieRow(data as LicencieRow), 201);
 });
 
 /**

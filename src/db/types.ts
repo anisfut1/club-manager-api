@@ -541,6 +541,7 @@ export interface Database {
           club_id: string;
           licencie_id: string;
           token_hash: string;
+          token_ciphertext: { ciphertext: string; iv: string; authTag: string } | null;
           email: string | null;
           created_at: string;
           revoked_at: string | null;
@@ -551,6 +552,7 @@ export interface Database {
           club_id: string;
           licencie_id: string;
           token_hash: string;
+          token_ciphertext?: { ciphertext: string; iv: string; authTag: string } | null;
           email?: string | null;
           created_at?: string;
           revoked_at?: string | null;
