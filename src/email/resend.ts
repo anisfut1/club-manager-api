@@ -28,10 +28,20 @@ export function isEmailConfigured(): boolean {
   return Boolean(getEnv().RESEND_API_KEY);
 }
 
-/** `"Nom <adresse>"` — remplace le nom affiché de RESEND_FROM par `fromName`, garde l'adresse. */
+/** Adresse email seule, quels que soient les caractères autour (chevrons typographiques ‹ › ＜ ＞, guillemets, `&lt;`…). */
+export function extractEmailAddress(value: string): string | null {
+  return /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.exec(value)?.[0] ?? null;
+}
+
+/**
+ * `"Nom <adresse>"` — remplace le nom affiché de RESEND_FROM par `fromName`, garde l'adresse.
+ * L'adresse est extraite par motif email (pas par chevrons) : une valeur saisie
+ * dans Vercel avec des chevrons « lookalike » donnait `Nom <Ball Manager ‹x@y›>`,
+ * refusé par Resend (422 validation_error sur `from`).
+ */
 export function formatFrom(configuredFrom: string, fromName?: string): string {
   if (!fromName) return configuredFrom;
-  const address = /<([^>]+)>/.exec(configuredFrom)?.[1] ?? configuredFrom.trim();
+  const address = extractEmailAddress(configuredFrom) ?? configuredFrom.trim();
   const safeName = fromName.replace(/[<>"\r\n]/g, "").trim();
   return safeName ? `${safeName} <${address}>` : configuredFrom;
 }

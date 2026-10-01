@@ -38,5 +38,10 @@ describe("maskEmail / formatFrom", () => {
     expect(formatFrom("SCSB <onboarding@resend.dev>", "SC Sète Basket")).toBe("SC Sète Basket <onboarding@resend.dev>");
     expect(formatFrom("onboarding@resend.dev", 'Club "<x>"')).toBe("Club x <onboarding@resend.dev>");
     expect(formatFrom("SCSB <onboarding@resend.dev>")).toBe("SCSB <onboarding@resend.dev>");
+    // Valeurs saisies dans Vercel avec chevrons typographiques / échappés : on garde l'adresse seule.
+    expect(formatFrom("Ball Manager ‹noreply@ball-manager.fr›", "SC Sète Basket")).toBe("SC Sète Basket <noreply@ball-manager.fr>");
+    expect(formatFrom("Ball Manager ＜noreply@ball-manager.fr＞", "SC Sète Basket")).toBe("SC Sète Basket <noreply@ball-manager.fr>");
+    expect(formatFrom("Ball Manager &lt;noreply@ball-manager.fr&gt;", "SC Sète Basket")).toBe("SC Sète Basket <noreply@ball-manager.fr>");
+    expect(formatFrom(" noreply@ball-manager.fr ", "SC Sète Basket")).toBe("SC Sète Basket <noreply@ball-manager.fr>");
   });
 });
