@@ -81,3 +81,18 @@ describe("membres & rôles (club_admin)", () => {
     expect((await request("")).status).toBe(403);
   });
 });
+
+describe("gymnases du club", () => {
+  it("lecture pour tout membre, modification réservée au club_admin", async () => {
+    state.clubVenues = [{ id: "55555555-5555-4555-8555-000000000001", club_id: CLUB_A.id, name: "GYMNASE A", address: null, venue_id: "v", active: true, sort_order: 0 }];
+    currentUserId = "anis";
+    const list = await app.request(`/v1/clubs/${CLUB_A.id}/venues`, { headers: { authorization: "Bearer test-jwt" } });
+    expect(list.status).toBe(200);
+    const patchAsMember = await app.request(`/v1/clubs/${CLUB_A.id}/venues/55555555-5555-4555-8555-000000000001`, { method: "PATCH", headers: { authorization: "Bearer test-jwt", "content-type": "application/json" }, body: JSON.stringify({ active: false }) });
+    expect(patchAsMember.status).toBe(403);
+    currentUserId = "admin";
+    const patch = await app.request(`/v1/clubs/${CLUB_A.id}/venues/55555555-5555-4555-8555-000000000001`, { method: "PATCH", headers: { authorization: "Bearer test-jwt", "content-type": "application/json" }, body: JSON.stringify({ active: false, name: "Gymnase Maurice Clavel" }) });
+    expect(patch.status).toBe(200);
+    expect(state.clubVenues[0]).toMatchObject({ active: false, name: "Gymnase Maurice Clavel" });
+  });
+});

@@ -39,14 +39,18 @@ create index club_venues_club_id_idx on public.club_venues (club_id);
 
 -- Données réelles uniquement : un gymnase par salle FFBB déjà utilisée pour
 -- un match À DOMICILE du club (jamais un nom deviné). Ordre : salle la plus
--- utilisée d'abord.
-insert into public.club_venues (club_id, name, address, venue_id, sort_order)
+-- utilisée d'abord. ACTIF seulement si la salle accueille un match à domicile
+-- de la saison en cours (depuis le 1er août) — une salle utilisée une seule
+-- fois la saison passée reste en base mais n'apparaît pas dans le planning
+-- (réactivable par un club_admin, PATCH /v1/clubs/:clubId/venues/:id).
+insert into public.club_venues (club_id, name, address, venue_id, sort_order, active)
 select
   m.club_id,
   coalesce(v.name, split_part(min(m.venue_raw_label), ' — ', 1)),
   nullif(split_part(min(m.venue_raw_label), ' — ', 2), ''),
   m.venue_id,
-  (row_number() over (partition by m.club_id order by count(*) desc))::int - 1
+  (row_number() over (partition by m.club_id order by count(*) desc))::int - 1,
+  bool_or(m.match_datetime >= make_date(case when extract(month from now()) >= 8 then extract(year from now())::int else extract(year from now())::int - 1 end, 8, 1))
 from public.matches m
 join public.venues v on v.id = m.venue_id
 where m.is_home = true and m.venue_id is not null

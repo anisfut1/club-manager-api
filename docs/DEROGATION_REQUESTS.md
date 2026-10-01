@@ -28,6 +28,9 @@ aucun `correspondant_club` actif, la création est refusée :
 - `club_venues` — gymnases du club, reliés au référentiel FFBB `venues`
   (`venue_id`, jamais dupliqué). Rempli depuis les matchs à domicile (migration
   + chaque synchronisation FFBB, `ensureClubVenues`) ; multi-club (1…n gymnases).
+  Actif seulement si la salle accueille un match à domicile de la saison en
+  cours (SC Sète : Gymnase Maurice Clavel, Complexe sportif du Lido) ;
+  `GET/PATCH /v1/clubs/:clubId/venues` (nom affiché, actif, ordre — club_admin).
 - `club_scheduling_rules` — plage d'heures de DÉPART par jour (0 = dimanche).
   SC Sète : samedi 13:00 → 21:00, dimanche 09:00 → 16:00. Jour sans règle :
   aucune restriction horaire (semaine en V1).

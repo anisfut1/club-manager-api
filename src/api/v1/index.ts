@@ -15,6 +15,7 @@ import { tableAssignmentsRouter, matchTablesRouter } from "../../modules/tables/
 import { publicTablesRouter } from "../../modules/public-tables/routes.js";
 import { derogationAvailabilityRouter, derogationRequestsRouter } from "../../modules/derogation-requests/routes.js";
 import { membersRouter } from "../../modules/members/routes.js";
+import { clubVenuesRouter } from "../../modules/club-venues/routes.js";
 import { standingsRouter } from "../../modules/standings/routes.js";
 import { publicMatchesRouter } from "../../modules/public-matches/routes.js";
 import type { MeDto } from "../../contracts/me.js";
@@ -68,5 +69,6 @@ v1Router.route("/clubs/:clubId/licencies", licenciesRouter);
 v1Router.route("/clubs/:clubId/standings", standingsRouter);
 v1Router.route("/clubs/:clubId/derogation-requests", derogationRequestsRouter);
 v1Router.route("/clubs/:clubId/members", membersRouter);
+v1Router.route("/clubs/:clubId/venues", clubVenuesRouter);
 v1Router.route("/jobs", jobStatusRouter);
 v1Router.route("/platform", platformRouter);

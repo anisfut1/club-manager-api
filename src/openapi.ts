@@ -81,6 +81,7 @@ import {
   ProposeDerogationSlotDtoSchema,
 } from "./contracts/derogation-requests.js";
 import { ClubMemberListDtoSchema, InviteMemberDtoSchema, SetMemberRolesDtoSchema } from "./contracts/members.js";
+import { ClubVenueAdminDtoSchema, ClubVenueListDtoSchema, UpdateClubVenueDtoSchema } from "./contracts/club-venues.js";
 import { PoolStandingsListDtoSchema } from "./contracts/standings.js";
 
 /**
@@ -887,6 +888,23 @@ registry.registerPath({
   security: bearerAuth,
   request: { params: clubAndMembershipParams, body: { content: { "application/json": { schema: SetMemberRolesDtoSchema } } } },
   responses: { 200: jsonResponse("Rôles remplacés", ClubMemberListDtoSchema), ...errorResponses, ...validationResponses },
+});
+
+/** Gymnases du club (planning des demandes de dérogation). */
+registry.registerPath({
+  method: "get",
+  path: "/v1/clubs/{clubId}/venues",
+  security: bearerAuth,
+  request: { params: clubIdParam },
+  responses: { 200: jsonResponse("Gymnases du club", ClubVenueListDtoSchema), ...errorResponses },
+});
+
+registry.registerPath({
+  method: "patch",
+  path: "/v1/clubs/{clubId}/venues/{venueId}",
+  security: bearerAuth,
+  request: { params: clubIdParam.extend({ venueId: z.string().uuid() }), body: { content: { "application/json": { schema: UpdateClubVenueDtoSchema } } } },
+  responses: { 200: jsonResponse("Gymnase mis à jour", z.object({ venue: ClubVenueAdminDtoSchema })), ...errorResponses, ...validationResponses },
 });
 
 export function generateOpenApiDocument() {
