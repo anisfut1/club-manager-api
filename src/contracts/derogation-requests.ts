@@ -78,6 +78,8 @@ export const DerogationRequestDetailDtoSchema = DerogationRequestSummaryDtoSchem
     canMessage: z.boolean(),
     canPropose: z.boolean(),
     actions: z.array(DerogationActionSchema),
+    /** Coordinateur, demande « En cours » : peut envoyer la dérogation OFFICIELLE (FBI) depuis la demande. */
+    canSubmitOfficial: z.boolean(),
   }),
   /**
    * Calendrier OFFICIEL actuel (FFBB, synchronisé) comparé à la demande —
@@ -237,3 +239,12 @@ export const DerogationActionDtoSchema = z
   })
   .strict()
   .openapi("DerogationActionDto");
+
+/** Résultat de l'envoi OFFICIEL (FBI) depuis une demande interne : résultat FBI réel + demande à jour. */
+export const SubmitOfficialDerogationResultDtoSchema = z
+  .object({
+    outcome: z.enum(["success", "error", "unknown"]),
+    message: z.string().nullable(),
+    request: DerogationRequestDetailDtoSchema,
+  })
+  .openapi("SubmitOfficialDerogationResultDto");

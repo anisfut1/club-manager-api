@@ -451,3 +451,65 @@ describe("espace public : licencié Coach / Coordinateur (drapeaux /joueurs)", (
     expect((await json<{ error: { code: string } }>(res)).error.code).toBe("NO_COORDINATOR");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Envoi OFFICIEL (FBI) depuis la demande — réutilise createDerogationForClub
+// (mocké ici : aucun appel FBI réel en test).
+// ---------------------------------------------------------------------------
+const officialMock = vi.hoisted(() => ({ create: vi.fn() }));
+vi.mock("../derogations/create-derogation.js", () => ({ createDerogationForClub: officialMock.create }));
+
+describe("envoi officiel FBI depuis la demande (coordinateur)", () => {
+  const OFFICIAL_BODY = { motif: "Tournoi U15F le samedi", modifierDate: true, dateDerogation: "11/10/2026", modifierHoraire: true, horaire: "15:00", inverserRencontre: false, inverserEquipe: false };
+
+  beforeEach(() => {
+    officialMock.create.mockReset();
+    officialMock.create.mockResolvedValue({ outcome: "success", message: null });
+  });
+
+  it("refusé tant que la demande n'est pas prise en charge, puis envoyé avec le process existant", async () => {
+    const created = await json<Detail & { permissions: { canSubmitOfficial: boolean } }>(await createRequest());
+    as("coord");
+    expect((await request(`/derogation-requests/${created.id}/official`, { method: "POST", body: OFFICIAL_BODY })).status).toBe(409);
+    expect(officialMock.create).not.toHaveBeenCalled();
+
+    const taken = await json<Detail & { permissions: { canSubmitOfficial: boolean } }>(await request(`/derogation-requests/${created.id}/actions`, { method: "POST", body: { action: "TAKE_IN_CHARGE" } }));
+    expect(taken.permissions.canSubmitOfficial).toBe(true);
+
+    const res = await request(`/derogation-requests/${created.id}/official`, { method: "POST", body: OFFICIAL_BODY });
+    expect(res.status).toBe(200);
+    const out = await json<{ outcome: string; request: Detail }>(res);
+    expect(out.outcome).toBe("success");
+    expect(officialMock.create).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ clubId: CLUB_A.id, matchId: TARGET.id, dateDerogation: "11/10/2026", horaire: "15:00", submittedBy: "coord" }));
+    expect(out.request.messages.at(-1)).toMatchObject({ type: "SYSTEM", event: "OFFICIAL_SUBMITTED" });
+  });
+
+  it("le coach ne peut pas envoyer la demande officielle (403)", async () => {
+    const created = await json<Detail>(await createRequest());
+    as("coord");
+    await request(`/derogation-requests/${created.id}/actions`, { method: "POST", body: { action: "TAKE_IN_CHARGE" } });
+    as("coach-u15");
+    expect((await request(`/derogation-requests/${created.id}/official`, { method: "POST", body: OFFICIAL_BODY })).status).toBe(403);
+    expect(officialMock.create).not.toHaveBeenCalled();
+  });
+
+  it("échec FBI : renvoyé tel quel, aucun message « envoyé » dans la conversation", async () => {
+    officialMock.create.mockResolvedValue({ outcome: "error", message: "Rencontre introuvable sur FBI." });
+    const created = await json<Detail>(await createRequest());
+    as("coord");
+    await request(`/derogation-requests/${created.id}/actions`, { method: "POST", body: { action: "TAKE_IN_CHARGE" } });
+    const out = await json<{ outcome: string; message: string; request: Detail }>(await request(`/derogation-requests/${created.id}/official`, { method: "POST", body: OFFICIAL_BODY }));
+    expect(out).toMatchObject({ outcome: "error", message: "Rencontre introuvable sur FBI." });
+    expect(out.request.messages.some((m) => m.event === "OFFICIAL_SUBMITTED")).toBe(false);
+  });
+
+  it("coordinateur licencié (lien personnel) : même envoi, sans compte", async () => {
+    state.licencies.push(licencie("lic-sophie2", "Sophie", { public_coordinator: true }));
+    giveToken("lic-sophie2", "tok-sophie2");
+    const created = await json<Detail>(await createRequest());
+    await publicRequest(`/${created.id}/actions`, "tok-sophie2", { method: "POST", body: { action: "TAKE_IN_CHARGE" } });
+    const res = await publicRequest(`/${created.id}/official`, "tok-sophie2", { method: "POST", body: OFFICIAL_BODY });
+    expect(res.status).toBe(200);
+    expect(officialMock.create).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ submittedBy: null }));
+  });
+});

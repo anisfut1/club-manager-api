@@ -3,7 +3,7 @@ import type { ClubRole, DerogationRequestStatus } from "../../db/types.js";
 import { DEFAULT_MATCH_DURATION_MINUTES } from "../../scheduling/match-slot.js";
 import { formatTeamNameWithGender } from "../../util/team-name.js";
 import type { PendingProposal, PlanningRules, ScheduledMatch, VenueRef } from "./availability.js";
-import { ACTIVE_STATUSES, COORDINATOR_ROLE, availableActions, canPropose, canReadRequest, isSameIdentity, needsCoordinatorAttention, type Actor, type RoleGrant } from "./policy.js";
+import { ACTIVE_STATUSES, COORDINATOR_ROLE, availableActions, canPropose, canReadRequest, canSubmitOfficial, isSameIdentity, needsCoordinatorAttention, type Actor, type RoleGrant } from "./policy.js";
 
 /**
  * Accès aux données des demandes de dérogation internes. Toujours via le
@@ -330,6 +330,7 @@ export async function buildDetail(db: DbClient, row: RequestRow, actor: Actor, v
       canMessage: canReadRequest(actor, ref) && row.status !== "CANCELLED",
       canPropose: canPropose(actor, ref),
       actions: availableActions(actor, ref),
+      canSubmitOfficial: canSubmitOfficial(actor, ref),
     },
     officialSchedule: {
       currentScheduledAt: current,

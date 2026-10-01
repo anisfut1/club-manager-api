@@ -123,6 +123,11 @@ export function canPropose(actor: Actor, request: RequestRef): boolean {
   return (isRequesterSide(actor, request) || isClubAdminActor(actor)) && (request.status === "REQUESTED" || request.status === "NEEDS_CHANGE");
 }
 
+/** Envoi de la dérogation OFFICIELLE (FBI) : coordinateur/admin, une fois la demande prise en charge. */
+export function canSubmitOfficial(actor: Actor, request: RequestRef): boolean {
+  return canManageRequests(actor) && request.status === "IN_PROGRESS";
+}
+
 /** Actions proposées dans l'UI pour CET utilisateur et CE statut. */
 export function availableActions(actor: Actor, request: RequestRef): DerogationAction[] {
   return (Object.keys(TRANSITIONS) as DerogationAction[]).filter((action) => nextStatus(action, request.status) !== null && canPerformAction(actor, request, action));

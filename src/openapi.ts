@@ -80,6 +80,7 @@ import {
   DerogationSlotCheckQueryDtoSchema,
   PostDerogationMessageDtoSchema,
   ProposeDerogationSlotDtoSchema,
+  SubmitOfficialDerogationResultDtoSchema,
 } from "./contracts/derogation-requests.js";
 import { PublicHomeDtoSchema } from "./contracts/public-home.js";
 import { ClubMemberListDtoSchema, InviteMemberDtoSchema, SetMemberRolesDtoSchema } from "./contracts/members.js";
@@ -916,6 +917,21 @@ registry.registerPath({
   // Accueil personnel (lien personnel) : équipes jouées/coachées, agenda, résultats, tables de marque.
   request: { params: clubSlugParam, query: z.object({ token: z.string().min(1) }) },
   responses: { 200: jsonResponse("Accueil personnel", PublicHomeDtoSchema), 400: jsonResponse("Lien manquant", ErrorEnvelopeSchema), 401: jsonResponse("Lien invalide ou révoqué", ErrorEnvelopeSchema), 404: jsonResponse("Introuvable", ErrorEnvelopeSchema) },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/clubs/{clubId}/derogation-requests/{requestId}/official",
+  security: bearerAuth,
+  // Coordinateur, demande « En cours » : crée la dérogation OFFICIELLE sur FBI (même process que .../matches/:id/derogation/create).
+  request: { params: clubAndRequestParams, body: { content: { "application/json": { schema: CreateDerogationDtoSchema } } } },
+  responses: { 200: jsonResponse("Résultat FBI réel + demande à jour", SubmitOfficialDerogationResultDtoSchema), ...errorResponses, ...validationResponses },
+});
+registry.registerPath({
+  method: "post",
+  path: "/v1/public/clubs/{clubSlug}/derogation-requests/{requestId}/official",
+  request: { params: publicRequestParams, query: publicTokenQuery, body: { content: { "application/json": { schema: CreateDerogationDtoSchema } } } },
+  responses: { 200: jsonResponse("Résultat FBI réel + demande à jour", SubmitOfficialDerogationResultDtoSchema), ...publicDerogationErrors },
 });
 
 /** Membres & rôles (club_admin) — désignation des coachs et du coordinateur. */

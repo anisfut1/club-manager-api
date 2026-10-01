@@ -15,7 +15,9 @@ import {
 import { DEFAULT_MATCH_DURATION_MINUTES, DEFAULT_SLOT_STEP_MINUTES } from "../../scheduling/match-slot.js";
 import { localTimeKey, parseLocalDate, zonedWallTimeToUtc } from "../../util/timezone.js";
 import { computeAvailability, validateRequestedSlot, type CandidateSlot, type SlotConflict, type SlotWarning } from "./availability.js";
-import { canCreateForTeam, canManageRequests, canPerformAction, canPropose, canCreateAny, canReadRequest, isAuthor, nextStatus, roleLabelFor, type Actor } from "./policy.js";
+import { canCreateForTeam, canManageRequests, canPerformAction, canPropose, canCreateAny, canReadRequest, canSubmitOfficial, isAuthor, nextStatus, roleLabelFor, type Actor } from "./policy.js";
+import { CreateDerogationDtoSchema } from "../../contracts/derogations.js";
+import { createDerogationForClub } from "../derogations/create-derogation.js";
 import {
   REQUEST_COLUMNS,
   buildDetail,
@@ -401,6 +403,45 @@ export async function handlePropose(ctx: Ctx, requestId: string, rawBody: unknow
   return buildDetail(ctx.db, fresh, ctx.actor, venues);
 }
 
+/**
+ * Envoi de la dérogation OFFICIELLE sur FBI depuis la demande interne —
+ * retour du club, 2026-10-01 : « en tant que coordinateur, il me faut un
+ * bouton pour faire une demande de dérogation officielle une fois que je dis
+ * je m'en occupe (process qui existe déjà) ». Réutilise EXACTEMENT
+ * `createDerogationForClub` (même écriture FBI, même journal
+ * `fbi_derogation_creations`) ; seul le déclencheur est nouveau. Action
+ * explicite du coordinateur, jamais automatique.
+ */
+export async function handleOfficial(ctx: Ctx, requestId: string, rawBody: unknown) {
+  const body = CreateDerogationDtoSchema.safeParse(rawBody);
+  if (!body.success) throw badRequest(body.error.issues[0]?.message ?? "Corps de requête invalide.");
+  const row = await readableRequestOrThrow(ctx, requestId);
+  if (!canManageRequests(ctx.actor)) throw forbidden("L'envoi officiel est réservé au coordinateur.", "DEROGATION_FORBIDDEN");
+  if (!canSubmitOfficial(ctx.actor, requestRef(row))) throw conflict("Prends d'abord la demande en charge (« Je m'en occupe ») avant l'envoi officiel.", "INVALID_TRANSITION");
+
+  const result = await createDerogationForClub(ctx.db, {
+    clubId: ctx.clubId,
+    matchId: row.match_id,
+    motif: body.data.motif,
+    modifierDate: body.data.modifierDate,
+    dateDerogation: body.data.dateDerogation ?? null,
+    modifierHoraire: body.data.modifierHoraire,
+    horaire: body.data.horaire ?? null,
+    inverserRencontre: body.data.inverserRencontre,
+    inverserEquipe: body.data.inverserEquipe,
+    submittedBy: ctx.actor.userId,
+  });
+
+  if (result.outcome === "success") {
+    const author = await ctx.identity();
+    await insertMessage(ctx.db, { club_id: ctx.clubId, request_id: row.id, ...authorColumns(ctx), author_display_name: author.name, author_role_label: roleLabelFor(ctx.actor, requestRef(row)), body: `${author.name} a envoyé la demande de dérogation officielle à la FFBB (FBI).`, message_type: "SYSTEM", event: "OFFICIAL_SUBMITTED" });
+    await touch(ctx.db, row.id);
+  }
+
+  const fresh = (await loadRequest(ctx.db, ctx.clubId, row.id)) as RequestRow;
+  return { outcome: result.outcome, message: result.message, request: await buildDetail(ctx.db, fresh, ctx.actor, await loadClubVenues(ctx.db, ctx.clubId)) };
+}
+
 async function matchForPlanning(ctx: Ctx, matchId: string): Promise<MatchRow> {
   const match = await loadMatch(ctx.db, ctx.clubId, matchId);
   if (!match) throw notFound("Match introuvable.");
@@ -480,6 +521,7 @@ derogationRequestsRouter.post("/", async (c) => {
 });
 derogationRequestsRouter.post("/:requestId/messages", async (c) => c.json(await handleMessage(await context(c), c.req.param("requestId"), await c.req.json().catch(() => ({})))));
 derogationRequestsRouter.post("/:requestId/actions", async (c) => c.json(await handleAction(await context(c), c.req.param("requestId"), await c.req.json().catch(() => ({})))));
+derogationRequestsRouter.post("/:requestId/official", async (c) => c.json(await handleOfficial(await context(c), c.req.param("requestId"), await c.req.json().catch(() => ({})))));
 derogationRequestsRouter.post("/:requestId/proposals", async (c) => c.json(await handlePropose(await context(c), c.req.param("requestId"), await c.req.json().catch(() => ({})))));
 
 // ---------------------------------------------------------------------------
