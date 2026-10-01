@@ -24,7 +24,7 @@ export const licenciesRouter = new Hono<AppEnv>();
 licenciesRouter.use("*", requireAuth);
 licenciesRouter.use("*", requireClubMembership);
 
-const LICENCIE_COLUMNS = "id, club_id, first_name, last_name, license_number, birth_date, email, phone, photo_url, team_id, active, ffbb_licence_id, category_label, sexe";
+const LICENCIE_COLUMNS = "id, club_id, first_name, last_name, license_number, birth_date, email, phone, photo_url, team_id, active, ffbb_licence_id, category_label, sexe, public_admin";
 
 interface LicencieRow {
   id: string;
@@ -41,6 +41,7 @@ interface LicencieRow {
   ffbb_licence_id: string | null;
   category_label: string | null;
   sexe: "M" | "F" | null;
+  public_admin: boolean;
 }
 
 function mapLicencieRow(row: LicencieRow): LicencieDto {
@@ -59,6 +60,7 @@ function mapLicencieRow(row: LicencieRow): LicencieDto {
     ffbbLicenceId: row.ffbb_licence_id,
     categoryLabel: row.category_label,
     sexe: row.sexe,
+    publicAdmin: row.public_admin === true,
   };
 }
 
@@ -234,6 +236,7 @@ licenciesRouter.patch("/:licencieId/profile", async (c) => {
     license_number: string | null;
     team_id: string | null;
     active: boolean;
+    public_admin: boolean;
   }> = {};
   if (parsed.data.photoUrl !== undefined) patch.photo_url = parsed.data.photoUrl;
   if (parsed.data.email !== undefined) patch.email = parsed.data.email;
@@ -244,6 +247,7 @@ licenciesRouter.patch("/:licencieId/profile", async (c) => {
   if (parsed.data.licenseNumber !== undefined) patch.license_number = parsed.data.licenseNumber;
   if (parsed.data.teamId !== undefined) patch.team_id = parsed.data.teamId;
   if (parsed.data.active !== undefined) patch.active = parsed.data.active;
+  if (parsed.data.publicAdmin !== undefined) patch.public_admin = parsed.data.publicAdmin;
 
   if (Object.keys(patch).length === 0) return c.json(mapLicencieRow(existing));
 

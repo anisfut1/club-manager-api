@@ -191,8 +191,10 @@ n'exigent **aucun** header `Authorization` :
   poche) ; `isClubAdmin` indique si ce licencié est rattaché à un compte
   `club_admin` actif du club.
 - `GET /derogations?token=` — dérogations du club en **lecture seule**,
-  réservées aux licenciés rattachés (`club_memberships.licencie_id`) à un
-  compte `club_admin` ACTIF de ce club : `401` sans jeton valide, `403
+  réservées aux licenciés à qui un club_admin a donné le **profil admin**
+  depuis /joueurs (`licencies.public_admin`, aucun compte requis), ou
+  rattachés (`club_memberships.licencie_id`) à un compte `club_admin`
+  ACTIF de ce club : `401` sans jeton valide, `403
   CLUB_ADMIN_REQUIRED` sinon. Le jeton seul ne suffit jamais (retour du
   club, 2026-10-01 : dérogations "admins seulement"). Aucune action
   (répondre, vérifier sur FBI) n'est exposée publiquement.

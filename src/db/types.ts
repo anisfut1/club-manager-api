@@ -157,6 +157,7 @@ export interface Database {
           ffbb_licence_id: string | null;
           category_label: string | null;
           sexe: "M" | "F" | null;
+          public_admin: boolean;
           created_at: string;
           updated_at: string;
         },
@@ -175,6 +176,7 @@ export interface Database {
           ffbb_licence_id?: string | null;
           category_label?: string | null;
           sexe?: "M" | "F" | null;
+          public_admin?: boolean;
           created_at?: string;
           updated_at?: string;
         }

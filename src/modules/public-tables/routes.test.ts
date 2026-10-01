@@ -305,6 +305,14 @@ describe("GET .../derogations?token= — retour du club : dérogations publiques
     expect(((await (await request(`/me?token=${token}`)).json()) as { isClubAdmin: boolean }).isClubAdmin).toBe(false);
   });
 
+  it("200 pour un licencié sans compte à qui un club_admin a donné le profil admin depuis /joueurs (licencies.public_admin)", async () => {
+    state.licencies = state.licencies.map((l) => (l.id === LEA.id ? { ...l, public_admin: true } : l));
+    const token = await claim(LEA.id);
+
+    expect((await request(`/derogations?token=${token}`)).status).toBe(200);
+    expect(((await (await request(`/me?token=${token}`)).json()) as { isClubAdmin: boolean }).isClubAdmin).toBe(true);
+  });
+
   it("200 pour un licencié rattaché à un compte club_admin actif du club — et /me renvoie isClubAdmin", async () => {
     state.memberships = [{ id: "m-a", club_id: CLUB_A.id, user_id: ADMIN_USER, status: "active", licencie_id: THOMAS.id }];
     state.roles = [{ membership_id: "m-a", role: "club_admin" }];

@@ -49,6 +49,7 @@ export interface FakeLicencieRow {
   ffbb_licence_id?: string | null;
   category_label?: string | null;
   sexe?: "M" | "F" | null;
+  public_admin?: boolean;
 }
 
 export interface FakeRoleRow {

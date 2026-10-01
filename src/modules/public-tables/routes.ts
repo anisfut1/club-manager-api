@@ -196,12 +196,18 @@ publicTablesRouter.post("/licencies/:licencieId/request-link", async (c) => {
 });
 
 /**
- * Le licencié du jeton est-il rattaché à un compte `club_admin` ACTIF de ce
- * club (club_memberships.licencie_id + membership_roles) ? Retour du club,
+ * Le licencié du jeton est-il admin de ce club pour l'espace public ? Soit
+ * un club_admin lui a donné le profil admin depuis /joueurs
+ * (`licencies.public_admin`), soit il est rattaché à un compte `club_admin`
+ * ACTIF de ce club (club_memberships.licencie_id + membership_roles). Retour du club,
  * 2026-10-01 : les dérogations ne s'ouvrent publiquement qu'aux admins du
  * club — le jeton seul ne suffit jamais.
  */
 export async function isLicencieClubAdmin(supabase: DbClient, clubId: string, licencieId: string): Promise<boolean> {
+  // Drapeau posé par un club_admin depuis /joueurs (licencié sans compte, retour du club 2026-10-01).
+  const { data: licencie } = await supabase.from("licencies").select("public_admin").eq("id", licencieId).eq("club_id", clubId).maybeSingle();
+  if (licencie?.public_admin === true) return true;
+
   const { data: memberships } = await supabase.from("club_memberships").select("id").eq("club_id", clubId).eq("licencie_id", licencieId).eq("status", "active");
   const membershipIds = (memberships ?? []).map((m) => m.id);
   if (membershipIds.length === 0) return false;

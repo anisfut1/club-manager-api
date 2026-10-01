@@ -26,6 +26,8 @@ export const LicencieDtoSchema = z
     categoryLabel: z.string().nullable(),
     /** Sexe FFBB — affichage seulement, même donnée que TeamDto.sexe (désambiguïse un nom d'équipe/catégorie ambigu). */
     sexe: z.enum(["M", "F"]).nullable(),
+    /** Accès "admin" à l'espace public sans compte (dérogations en lecture seule, retour du club 2026-10-01) — posé par un club_admin, aucun droit dans l'espace connecté. */
+    publicAdmin: z.boolean(),
   })
   .openapi("LicencieDto");
 
@@ -120,6 +122,8 @@ export const UpdateLicencieProfileDtoSchema = z
     licenseNumber: z.string().trim().min(1).nullable().optional(),
     teamId: z.string().uuid().nullable().optional(),
     active: z.boolean().optional(),
+    /** club_admin uniquement — voir LicencieDto.publicAdmin. */
+    publicAdmin: z.boolean().optional(),
   })
   .openapi("UpdateLicencieProfileDto");
 

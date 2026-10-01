@@ -5,7 +5,7 @@ describe("resolveLicencieEditPermission", () => {
   it("club_admin peut tout modifier", () => {
     const { canEdit, allowedFields } = resolveLicencieEditPermission(true, false);
     expect(canEdit).toBe(true);
-    expect(allowedFields).toEqual(expect.arrayContaining(["firstName", "lastName", "birthDate", "licenseNumber", "active", "photoUrl", "email", "phone"]));
+    expect(allowedFields).toEqual(expect.arrayContaining(["firstName", "lastName", "birthDate", "licenseNumber", "active", "photoUrl", "email", "phone", "publicAdmin"]));
   });
 
   it("le licencié lui-même ne peut modifier QUE le contact et la photo — jamais son identité", () => {
@@ -15,6 +15,7 @@ describe("resolveLicencieEditPermission", () => {
     expect(allowedFields).not.toContain("firstName");
     expect(allowedFields).not.toContain("lastName");
     expect(allowedFields).not.toContain("licenseNumber");
+    expect(allowedFields).not.toContain("publicAdmin"); // jamais auto-attribué par le licencié lui-même
     expect(allowedFields).not.toContain("active");
     expect(allowedFields).not.toContain("birthDate");
   });
