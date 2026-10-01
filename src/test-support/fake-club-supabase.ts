@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 /**
  * Fake Supabase réutilisable pour les tests de routes Hono (§17/§19/§25 de
  * la demande : "tester les permissions" pour chaque nouvelle route) — même
@@ -55,7 +56,11 @@ export interface FakeLicencieRow {
 export interface FakeRoleRow {
   membership_id: string;
   role: string;
+  scope_team_id?: string | null;
 }
+
+/** Lignes génériques des tables "demandes de dérogation" (forme libre, voir migrations). */
+export type FakeRow = Record<string, unknown>;
 
 export interface FakeFbiCredentialsRow {
   club_id: string;
@@ -99,6 +104,7 @@ export interface FakeMatchRow {
   emarque_status: string;
   team_id: string | null;
   competition_id?: string | null;
+  venue_id?: string | null;
 }
 
 export interface FakeCompetitionRow {
@@ -271,6 +277,11 @@ export interface FakeClubSupabaseState {
   publicTokens: FakePublicTokenRow[];
   engagements: FakeEngagementRow[];
   pools: FakePoolRow[];
+  clubVenues: FakeRow[];
+  schedulingRules: FakeRow[];
+  derogationRequests: FakeRow[];
+  derogationProposals: FakeRow[];
+  derogationMessages: FakeRow[];
   matchDocuments: FakeMatchDocumentRow[];
   isPlatformAdmin: boolean;
   /** Clés `${clubId}:${integration}` actuellement verrouillées (voir try_acquire_sync_lock/release_sync_lock). */
@@ -299,10 +310,117 @@ export function makeFakeClubSupabaseState(overrides: Partial<FakeClubSupabaseSta
     publicTokens: [],
     engagements: [],
     pools: [],
+    clubVenues: [],
+    schedulingRules: [],
+    derogationRequests: [],
+    derogationProposals: [],
+    derogationMessages: [],
     matchDocuments: [],
     isPlatformAdmin: false,
     syncLocks: new Set(),
     ...overrides,
+  };
+}
+
+let fakeClock = Date.parse("2026-10-01T08:00:00.000Z");
+/** Horodatage strictement croissant (ordre chronologique stable des messages en test). */
+function fakeNow(): string {
+  fakeClock += 1000;
+  return new Date(fakeClock).toISOString();
+}
+
+/**
+ * Table générique mutable (insert / update / delete / upsert) pour les
+ * nouvelles tables — `unique` simule un index unique (ex. index PARTIEL
+ * "une demande active par match") en renvoyant l'erreur Postgres 23505.
+ */
+function mutableTable(getRows: () => FakeRow[], setRows: (rows: FakeRow[]) => void, options: { defaults?: (row: FakeRow) => FakeRow; unique?: (row: FakeRow, rows: FakeRow[]) => boolean } = {}) {
+  const withDefaults = (row: FakeRow): FakeRow => ({ id: randomUUID(), created_at: fakeNow(), ...(options.defaults ? options.defaults(row) : {}), ...row });
+  const match = (row: FakeRow, filters: { col: string; value: unknown; op: "eq" | "in" }[]) =>
+    filters.every((f) => (f.op === "in" ? (f.value as unknown[]).includes(row[f.col]) : row[f.col] === f.value));
+
+  return {
+    select: (_cols?: string) => queryable(getRows()),
+    insert(payload: FakeRow | FakeRow[]) {
+      const rows = (Array.isArray(payload) ? payload : [payload]).map(withDefaults);
+      let error: { code: string; message: string } | null = null;
+      for (const row of rows) {
+        if (options.unique?.(row, getRows())) {
+          error = { code: "23505", message: "duplicate key value violates unique constraint" };
+          break;
+        }
+        getRows().push(row);
+      }
+      const result = { data: error ? null : rows, error };
+      return {
+        select: () => ({
+          single: () => Promise.resolve({ data: error ? null : rows[0], error }),
+          maybeSingle: () => Promise.resolve({ data: error ? null : (rows[0] ?? null), error }),
+        }),
+        then: (onFulfilled: (value: typeof result) => unknown) => Promise.resolve(result).then(onFulfilled),
+      };
+    },
+    update(patch: FakeRow) {
+      const filters: { col: string; value: unknown; op: "eq" | "in" }[] = [];
+      const apply = () => {
+        const rows = getRows().filter((row) => match(row, filters));
+        rows.forEach((row) => Object.assign(row, patch));
+        return rows;
+      };
+      const api = {
+        eq(col: string, value: unknown) {
+          filters.push({ col, value, op: "eq" });
+          return api;
+        },
+        in(col: string, values: unknown[]) {
+          filters.push({ col, value: values, op: "in" });
+          return api;
+        },
+        select: () => ({
+          maybeSingle: () => Promise.resolve({ data: apply()[0] ?? null, error: null }),
+          single: () => {
+            const rows = apply();
+            return Promise.resolve(rows[0] ? { data: rows[0], error: null } : { data: null, error: { message: "not found" } });
+          },
+        }),
+        then: (onFulfilled: (value: { data: FakeRow[]; error: null }) => unknown) => Promise.resolve({ data: apply(), error: null }).then(onFulfilled),
+      };
+      return api;
+    },
+    delete() {
+      const filters: { col: string; value: unknown; op: "eq" | "in" }[] = [];
+      const api = {
+        eq(col: string, value: unknown) {
+          filters.push({ col, value, op: "eq" });
+          return api;
+        },
+        then: (onFulfilled: (value: { error: null }) => unknown) => {
+          setRows(getRows().filter((row) => !match(row, filters)));
+          return Promise.resolve({ error: null }).then(onFulfilled);
+        },
+      };
+      return api;
+    },
+    upsert(payload: FakeRow | FakeRow[], opts?: { onConflict?: string; ignoreDuplicates?: boolean }) {
+      const keys = (opts?.onConflict ?? "id").split(",").map((k) => k.trim());
+      const out: FakeRow[] = [];
+      for (const row of Array.isArray(payload) ? payload : [payload]) {
+        const existing = getRows().find((r) => keys.every((k) => r[k] === row[k]));
+        if (existing) {
+          if (!opts?.ignoreDuplicates) Object.assign(existing, row);
+          out.push(existing);
+        } else {
+          const created = withDefaults(row);
+          getRows().push(created);
+          out.push(created);
+        }
+      }
+      const result = { data: out, error: null };
+      return {
+        select: () => ({ single: () => Promise.resolve({ data: out[0], error: null }) }),
+        then: (onFulfilled: (value: typeof result) => unknown) => Promise.resolve(result).then(onFulfilled),
+      };
+    },
   };
 }
 
@@ -425,13 +543,31 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
     }),
   };
 
-  const membershipsTable = {
-    select: (_cols?: string) => queryable(state.memberships),
-  };
+  const membershipsTable = mutableTable(
+    () => state.memberships as unknown as FakeRow[],
+    (rows) => (state.memberships = rows as unknown as FakeMembershipRow[]),
+    { defaults: () => ({ status: "active", licencie_id: null }) },
+  );
 
-  const rolesTable = {
-    select: (_cols?: string) => queryable(state.roles),
-  };
+  const rolesTable = mutableTable(
+    () => state.roles as unknown as FakeRow[],
+    (rows) => (state.roles = rows as unknown as FakeRoleRow[]),
+    { defaults: () => ({ scope_team_id: null }) },
+  );
+
+  const ACTIVE_REQUEST_STATUSES = ["REQUESTED", "IN_PROGRESS", "NEEDS_CHANGE"];
+  const derogationRequestsTable = mutableTable(
+    () => state.derogationRequests,
+    (rows) => (state.derogationRequests = rows),
+    {
+      defaults: () => {
+        const now = fakeNow();
+        return { status: "REQUESTED", updated_at: now, last_message_at: now, is_custom_weekday: false };
+      },
+      // Index unique PARTIEL derogation_requests_one_active_per_match.
+      unique: (row, rows) => ACTIVE_REQUEST_STATUSES.includes(row.status as string) && rows.some((r) => r.match_id === row.match_id && ACTIVE_REQUEST_STATUSES.includes(r.status as string)),
+    },
+  );
 
   const fbiCredentialsTable = {
     select: (_cols?: string) => ({
@@ -679,13 +815,7 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
   };
 
   const syncRunsTable = { select: (_cols?: string) => queryable(state.syncRuns) };
-  const profilesTable = {
-    select: (_cols?: string) => ({
-      eq: (_col: string, userId: string) => ({
-        maybeSingle: () => Promise.resolve({ data: state.profiles.find((p) => p.user_id === userId) ?? null, error: null }),
-      }),
-    }),
-  };
+  const profilesTable = { select: (_cols?: string) => queryable(state.profiles) };
 
   // Stubs minimaux (toujours vides) : les routes de la fiche joueur
   // (modules/licencies/routes.ts) agrègent aussi ces deux tables, mais leur
@@ -830,6 +960,16 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
           return matchesTable;
         case "competitions":
           return competitionsTable;
+        case "club_venues":
+          return mutableTable(() => state.clubVenues, (rows) => (state.clubVenues = rows), { defaults: () => ({ active: true, sort_order: 0, address: null }) });
+        case "club_scheduling_rules":
+          return { select: (_cols?: string) => queryable(state.schedulingRules) };
+        case "derogation_requests":
+          return derogationRequestsTable;
+        case "derogation_proposals":
+          return mutableTable(() => state.derogationProposals, (rows) => (state.derogationProposals = rows));
+        case "derogation_messages":
+          return mutableTable(() => state.derogationMessages, (rows) => (state.derogationMessages = rows));
         case "ffbb_team_engagements":
           return { select: (_cols?: string) => queryable(state.engagements) };
         case "pools":

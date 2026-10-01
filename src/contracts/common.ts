@@ -10,6 +10,8 @@ export const ErrorEnvelopeSchema = z
     error: z.object({
       code: z.string(),
       message: z.string(),
+      /** Détails structurés optionnels (ex. `DEROGATION_SLOT_CONFLICT` : créneaux en conflit). */
+      details: z.unknown().optional(),
     }),
   })
   .openapi("ErrorEnvelope");

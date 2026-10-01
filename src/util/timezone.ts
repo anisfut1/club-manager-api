@@ -118,3 +118,42 @@ export function computeDayRange(instant: Date, timezone: string): { from: string
 
   return { from: start.toISOString(), to: end.toISOString() };
 }
+
+/** Horloge murale d'un instant dans `timezone` (date, heure, minute, jour de semaine 0=dimanche). */
+export function zonedWallClock(instant: Date, timezone: string): { year: number; month: number; day: number; hour: number; minute: number; weekday: number } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    weekday: "short",
+  }).formatToParts(instant);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  const WEEKDAY_INDEX: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return { year: Number(get("year")), month: Number(get("month")), day: Number(get("day")), hour: Number(get("hour")), minute: Number(get("minute")), weekday: WEEKDAY_INDEX[get("weekday")] ?? 0 };
+}
+
+/** "YYYY-MM-DD" (date calendaire, sans fuseau) → composantes, `null` si invalide. */
+export function parseLocalDate(value: string): { year: number; month: number; day: number; weekday: number } | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const probe = new Date(Date.UTC(year, month - 1, day));
+  if (probe.getUTCFullYear() !== year || probe.getUTCMonth() !== month - 1 || probe.getUTCDate() !== day) return null;
+  return { year, month, day, weekday: probe.getUTCDay() };
+}
+
+/** "YYYY-MM-DD" de l'instant, lu dans `timezone`. */
+export function localDateKey(instant: Date, timezone: string): string {
+  const { year, month, day } = zonedWallClock(instant, timezone);
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+/** "HH:MM" de l'instant, lu dans `timezone`. */
+export function localTimeKey(instant: Date, timezone: string): string {
+  const { hour, minute } = zonedWallClock(instant, timezone);
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}

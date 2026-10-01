@@ -294,6 +294,20 @@ export async function syncPoolStandings(supabase: Client, provider: FfbbPublicPr
   }
 }
 
+/**
+ * Gymnases du club (`club_venues`, demandes de dérogation) : toute salle FFBB
+ * utilisée pour un match À DOMICILE devient un gymnase du club s'il n'existe
+ * pas déjà — jamais un nom deviné, jamais l'écrasement d'un gymnase existant
+ * (nom/ordre/actif restent éditables). Best-effort : n'interrompt jamais la
+ * synchronisation des matchs.
+ */
+export async function ensureClubVenues(supabase: Client, clubId: string, homeVenues: ReadonlyMap<string, { name: string | null; address: string | null }>): Promise<void> {
+  const rows = [...homeVenues.entries()].filter(([, v]) => v.name).map(([venueId, v]) => ({ club_id: clubId, venue_id: venueId, name: v.name as string, address: v.address }));
+  if (rows.length === 0) return;
+  const { error } = await supabase.from("club_venues").upsert(rows, { onConflict: "club_id,venue_id", ignoreDuplicates: true });
+  if (error) logError("Mise à jour des gymnases du club échouée (matchs synchronisés quand même)", error, { clubId });
+}
+
 export interface SyncFfbbClub {
   id: string;
   ffbbClubId: string;
@@ -359,9 +373,11 @@ export async function syncFfbb(supabase: Client, provider: FfbbPublicProvider, c
     );
     stats.engagementsUpserted = teamIdByEngagementFfbbId.size;
 
+    const homeVenues = new Map<string, { name: string | null; address: string | null }>();
     for (const match of snapshot.matches) {
       try {
         const venueId = await upsertVenue(supabase, match.venue?.ffbbId ?? null, match.venue?.name ?? null, match.venue?.address ?? null);
+        if (match.isHome && venueId) homeVenues.set(venueId, { name: match.venue?.name ?? null, address: match.venue?.address ?? null });
 
         const row = mapNormalizedMatchToRow(match, {
           clubId: club.id,
@@ -422,6 +438,8 @@ export async function syncFfbb(supabase: Client, provider: FfbbPublicProvider, c
         logError("Synchronisation d'un match échouée", error, { clubId: club.id, ffbbMatchId: match.ffbbId });
       }
     }
+
+    await ensureClubVenues(supabase, club.id, homeVenues);
 
     const finalStatus = stats.errors === 0 ? "success" : "partial";
 

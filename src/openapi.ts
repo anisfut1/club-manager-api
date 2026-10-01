@@ -66,6 +66,21 @@ import {
   PublicAccessListDtoSchema,
   PublicAccessResetResultDtoSchema,
 } from "./contracts/public-tables.js";
+import {
+  CreateDerogationRequestDtoSchema,
+  DerogationActionDtoSchema,
+  DerogationAvailabilityDtoSchema,
+  DerogationAvailabilityQueryDtoSchema,
+  DerogationContextDtoSchema,
+  DerogationRequestDetailDtoSchema,
+  DerogationRequestListDtoSchema,
+  DerogationRequestListQueryDtoSchema,
+  DerogationSlotCheckDtoSchema,
+  DerogationSlotCheckQueryDtoSchema,
+  PostDerogationMessageDtoSchema,
+  ProposeDerogationSlotDtoSchema,
+} from "./contracts/derogation-requests.js";
+import { ClubMemberListDtoSchema, InviteMemberDtoSchema, SetMemberRolesDtoSchema } from "./contracts/members.js";
 import { PoolStandingsListDtoSchema } from "./contracts/standings.js";
 
 /**
@@ -760,6 +775,118 @@ registry.registerPath({
   method: "get",
   path: "/health",
   responses: { 200: jsonResponse("État du service", z.object({ status: z.literal("ok") })) },
+});
+
+/**
+ * DEMANDES DE DÉROGATION INTERNES (coach → coordinateur) — retour du club,
+ * 2026-10-01. Aucune de ces routes n'écrit sur FFBB/FBI ni ne modifie un
+ * match : workflow interne (demande + statut + conversation).
+ */
+const clubAndRequestParams = clubIdParam.extend({ requestId: z.string().uuid() });
+const unprocessable = { 422: jsonResponse("Règle métier non respectée (ex. MESSAGE_REQUIRED)", ErrorEnvelopeSchema) };
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/clubs/{clubId}/derogation-requests/context",
+  security: bearerAuth,
+  request: { params: clubIdParam },
+  responses: { 200: jsonResponse("Demandeur, coordinateur configuré, gymnases, matchs éligibles", DerogationContextDtoSchema), ...errorResponses },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/clubs/{clubId}/derogation-requests",
+  security: bearerAuth,
+  request: { params: clubIdParam, query: DerogationRequestListQueryDtoSchema },
+  responses: { 200: jsonResponse("Inbox coordinateur / demandes du coach", DerogationRequestListDtoSchema), ...errorResponses, ...validationResponses },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/clubs/{clubId}/derogation-requests",
+  security: bearerAuth,
+  request: { params: clubIdParam, body: { content: { "application/json": { schema: CreateDerogationRequestDtoSchema } } } },
+  responses: {
+    201: jsonResponse("Demande créée (créneau revalidé côté serveur)", DerogationRequestDetailDtoSchema),
+    ...errorResponses,
+    400: jsonResponse("Requête invalide, créneau hors plage/passé, gymnase requis", ErrorEnvelopeSchema),
+    409: jsonResponse("DEROGATION_SLOT_CONFLICT (avec details.conflicts), NO_COORDINATOR, DEROGATION_REQUEST_ALREADY_ACTIVE, MATCH_NOT_UPCOMING", ErrorEnvelopeSchema),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/clubs/{clubId}/derogation-requests/{requestId}",
+  security: bearerAuth,
+  request: { params: clubAndRequestParams },
+  responses: { 200: jsonResponse("Demande, match, propositions, conversation, permissions", DerogationRequestDetailDtoSchema), ...errorResponses },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/clubs/{clubId}/derogation-requests/{requestId}/messages",
+  security: bearerAuth,
+  request: { params: clubAndRequestParams, body: { content: { "application/json": { schema: PostDerogationMessageDtoSchema } } } },
+  responses: { 200: jsonResponse("Message ajouté (demande à jour)", DerogationRequestDetailDtoSchema), ...errorResponses, ...validationResponses },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/clubs/{clubId}/derogation-requests/{requestId}/actions",
+  security: bearerAuth,
+  request: { params: clubAndRequestParams, body: { content: { "application/json": { schema: DerogationActionDtoSchema } } } },
+  responses: { 200: jsonResponse("Statut mis à jour + événement système", DerogationRequestDetailDtoSchema), ...errorResponses, ...validationResponses, ...unprocessable },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/clubs/{clubId}/derogation-requests/{requestId}/proposals",
+  security: bearerAuth,
+  request: { params: clubAndRequestParams, body: { content: { "application/json": { schema: ProposeDerogationSlotDtoSchema } } } },
+  responses: { 200: jsonResponse("Nouveau créneau proposé (historique conservé)", DerogationRequestDetailDtoSchema), ...errorResponses, ...validationResponses },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/clubs/{clubId}/matches/{matchId}/derogation-availability",
+  security: bearerAuth,
+  request: { params: clubAndMatchIdParams, query: DerogationAvailabilityQueryDtoSchema },
+  responses: { 200: jsonResponse("Occupation des gymnases + créneaux candidats (match cible exclu)", DerogationAvailabilityDtoSchema), ...errorResponses, ...validationResponses },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/clubs/{clubId}/matches/{matchId}/derogation-slot-check",
+  security: bearerAuth,
+  request: { params: clubAndMatchIdParams, query: DerogationSlotCheckQueryDtoSchema },
+  responses: { 200: jsonResponse("Vérification serveur d'une heure personnalisée", DerogationSlotCheckDtoSchema), ...errorResponses, ...validationResponses },
+});
+
+/** Membres & rôles (club_admin) — désignation des coachs et du coordinateur. */
+const clubAndMembershipParams = clubIdParam.extend({ membershipId: z.string().uuid() });
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/clubs/{clubId}/members",
+  security: bearerAuth,
+  request: { params: clubIdParam },
+  responses: { 200: jsonResponse("Membres du club et leurs rôles", ClubMemberListDtoSchema), ...errorResponses },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/clubs/{clubId}/members",
+  security: bearerAuth,
+  request: { params: clubIdParam, body: { content: { "application/json": { schema: InviteMemberDtoSchema } } } },
+  responses: { 201: jsonResponse("Membre invité/rattaché", ClubMemberListDtoSchema), ...errorResponses, ...validationResponses },
+});
+
+registry.registerPath({
+  method: "put",
+  path: "/v1/clubs/{clubId}/members/{membershipId}/roles",
+  security: bearerAuth,
+  request: { params: clubAndMembershipParams, body: { content: { "application/json": { schema: SetMemberRolesDtoSchema } } } },
+  responses: { 200: jsonResponse("Rôles remplacés", ClubMemberListDtoSchema), ...errorResponses, ...validationResponses },
 });
 
 export function generateOpenApiDocument() {

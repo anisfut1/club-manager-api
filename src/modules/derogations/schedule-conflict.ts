@@ -1,4 +1,5 @@
 import { zonedWallTimeToUtc } from "../../util/timezone.js";
+import { matchSlotsOverlap } from "../../scheduling/match-slot.js";
 
 /**
  * Détection de conflit de créneau pour une dérogation demandant un
@@ -37,8 +38,6 @@ export interface ScheduleConflict {
   teamName: string | null;
 }
 
-const SLOT_DURATION_MS = 2 * 60 * 60 * 1000;
-
 function parseFrenchDate(value: string): { year: number; month: number; day: number } | null {
   const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value.trim());
   if (!match) return null;
@@ -72,15 +71,14 @@ export function findScheduleConflict(
   const time = parseFrenchTime(heureDemandee);
   if (!date || !time) return null;
 
-  const requestedStart = zonedWallTimeToUtc(date.year, date.month, date.day, time.hour, time.minute, 0, "Europe/Paris").getTime();
-  const requestedEnd = requestedStart + SLOT_DURATION_MS;
+  const requestedStart = zonedWallTimeToUtc(date.year, date.month, date.day, time.hour, time.minute, 0, "Europe/Paris");
 
   for (const match of otherMatches) {
     if (match.id === excludeMatchId) continue;
-    const matchStart = new Date(match.matchDatetime).getTime();
-    if (Number.isNaN(matchStart)) continue;
-    const matchEnd = matchStart + SLOT_DURATION_MS;
-    if (requestedStart < matchEnd && matchStart < requestedEnd) {
+    const matchStart = new Date(match.matchDatetime);
+    if (Number.isNaN(matchStart.getTime())) continue;
+    // Même définition de créneau (120 min) et même règle de chevauchement que tout le reste de l'API (src/scheduling/match-slot.ts).
+    if (matchSlotsOverlap(requestedStart, matchStart)) {
       return { matchId: match.id, numero: match.numero, opponentName: match.opponentName, matchDatetime: match.matchDatetime, teamName: match.teamName };
     }
   }

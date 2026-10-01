@@ -13,6 +13,8 @@ import { licenciesRouter } from "../../modules/licencies/routes.js";
 import { platformRouter } from "../../modules/platform/routes.js";
 import { tableAssignmentsRouter, matchTablesRouter } from "../../modules/tables/routes.js";
 import { publicTablesRouter } from "../../modules/public-tables/routes.js";
+import { derogationAvailabilityRouter, derogationRequestsRouter } from "../../modules/derogation-requests/routes.js";
+import { membersRouter } from "../../modules/members/routes.js";
 import { standingsRouter } from "../../modules/standings/routes.js";
 import { publicMatchesRouter } from "../../modules/public-matches/routes.js";
 import type { MeDto } from "../../contracts/me.js";
@@ -52,6 +54,8 @@ v1Router.get("/me", requireAuth, async (c) => {
 v1Router.route("/clubs", clubsRouter);
 v1Router.route("/clubs/:clubId/matches", matchesRouter);
 v1Router.route("/clubs/:clubId/matches/:matchId/documents", documentsRouter);
+// Avant matchTablesRouter (même préfixe) : voir derogation-requests/routes.ts.
+v1Router.route("/clubs/:clubId/matches/:matchId", derogationAvailabilityRouter);
 v1Router.route("/clubs/:clubId/matches/:matchId", matchTablesRouter);
 v1Router.route("/clubs/:clubId/table-assignments", tableAssignmentsRouter);
 v1Router.route("/public/clubs/:clubSlug", publicTablesRouter);
@@ -62,5 +66,7 @@ v1Router.route("/clubs/:clubId/derogations", derogationsRouter);
 v1Router.route("/clubs/:clubId/emarque-imports", emarqueImportsRouter);
 v1Router.route("/clubs/:clubId/licencies", licenciesRouter);
 v1Router.route("/clubs/:clubId/standings", standingsRouter);
+v1Router.route("/clubs/:clubId/derogation-requests", derogationRequestsRouter);
+v1Router.route("/clubs/:clubId/members", membersRouter);
 v1Router.route("/jobs", jobStatusRouter);
 v1Router.route("/platform", platformRouter);

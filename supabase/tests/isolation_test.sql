@@ -361,4 +361,95 @@ reset role;
 
 delete from public.licencie_public_tokens where club_id = 'aaaaaaaa-0000-0000-0000-000000000000';
 
+-- =============================================================
+-- Scenario 10 : demandes de derogation INTERNES (coach -> coordinateur)
+-- RLS de lecture : coordinateur (correspondant_club) / club_admin du club,
+-- auteur, coach de l'equipe (portee club ou equipe). Aucune ecriture
+-- directe pour authenticated (tout passe par l'API, role service).
+-- =============================================================
+insert into auth.users (id, email) values
+  ('dddddddd-0000-0000-0000-000000000001', 'coach-autre-equipe@example.com'),
+  ('eeeeeeee-0000-0000-0000-000000000001', 'coordinateur@example.com');
+insert into public.teams (id, club_id, name) values ('aaaaaaaa-0000-0000-0000-0000000000a2', 'aaaaaaaa-0000-0000-0000-000000000000', 'Equipe A2');
+insert into public.club_memberships (id, club_id, user_id) values
+  ('dddddddd-0000-0000-0000-000000000002', 'aaaaaaaa-0000-0000-0000-000000000000', 'dddddddd-0000-0000-0000-000000000001'),
+  ('eeeeeeee-0000-0000-0000-000000000002', 'aaaaaaaa-0000-0000-0000-000000000000', 'eeeeeeee-0000-0000-0000-000000000001');
+insert into public.membership_roles (membership_id, role, scope_team_id) values
+  ('dddddddd-0000-0000-0000-000000000002', 'coach', 'aaaaaaaa-0000-0000-0000-0000000000a2'),
+  ('eeeeeeee-0000-0000-0000-000000000002', 'correspondant_club', null);
+insert into public.club_venues (id, club_id, name) values ('aaaaaaaa-0000-0000-0000-0000000000f1', 'aaaaaaaa-0000-0000-0000-000000000000', 'Gymnase A');
+insert into public.derogation_requests (id, club_id, match_id, team_id, created_by_user_id, requester_display_name, requested_start_at, requested_club_venue_id)
+values ('aaaaaaaa-0000-0000-0000-0000000000d1', 'aaaaaaaa-0000-0000-0000-000000000000', 'aaaaaaaa-0000-0000-0000-000000000006', 'aaaaaaaa-0000-0000-0000-000000000004', 'cccccccc-0000-0000-0000-000000000001', 'Coach AB', '2026-10-11 13:00+00', 'aaaaaaaa-0000-0000-0000-0000000000f1');
+insert into public.derogation_messages (club_id, request_id, author_user_id, author_display_name, body, message_type)
+values ('aaaaaaaa-0000-0000-0000-000000000000', 'aaaaaaaa-0000-0000-0000-0000000000d1', 'cccccccc-0000-0000-0000-000000000001', 'Coach AB', 'Demande', 'USER');
+insert into public.derogation_proposals (club_id, request_id, proposed_by_user_id, proposed_by_display_name, requested_start_at)
+values ('aaaaaaaa-0000-0000-0000-000000000000', 'aaaaaaaa-0000-0000-0000-0000000000d1', 'cccccccc-0000-0000-0000-000000000001', 'Coach AB', '2026-10-11 13:00+00');
+
+set role authenticated;
+set request.jwt.claim.sub = 'aaaaaaaa-0000-0000-0000-000000000001';
+select pg_temp.assert_count('DR club_admin A - voit la demande', 1, (select count(*) from public.derogation_requests));
+select pg_temp.assert_count('DR club_admin A - voit le message', 1, (select count(*) from public.derogation_messages));
+reset role;
+
+set role authenticated;
+set request.jwt.claim.sub = 'cccccccc-0000-0000-0000-000000000001';
+select pg_temp.assert_count('DR auteur (coach A) - voit sa demande + proposition', 2, (select count(*) from public.derogation_requests) + (select count(*) from public.derogation_proposals));
+reset role;
+
+set role authenticated;
+set request.jwt.claim.sub = 'eeeeeeee-0000-0000-0000-000000000001';
+select pg_temp.assert_count('DR coordinateur A - voit la demande', 1, (select count(*) from public.derogation_requests));
+reset role;
+
+set role authenticated;
+set request.jwt.claim.sub = 'dddddddd-0000-0000-0000-000000000001';
+select pg_temp.assert_count('DR coach d''une AUTRE equipe - ne voit rien', 0, (select count(*) from public.derogation_requests) + (select count(*) from public.derogation_messages));
+reset role;
+
+set role authenticated;
+set request.jwt.claim.sub = 'bbbbbbbb-0000-0000-0000-000000000001';
+select pg_temp.assert_count('DR club_admin B - rien du Club A meme UUID connu', 0, (select count(*) from public.derogation_requests where id = 'aaaaaaaa-0000-0000-0000-0000000000d1') + (select count(*) from public.derogation_messages) + (select count(*) from public.club_venues where club_id = 'aaaaaaaa-0000-0000-0000-000000000000'));
+reset role;
+
+-- Aucune ecriture directe (historique immuable, ecritures via l'API uniquement).
+set role authenticated;
+set request.jwt.claim.sub = 'aaaaaaaa-0000-0000-0000-000000000001';
+do $$
+begin
+  begin
+    insert into public.derogation_messages (club_id, request_id, author_display_name, body, message_type) values ('aaaaaaaa-0000-0000-0000-000000000000', 'aaaaaaaa-0000-0000-0000-0000000000d1', 'x', 'x', 'USER');
+    raise exception 'ECHEC [DR insert direct message] : aurait du etre refuse';
+  exception when insufficient_privilege then raise notice 'OK [DR insert direct message refuse]';
+  end;
+  begin
+    update public.derogation_requests set status = 'COMPLETED';
+    raise exception 'ECHEC [DR update direct] : aurait du etre refuse';
+  exception when insufficient_privilege then raise notice 'OK [DR update direct refuse]';
+  end;
+end $$;
+reset role;
+
+-- Une seule demande ACTIVE par match (index unique partiel), meme club garanti par trigger.
+do $$
+begin
+  begin
+    insert into public.derogation_requests (club_id, match_id, created_by_user_id, requester_display_name, requested_start_at)
+    values ('aaaaaaaa-0000-0000-0000-000000000000', 'aaaaaaaa-0000-0000-0000-000000000006', 'cccccccc-0000-0000-0000-000000000001', 'Coach AB', '2026-10-12 13:00+00');
+    raise exception 'ECHEC [DR deuxieme demande active] : aurait du etre refusee';
+  exception when unique_violation then raise notice 'OK [DR une seule demande active par match]';
+  end;
+  begin
+    insert into public.derogation_requests (club_id, match_id, created_by_user_id, requester_display_name, requested_start_at)
+    values ('aaaaaaaa-0000-0000-0000-000000000000', 'bbbbbbbb-0000-0000-0000-000000000006', 'cccccccc-0000-0000-0000-000000000001', 'Coach AB', '2026-10-12 13:00+00');
+    raise exception 'ECHEC [DR match d''un autre club] : aurait du etre refuse';
+  exception when raise_exception then
+    if sqlerrm like 'ECHEC%' then raise; end if;
+    raise notice 'OK [DR match d''un autre club refuse par trigger]';
+  end;
+end $$;
+update public.derogation_requests set status = 'COMPLETED' where id = 'aaaaaaaa-0000-0000-0000-0000000000d1';
+insert into public.derogation_requests (club_id, match_id, created_by_user_id, requester_display_name, requested_start_at)
+values ('aaaaaaaa-0000-0000-0000-000000000000', 'aaaaaaaa-0000-0000-0000-000000000006', 'cccccccc-0000-0000-0000-000000000001', 'Coach AB', '2026-10-12 13:00+00');
+select pg_temp.assert_count('DR apres COMPLETED, nouvelle demande possible', 2, (select count(*) from public.derogation_requests));
+
 do $$ begin raise notice '=== TOUS LES TESTS D''ISOLATION SONT PASSES ==='; end $$;

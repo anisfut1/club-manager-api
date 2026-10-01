@@ -10,7 +10,7 @@
  * mais distinguable côté frontend d'un autre conflit. Sans code explicite,
  * `code` retombe sur le nom du statut générique (comportement inchangé).
  */
-export type ApiErrorKind = "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "BAD_REQUEST" | "CONFLICT" | "TOO_MANY_REQUESTS" | "INTERNAL_ERROR" | "BAD_GATEWAY" | "SERVICE_UNAVAILABLE";
+export type ApiErrorKind = "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "BAD_REQUEST" | "CONFLICT" | "UNPROCESSABLE" | "TOO_MANY_REQUESTS" | "INTERNAL_ERROR" | "BAD_GATEWAY" | "SERVICE_UNAVAILABLE";
 
 const STATUS_BY_KIND: Record<ApiErrorKind, number> = {
   UNAUTHORIZED: 401,
@@ -18,6 +18,7 @@ const STATUS_BY_KIND: Record<ApiErrorKind, number> = {
   NOT_FOUND: 404,
   BAD_REQUEST: 400,
   CONFLICT: 409,
+  UNPROCESSABLE: 422,
   TOO_MANY_REQUESTS: 429,
   INTERNAL_ERROR: 500,
   BAD_GATEWAY: 502,
@@ -27,12 +28,15 @@ const STATUS_BY_KIND: Record<ApiErrorKind, number> = {
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
+  /** Détails structurés optionnels (ex. créneaux en conflit), renvoyés tels quels dans `error.details`. */
+  readonly details?: unknown;
 
-  constructor(kind: ApiErrorKind, message: string, code?: string) {
+  constructor(kind: ApiErrorKind, message: string, code?: string, details?: unknown) {
     super(message);
     this.name = "ApiError";
     this.code = code ?? kind;
     this.status = STATUS_BY_KIND[kind];
+    this.details = details;
   }
 }
 
@@ -48,12 +52,17 @@ export function notFound(message = "Ressource introuvable."): ApiError {
   return new ApiError("NOT_FOUND", message);
 }
 
-export function badRequest(message: string, code?: string): ApiError {
-  return new ApiError("BAD_REQUEST", message, code);
+export function badRequest(message: string, code?: string, details?: unknown): ApiError {
+  return new ApiError("BAD_REQUEST", message, code, details);
 }
 
-export function conflict(message: string, code?: string): ApiError {
-  return new ApiError("CONFLICT", message, code);
+export function conflict(message: string, code?: string, details?: unknown): ApiError {
+  return new ApiError("CONFLICT", message, code, details);
+}
+
+/** Requête bien formée mais refusée par une règle métier (ex. message obligatoire). */
+export function unprocessable(message: string, code?: string): ApiError {
+  return new ApiError("UNPROCESSABLE", message, code);
 }
 
 export function tooManyRequests(message: string, code?: string): ApiError {

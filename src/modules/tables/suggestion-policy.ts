@@ -11,11 +11,11 @@ export type { TableAssignmentRole };
  */
 
 /**
- * Durée d'occupation d'un match pour cette V1 (§5) : 15:00 → créneau
- * 15:00-17:00. Volontairement fixe (pas encore par compétition/catégorie)
- * — voir docs/TABLE_ASSIGNMENTS.md pour l'évolution possible.
+ * Durée d'occupation d'un match (§5) : 15:00 → créneau 15:00-17:00. Définie
+ * UNE seule fois dans `src/scheduling/match-slot.ts` (partagée avec les
+ * dérogations), ré-exportée ici pour les imports existants du module.
  */
-export const DEFAULT_MATCH_DURATION_MINUTES = 120;
+export { DEFAULT_MATCH_DURATION_MINUTES } from "../../scheduling/match-slot.js";
 
 /**
  * Temps de trajet à ajouter aux fenêtres AVANT de tester le chevauchement

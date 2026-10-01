@@ -28,6 +28,7 @@ type Fn<Args, Returns> = { Args: Args; Returns: Returns };
 export type ClubStatus = "active" | "suspended";
 export type MembershipStatus = "active" | "suspended";
 export type ClubRole = "club_admin" | "correspondant_club" | "responsable_tables" | "coach" | "joueur" | "parent";
+export type DerogationRequestStatus = "REQUESTED" | "IN_PROGRESS" | "NEEDS_CHANGE" | "COMPLETED" | "CANCELLED";
 export type MatchStatus = "scheduled" | "played" | "postponed" | "cancelled" | "forfeit";
 /** Tables de marque (demande du club, 2026-09-28) — SCORER = marqueur, TIMEKEEPER = chronométreur, CLUB_DELEGATE = délégué de club, REFEREE = arbitre (ajouté 2026-09-28). */
 export type TableAssignmentRole = "SCORER" | "TIMEKEEPER" | "CLUB_DELEGATE" | "REFEREE";
@@ -133,6 +134,89 @@ export interface Database {
           status?: MembershipStatus;
           created_at?: string;
           updated_at?: string;
+        }
+      >;
+
+      club_venues: Table<
+        { id: string; club_id: string; name: string; address: string | null; venue_id: string | null; active: boolean; sort_order: number; created_at: string; updated_at: string },
+        { id?: string; club_id: string; name: string; address?: string | null; venue_id?: string | null; active?: boolean; sort_order?: number; created_at?: string; updated_at?: string }
+      >;
+
+      club_scheduling_rules: Table<
+        { id: string; club_id: string; weekday: number; earliest_start: string; latest_start: string; created_at: string; updated_at: string },
+        { id?: string; club_id: string; weekday: number; earliest_start: string; latest_start: string; created_at?: string; updated_at?: string }
+      >;
+
+      derogation_requests: Table<
+        {
+          id: string;
+          club_id: string;
+          match_id: string;
+          team_id: string | null;
+          created_by_user_id: string;
+          requester_membership_id: string | null;
+          requester_display_name: string;
+          original_scheduled_at: string | null;
+          original_venue_id: string | null;
+          requested_start_at: string;
+          requested_club_venue_id: string | null;
+          is_custom_weekday: boolean;
+          status: DerogationRequestStatus;
+          created_at: string;
+          updated_at: string;
+          last_message_at: string;
+        },
+        {
+          id?: string;
+          club_id: string;
+          match_id: string;
+          team_id?: string | null;
+          created_by_user_id: string;
+          requester_membership_id?: string | null;
+          requester_display_name: string;
+          original_scheduled_at?: string | null;
+          original_venue_id?: string | null;
+          requested_start_at: string;
+          requested_club_venue_id?: string | null;
+          is_custom_weekday?: boolean;
+          status?: DerogationRequestStatus;
+          created_at?: string;
+          updated_at?: string;
+          last_message_at?: string;
+        }
+      >;
+
+      derogation_proposals: Table<
+        { id: string; club_id: string; request_id: string; proposed_by_user_id: string; proposed_by_display_name: string; requested_start_at: string; requested_club_venue_id: string | null; is_custom_weekday: boolean; created_at: string },
+        { id?: string; club_id: string; request_id: string; proposed_by_user_id: string; proposed_by_display_name: string; requested_start_at: string; requested_club_venue_id?: string | null; is_custom_weekday?: boolean; created_at?: string }
+      >;
+
+      derogation_messages: Table<
+        {
+          id: string;
+          club_id: string;
+          request_id: string;
+          author_user_id: string | null;
+          author_membership_id: string | null;
+          author_display_name: string;
+          author_role_label: string | null;
+          body: string;
+          message_type: "USER" | "SYSTEM";
+          event: string | null;
+          created_at: string;
+        },
+        {
+          id?: string;
+          club_id: string;
+          request_id: string;
+          author_user_id?: string | null;
+          author_membership_id?: string | null;
+          author_display_name: string;
+          author_role_label?: string | null;
+          body: string;
+          message_type: "USER" | "SYSTEM";
+          event?: string | null;
+          created_at?: string;
         }
       >;
 

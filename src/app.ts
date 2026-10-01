@@ -43,7 +43,8 @@ app.route("/internal", internalRouter);
  */
 app.onError((error, c) => {
   if (error instanceof ApiError) {
-    return c.json({ error: { code: error.code, message: error.message } }, error.status as 400 | 401 | 403 | 404 | 409 | 429 | 500 | 502 | 503);
+    const body = error.details === undefined ? { code: error.code, message: error.message } : { code: error.code, message: error.message, details: error.details };
+    return c.json({ error: body }, error.status as 400 | 401 | 403 | 404 | 409 | 422 | 429 | 500 | 502 | 503);
   }
 
   logError("Erreur interne non gérée", error, { path: c.req.path, method: c.req.method });

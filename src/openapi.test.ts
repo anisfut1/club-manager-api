@@ -147,4 +147,25 @@ describe("generateOpenApiDocument", () => {
     expect(doc.info.title).toBe("club-manager-api");
     expect(Object.keys(doc.paths).length).toBeGreaterThanOrEqual(15);
   });
+
+  it("expose le workflow interne des demandes de dérogation (coach → coordinateur) et la gestion des membres, toutes protégées par bearerAuth", () => {
+    const ops = [
+      doc.paths["/v1/clubs/{clubId}/derogation-requests/context"]!.get!,
+      doc.paths["/v1/clubs/{clubId}/derogation-requests"]!.get!,
+      doc.paths["/v1/clubs/{clubId}/derogation-requests"]!.post!,
+      doc.paths["/v1/clubs/{clubId}/derogation-requests/{requestId}"]!.get!,
+      doc.paths["/v1/clubs/{clubId}/derogation-requests/{requestId}/messages"]!.post!,
+      doc.paths["/v1/clubs/{clubId}/derogation-requests/{requestId}/actions"]!.post!,
+      doc.paths["/v1/clubs/{clubId}/derogation-requests/{requestId}/proposals"]!.post!,
+      doc.paths["/v1/clubs/{clubId}/matches/{matchId}/derogation-availability"]!.get!,
+      doc.paths["/v1/clubs/{clubId}/matches/{matchId}/derogation-slot-check"]!.get!,
+      doc.paths["/v1/clubs/{clubId}/members"]!.get!,
+      doc.paths["/v1/clubs/{clubId}/members"]!.post!,
+      doc.paths["/v1/clubs/{clubId}/members/{membershipId}/roles"]!.put!,
+    ];
+    for (const op of ops) expect(op.security).toEqual([{ BearerAuth: [] }]);
+    for (const schema of ["DerogationRequestDetailDto", "DerogationAvailabilityDto", "DerogationContextDto", "DerogationRequestStatus", "ClubMemberDto"]) {
+      expect(doc.components?.schemas).toHaveProperty(schema);
+    }
+  });
 });
