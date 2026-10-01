@@ -152,6 +152,39 @@ describe("GET /v1/public/clubs/:clubSlug/matches/:matchId/derogation", () => {
   });
 });
 
+describe("Dérogations jamais exposées sans compte (retour du club, 2026-10-01)", () => {
+  const CHECK = {
+    id: "derog-a",
+    club_id: CLUB_A.id,
+    match_id: "match-a",
+    numero: "15",
+    etat: "Acceptée par l'organisme dirigeant",
+    date_depot: "12/09/2026",
+    date_derogation: null,
+    date_rencontre: "03/10/2026",
+    heure: "15:00",
+    domicile: "Club A Basket",
+    visiteur: "MEZE LOUPIAN",
+    demandeur: "Domicile",
+    motif: "Organisation journée",
+    checked_at: "2026-09-30T09:57:26Z",
+  };
+
+  it("la liste publique renvoie derogationStatus: null même quand une dérogation existe", async () => {
+    state.fbiDerogationChecks.push(CHECK);
+    const res = await request("/matches");
+    const body = (await res.json()) as { matches: { id: string; derogationStatus: unknown }[] };
+    expect(body.matches.map((m) => m.derogationStatus)).toEqual([null]);
+  });
+
+  it("la route publique de dérogation renvoie toujours null, même quand une dérogation existe", async () => {
+    state.fbiDerogationChecks.push(CHECK);
+    const res = await request("/matches/match-a/derogation");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ derogation: null });
+  });
+});
+
 describe("GET /v1/public/clubs/:clubSlug/teams", () => {
   it("renvoie les équipes de CE club pour le filtre de la liste", async () => {
     const res = await request("/teams");

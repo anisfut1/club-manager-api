@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { DbClient } from "../../db/client.js";
 import { badRequest } from "../../api-error.js";
 import { resolvePublicClub, type PublicClub } from "../public/club-resolver.js";
-import { listMatchesForClub, loadMatchDetails, resolveDerogationStatus } from "../matches/shared.js";
+import { listMatchesForClub, loadMatchDetails } from "../matches/shared.js";
 import { loadMatchDocuments } from "../documents/shared.js";
 import type { TeamDto } from "../../contracts/clubs.js";
 
@@ -66,7 +66,10 @@ publicMatchesRouter.get("/teams", async (c) => {
 publicMatchesRouter.get("/matches", async (c) => {
   const club = c.get("publicClub");
   const result = await listMatchesForClub(c.get("supabase"), club, c.req.query());
-  return c.json(result);
+  // Dérogations jamais exposées sans compte (retour du club, 2026-10-01 : « tout
+  // ce qui est dérogation ça doit pas être visible au public, seulement aux
+  // admin et admin du club »).
+  return c.json({ ...result, matches: result.matches.map((m) => ({ ...m, derogationStatus: null })) });
 });
 
 /** GET /v1/public/clubs/:clubSlug/matches/:matchId — fiche complète (composition, stats, officiels, e-Marque), voir `matches/shared.ts#loadMatchDetails`. */
@@ -93,12 +96,10 @@ publicMatchesRouter.get("/matches/:matchId/documents", async (c) => {
   return c.json({ documents });
 });
 
-/** GET /v1/public/clubs/:clubSlug/matches/:matchId/derogation — dernier état CONNU, lecture seule (voir `matches/shared.ts#resolveDerogationStatus`). */
-publicMatchesRouter.get("/matches/:matchId/derogation", async (c) => {
-  const club = c.get("publicClub");
-  const matchId = c.req.param("matchId");
-  if (!matchId) throw badRequest("Paramètre de route :matchId manquant.");
-
-  const derogation = await resolveDerogationStatus(c.get("supabase"), club, matchId);
-  return c.json({ derogation });
-});
+/**
+ * GET /v1/public/clubs/:clubSlug/matches/:matchId/derogation — conservée pour
+ * compatibilité des clients existants, mais renvoie TOUJOURS `null` : les
+ * dérogations sont réservées aux club_admin / platform_admin (retour du club,
+ * 2026-10-01), jamais lues ni exposées pour un visiteur anonyme.
+ */
+publicMatchesRouter.get("/matches/:matchId/derogation", (c) => c.json({ derogation: null }));
