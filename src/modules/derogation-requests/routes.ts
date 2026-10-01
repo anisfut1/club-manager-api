@@ -15,7 +15,7 @@ import {
 import { DEFAULT_MATCH_DURATION_MINUTES, DEFAULT_SLOT_STEP_MINUTES } from "../../scheduling/match-slot.js";
 import { localTimeKey, parseLocalDate, zonedWallTimeToUtc } from "../../util/timezone.js";
 import { computeAvailability, validateRequestedSlot, type CandidateSlot, type SlotConflict, type SlotWarning } from "./availability.js";
-import { canCreateForTeam, canManageRequests, canPerformAction, canPropose, canReadRequest, coachedTeams, nextStatus, roleLabelFor, type Actor } from "./policy.js";
+import { canCreateForTeam, canManageRequests, canPerformAction, canPropose, canCreateAny, canReadRequest, isAuthor, nextStatus, roleLabelFor, type Actor } from "./policy.js";
 import {
   REQUEST_COLUMNS,
   buildDetail,
@@ -46,7 +46,7 @@ import {
  * "aucune écriture externe").
  */
 
-const NO_COORDINATOR_MESSAGE = "Aucun coordinateur n'est actuellement configuré pour recevoir les demandes de dérogation.";
+export const NO_COORDINATOR_MESSAGE = "Aucun coordinateur n'est actuellement configuré pour recevoir les demandes de dérogation.";
 
 const service = (): DbClient => createServiceSupabaseClient();
 
@@ -142,7 +142,7 @@ function throwIfInvalid(result: Awaited<ReturnType<typeof checkSlot>>, venues: r
   throw badRequest(result.message, result.code);
 }
 
-async function insertMessage(db: DbClient, row: { club_id: string; request_id: string; author_user_id: string | null; author_membership_id: string | null; author_display_name: string; author_role_label: string | null; body: string; message_type: "USER" | "SYSTEM"; event?: string | null }) {
+async function insertMessage(db: DbClient, row: { club_id: string; request_id: string; author_user_id: string | null; author_licencie_id: string | null; author_membership_id: string | null; author_display_name: string; author_role_label: string | null; body: string; message_type: "USER" | "SYSTEM"; event?: string | null }) {
   const { error } = await db.from("derogation_messages").insert({ ...row, event: row.event ?? null });
   if (error) throw new Error(`Écriture du message échouée : ${error.message}`);
 }
@@ -153,20 +153,28 @@ async function touch(db: DbClient, requestId: string, patch: Partial<Pick<Reques
   if (error) throw new Error(`Mise à jour de la demande échouée : ${error.message}`);
 }
 
-interface Ctx {
+/** Identité qui agit : compte (espace club) ou licencié (lien personnel, espace public). */
+export interface Ctx {
   db: DbClient;
   actor: Actor;
   clubId: string;
   timezone: string;
-  membershipId: string;
+  membershipId: string | null;
+  /** Nom affiché (« Demande formulée par ») et sa provenance. */
+  identity: () => Promise<{ name: string; source: "LICENCIE" | "PROFILE" | "EMAIL" }>;
+}
+
+/** Colonnes d'auteur communes (compte OU licencié). */
+function authorColumns(ctx: Ctx) {
+  return { author_user_id: ctx.actor.userId, author_licencie_id: ctx.actor.licencieId, author_membership_id: ctx.membershipId };
 }
 
 async function context(c: { get: (k: "club" | "user") => unknown }): Promise<Ctx> {
   const club = c.get("club") as { club: { id: string; timezone: string }; membershipId: string };
-  const user = c.get("user") as { id: string };
+  const user = c.get("user") as { id: string; email?: string | null };
   const db = service();
   const actor = await loadActor(db, club.membershipId, user.id);
-  return { db, actor, clubId: club.club.id, timezone: club.club.timezone, membershipId: club.membershipId };
+  return { db, actor, clubId: club.club.id, timezone: club.club.timezone, membershipId: club.membershipId, identity: () => resolveRequesterName(db, club.membershipId, user.id, user.email ?? null) };
 }
 
 async function readableRequestOrThrow(ctx: Ctx, requestId: string): Promise<RequestRow> {
@@ -177,26 +185,17 @@ async function readableRequestOrThrow(ctx: Ctx, requestId: string): Promise<Requ
 }
 
 // ---------------------------------------------------------------------------
-// /v1/clubs/:clubId/derogation-requests
+// Handlers partagés (espace club authentifié ET espace public par lien personnel)
 // ---------------------------------------------------------------------------
-export const derogationRequestsRouter = new Hono<AppEnv>();
-derogationRequestsRouter.use("*", requireAuth);
-derogationRequestsRouter.use("*", requireClubMembership);
 
-/** GET .../context — identité du demandeur, coordinateur configuré, gymnases, matchs éligibles. */
-derogationRequestsRouter.get("/context", async (c) => {
-  const ctx = await context(c);
+/** Identité du demandeur, coordinateur configuré, gymnases, matchs éligibles. */
+export async function handleContext(ctx: Ctx) {
   const now = new Date();
-  const [requester, hasCoordinator, venues] = await Promise.all([
-    resolveRequesterName(ctx.db, ctx.membershipId, ctx.actor.userId, c.get("user").email ?? null),
-    coordinatorsConfigured(ctx.db, ctx.clubId),
-    loadClubVenues(ctx.db, ctx.clubId),
-  ]);
+  const [requester, hasCoordinator, venues] = await Promise.all([ctx.identity(), coordinatorsConfigured(ctx.db, ctx.clubId), loadClubVenues(ctx.db, ctx.clubId)]);
 
-  const teams = coachedTeams(ctx.actor);
-  const canCreateAny = canManageRequests(ctx.actor) ? true : teams === "ALL" || teams.size > 0;
+  const canCreate = canCreateAny(ctx.actor);
   let eligible: (ReturnType<typeof matchRef> & { activeRequestId: string | null })[] = [];
-  if (canCreateAny) {
+  if (canCreate) {
     const { data } = await ctx.db
       .from("matches")
       .select("id, club_id, numero, team_id, is_home, match_datetime, opponent_name, venue_id, venue_raw_label, status, competition_id")
@@ -213,35 +212,34 @@ derogationRequestsRouter.get("/context", async (c) => {
     eligible = rows.map((m) => ({ ...matchRef(m, labels), activeRequestId: activeByMatch.get(m.id) ?? null }));
   }
 
-  return c.json({
+  return {
     requesterDisplayName: requester.name,
     requesterNameSource: requester.source,
     coordinatorsConfigured: hasCoordinator,
-    canCreate: eligible.length > 0 || canCreateAny,
+    canCreate,
     canManage: canManageRequests(ctx.actor),
     timezone: ctx.timezone,
     venues: venueRefs(venues),
     eligibleMatches: eligible,
-  });
-});
+  };
+}
 
-/** GET ... — inbox coordinateur (toutes) / demandes du coach (ses équipes + les siennes). */
-derogationRequestsRouter.get("/", async (c) => {
-  const query = DerogationRequestListQueryDtoSchema.safeParse(c.req.query());
+/** Inbox coordinateur (toutes) / demandes du coach (ses équipes + les siennes). */
+export async function handleList(ctx: Ctx, rawQuery: Record<string, string>) {
+  const query = DerogationRequestListQueryDtoSchema.safeParse(rawQuery);
   if (!query.success) throw badRequest(query.error.issues.map((i) => i.message).join(" "));
-  const ctx = await context(c);
 
   let builder = ctx.db.from("derogation_requests").select(REQUEST_COLUMNS).eq("club_id", ctx.clubId);
   if (query.data.status) builder = builder.eq("status", query.data.status);
   if (query.data.teamId) builder = builder.eq("team_id", query.data.teamId);
   if (query.data.matchId) builder = builder.eq("match_id", query.data.matchId);
-  if (query.data.createdByMe === "true") builder = builder.eq("created_by_user_id", ctx.actor.userId);
   const { data, error } = await builder.order("last_message_at", { ascending: false });
   if (error) throw new Error(`Lecture des demandes échouée : ${error.message}`);
 
   const manager = canManageRequests(ctx.actor);
   const visible = ((data ?? []) as RequestRow[])
     .filter((row) => canReadRequest(ctx.actor, requestRef(row)))
+    .filter((row) => query.data.createdByMe !== "true" || isAuthor(ctx.actor, requestRef(row)))
     // Inbox coordinateur : d'abord ce qui attend son attention, puis la dernière activité.
     .sort((a, b) => (manager ? Number(b.status === "REQUESTED") - Number(a.status === "REQUESTED") : 0) || b.last_message_at.localeCompare(a.last_message_at));
 
@@ -249,21 +247,19 @@ derogationRequestsRouter.get("/", async (c) => {
   const offset = query.data.offset ?? 0;
   const venues = await loadClubVenues(ctx.db, ctx.clubId);
   const requests = await buildSummaries(ctx.db, visible.slice(offset, offset + limit), ctx.actor, venues);
-  return c.json({ requests, pagination: { limit, offset, total: visible.length } });
-});
+  return { requests, pagination: { limit, offset, total: visible.length } };
+}
 
-/** GET .../:requestId — demande + match + propositions + conversation + permissions. */
-derogationRequestsRouter.get("/:requestId", async (c) => {
-  const ctx = await context(c);
-  const row = await readableRequestOrThrow(ctx, c.req.param("requestId"));
-  return c.json(await buildDetail(ctx.db, row, ctx.actor, await loadClubVenues(ctx.db, ctx.clubId)));
-});
+/** Demande + match + propositions + conversation + permissions. */
+export async function handleGet(ctx: Ctx, requestId: string) {
+  const row = await readableRequestOrThrow(ctx, requestId);
+  return buildDetail(ctx.db, row, ctx.actor, await loadClubVenues(ctx.db, ctx.clubId));
+}
 
-/** POST ... — création. Demandeur, nom affiché et club déduits de l'authentification, jamais du corps. */
-derogationRequestsRouter.post("/", async (c) => {
-  const body = CreateDerogationRequestDtoSchema.safeParse(await c.req.json().catch(() => ({})));
+/** Création. Demandeur, nom affiché et club déduits de l'identité, jamais du corps. */
+export async function handleCreate(ctx: Ctx, rawBody: unknown) {
+  const body = CreateDerogationRequestDtoSchema.safeParse(rawBody);
   if (!body.success) throw badRequest(body.error.issues.map((i) => i.message).join(" "));
-  const ctx = await context(c);
   const now = new Date();
 
   const match = await loadMatch(ctx.db, ctx.clubId, body.data.matchId);
@@ -281,7 +277,7 @@ derogationRequestsRouter.post("/", async (c) => {
   const validation = await checkSlot({ db: ctx.db, clubId: ctx.clubId, timezone: ctx.timezone, match, startAt, venueId, venues, now });
   throwIfInvalid(validation, venues);
 
-  const requester = await resolveRequesterName(ctx.db, ctx.membershipId, ctx.actor.userId, c.get("user").email ?? null);
+  const requester = await ctx.identity();
   // Nom saisi accepté seulement quand aucun nom exploitable n'est connu (jamais pour usurper un prénom connu).
   const displayName = requester.source === "EMAIL" && body.data.requesterDisplayName ? body.data.requesterDisplayName : requester.name;
 
@@ -292,6 +288,7 @@ derogationRequestsRouter.post("/", async (c) => {
       match_id: match.id,
       team_id: match.team_id,
       created_by_user_id: ctx.actor.userId,
+      created_by_licencie_id: ctx.actor.licencieId,
       requester_membership_id: ctx.membershipId,
       requester_display_name: displayName,
       original_scheduled_at: match.match_datetime,
@@ -311,31 +308,30 @@ derogationRequestsRouter.post("/", async (c) => {
   const row = created as RequestRow;
 
   const venueName = venueId ? (venues.find((v) => v.id === venueId)?.name ?? null) : null;
-  await ctx.db.from("derogation_proposals").insert({ club_id: ctx.clubId, request_id: row.id, proposed_by_user_id: ctx.actor.userId, proposed_by_display_name: displayName, requested_start_at: row.requested_start_at, requested_club_venue_id: venueId, is_custom_weekday: validation.isCustomWeekday });
+  await ctx.db.from("derogation_proposals").insert({ club_id: ctx.clubId, request_id: row.id, proposed_by_user_id: ctx.actor.userId, proposed_by_licencie_id: ctx.actor.licencieId, proposed_by_display_name: displayName, requested_start_at: row.requested_start_at, requested_club_venue_id: venueId, is_custom_weekday: validation.isCustomWeekday });
   const roleLabel = roleLabelFor(ctx.actor, requestRef(row));
-  await insertMessage(ctx.db, { club_id: ctx.clubId, request_id: row.id, author_user_id: ctx.actor.userId, author_membership_id: ctx.membershipId, author_display_name: displayName, author_role_label: roleLabel, body: `${displayName} a envoyé la demande : ${formatSlot(startAt, ctx.timezone, venueName)}.`, message_type: "SYSTEM", event: "REQUEST_CREATED" });
+  await insertMessage(ctx.db, { club_id: ctx.clubId, request_id: row.id, ...authorColumns(ctx), author_display_name: displayName, author_role_label: roleLabel, body: `${displayName} a envoyé la demande : ${formatSlot(startAt, ctx.timezone, venueName)}.`, message_type: "SYSTEM", event: "REQUEST_CREATED" });
   if (body.data.comment) {
-    await insertMessage(ctx.db, { club_id: ctx.clubId, request_id: row.id, author_user_id: ctx.actor.userId, author_membership_id: ctx.membershipId, author_display_name: displayName, author_role_label: roleLabel, body: body.data.comment, message_type: "USER" });
+    await insertMessage(ctx.db, { club_id: ctx.clubId, request_id: row.id, ...authorColumns(ctx), author_display_name: displayName, author_role_label: roleLabel, body: body.data.comment, message_type: "USER" });
   }
 
-  return c.json(await buildDetail(ctx.db, row, ctx.actor, venues), 201);
-});
+  return buildDetail(ctx.db, row, ctx.actor, venues);
+}
 
-/** POST .../:requestId/messages — réponse dans la conversation. */
-derogationRequestsRouter.post("/:requestId/messages", async (c) => {
-  const body = PostDerogationMessageDtoSchema.safeParse(await c.req.json().catch(() => ({})));
+/** Réponse dans la conversation. */
+export async function handleMessage(ctx: Ctx, requestId: string, rawBody: unknown) {
+  const body = PostDerogationMessageDtoSchema.safeParse(rawBody);
   if (!body.success) throw badRequest(body.error.issues.map((i) => i.message).join(" "));
-  const ctx = await context(c);
-  const row = await readableRequestOrThrow(ctx, c.req.param("requestId"));
+  const row = await readableRequestOrThrow(ctx, requestId);
   if (row.status === "CANCELLED") throw conflict("Cette demande a été annulée.", "DEROGATION_REQUEST_CANCELLED");
 
-  const author = await resolveRequesterName(ctx.db, ctx.membershipId, ctx.actor.userId, c.get("user").email ?? null);
-  await insertMessage(ctx.db, { club_id: ctx.clubId, request_id: row.id, author_user_id: ctx.actor.userId, author_membership_id: ctx.membershipId, author_display_name: author.name, author_role_label: roleLabelFor(ctx.actor, requestRef(row)), body: body.data.message, message_type: "USER" });
+  const author = await ctx.identity();
+  await insertMessage(ctx.db, { club_id: ctx.clubId, request_id: row.id, ...authorColumns(ctx), author_display_name: author.name, author_role_label: roleLabelFor(ctx.actor, requestRef(row)), body: body.data.message, message_type: "USER" });
   await touch(ctx.db, row.id);
 
   const fresh = (await loadRequest(ctx.db, ctx.clubId, row.id)) as RequestRow;
-  return c.json(await buildDetail(ctx.db, fresh, ctx.actor, await loadClubVenues(ctx.db, ctx.clubId)));
-});
+  return buildDetail(ctx.db, fresh, ctx.actor, await loadClubVenues(ctx.db, ctx.clubId));
+}
 
 const ACTION_EVENTS: Record<string, { event: string; text: (name: string) => string }> = {
   TAKE_IN_CHARGE: { event: "TAKEN_IN_CHARGE", text: (name) => `${name} a pris en charge la demande.` },
@@ -344,12 +340,11 @@ const ACTION_EVENTS: Record<string, { event: string; text: (name: string) => str
   CANCEL: { event: "CANCELLED", text: (name) => `${name} a annulé la demande.` },
 };
 
-/** POST .../:requestId/actions — machine d'état (Je m'en occupe / Pas possible / Traitée / Annuler). */
-derogationRequestsRouter.post("/:requestId/actions", async (c) => {
-  const body = DerogationActionDtoSchema.safeParse(await c.req.json().catch(() => ({})));
+/** Machine d'état (Je m'en occupe / Pas possible / Traitée / Annuler). */
+export async function handleAction(ctx: Ctx, requestId: string, rawBody: unknown) {
+  const body = DerogationActionDtoSchema.safeParse(rawBody);
   if (!body.success) throw badRequest(body.error.issues.map((i) => i.message).join(" "));
-  const ctx = await context(c);
-  const row = await readableRequestOrThrow(ctx, c.req.param("requestId"));
+  const row = await readableRequestOrThrow(ctx, requestId);
   const { action } = body.data;
 
   if (!canPerformAction(ctx.actor, requestRef(row), action)) throw forbidden("Cette action est réservée au coordinateur.", "DEROGATION_FORBIDDEN");
@@ -363,24 +358,23 @@ derogationRequestsRouter.post("/:requestId/actions", async (c) => {
   if (error) throw new Error(`Changement de statut échoué : ${error.message}`);
   if (!updated) throw conflict("La demande a été modifiée entre-temps, recharge la page.", "INVALID_TRANSITION");
 
-  const author = await resolveRequesterName(ctx.db, ctx.membershipId, ctx.actor.userId, c.get("user").email ?? null);
+  const author = await ctx.identity();
   const roleLabel = roleLabelFor(ctx.actor, requestRef(row));
   const meta = ACTION_EVENTS[action]!;
-  await insertMessage(ctx.db, { club_id: ctx.clubId, request_id: row.id, author_user_id: ctx.actor.userId, author_membership_id: ctx.membershipId, author_display_name: author.name, author_role_label: roleLabel, body: meta.text(author.name), message_type: "SYSTEM", event: meta.event });
+  await insertMessage(ctx.db, { club_id: ctx.clubId, request_id: row.id, ...authorColumns(ctx), author_display_name: author.name, author_role_label: roleLabel, body: meta.text(author.name), message_type: "SYSTEM", event: meta.event });
   if (body.data.message) {
-    await insertMessage(ctx.db, { club_id: ctx.clubId, request_id: row.id, author_user_id: ctx.actor.userId, author_membership_id: ctx.membershipId, author_display_name: author.name, author_role_label: roleLabel, body: body.data.message, message_type: "USER" });
+    await insertMessage(ctx.db, { club_id: ctx.clubId, request_id: row.id, ...authorColumns(ctx), author_display_name: author.name, author_role_label: roleLabel, body: body.data.message, message_type: "USER" });
   }
 
   const fresh = (await loadRequest(ctx.db, ctx.clubId, row.id)) as RequestRow;
-  return c.json(await buildDetail(ctx.db, fresh, ctx.actor, await loadClubVenues(ctx.db, ctx.clubId)));
-});
+  return buildDetail(ctx.db, fresh, ctx.actor, await loadClubVenues(ctx.db, ctx.clubId));
+}
 
-/** POST .../:requestId/proposals — reproposer un créneau (historique conservé, retour en « Demande envoyée »). */
-derogationRequestsRouter.post("/:requestId/proposals", async (c) => {
-  const body = ProposeDerogationSlotDtoSchema.safeParse(await c.req.json().catch(() => ({})));
+/** Reproposer un créneau (historique conservé, retour en « Demande envoyée »). */
+export async function handlePropose(ctx: Ctx, requestId: string, rawBody: unknown) {
+  const body = ProposeDerogationSlotDtoSchema.safeParse(rawBody);
   if (!body.success) throw badRequest(body.error.issues.map((i) => i.message).join(" "));
-  const ctx = await context(c);
-  const row = await readableRequestOrThrow(ctx, c.req.param("requestId"));
+  const row = await readableRequestOrThrow(ctx, requestId);
   if (!canPropose(ctx.actor, requestRef(row))) throw conflict("Un nouveau créneau ne peut être proposé que tant que la demande n'est pas prise en charge.", "INVALID_TRANSITION");
 
   const now = new Date();
@@ -392,29 +386,20 @@ derogationRequestsRouter.post("/:requestId/proposals", async (c) => {
   const validation = await checkSlot({ db: ctx.db, clubId: ctx.clubId, timezone: ctx.timezone, match, startAt, venueId, venues, now });
   throwIfInvalid(validation, venues);
 
-  const author = await resolveRequesterName(ctx.db, ctx.membershipId, ctx.actor.userId, c.get("user").email ?? null);
-  await ctx.db.from("derogation_proposals").insert({ club_id: ctx.clubId, request_id: row.id, proposed_by_user_id: ctx.actor.userId, proposed_by_display_name: author.name, requested_start_at: startAt.toISOString(), requested_club_venue_id: venueId, is_custom_weekday: validation.isCustomWeekday });
+  const author = await ctx.identity();
+  await ctx.db.from("derogation_proposals").insert({ club_id: ctx.clubId, request_id: row.id, proposed_by_user_id: ctx.actor.userId, proposed_by_licencie_id: ctx.actor.licencieId, proposed_by_display_name: author.name, requested_start_at: startAt.toISOString(), requested_club_venue_id: venueId, is_custom_weekday: validation.isCustomWeekday });
   await touch(ctx.db, row.id, { status: "REQUESTED", requested_start_at: startAt.toISOString(), requested_club_venue_id: venueId, is_custom_weekday: validation.isCustomWeekday });
 
   const roleLabel = roleLabelFor(ctx.actor, requestRef(row));
   const venueName = venueId ? (venues.find((v) => v.id === venueId)?.name ?? null) : null;
-  await insertMessage(ctx.db, { club_id: ctx.clubId, request_id: row.id, author_user_id: ctx.actor.userId, author_membership_id: ctx.membershipId, author_display_name: author.name, author_role_label: roleLabel, body: `${author.name} a proposé un nouveau créneau : ${formatSlot(startAt, ctx.timezone, venueName)}.`, message_type: "SYSTEM", event: "SLOT_PROPOSED" });
+  await insertMessage(ctx.db, { club_id: ctx.clubId, request_id: row.id, ...authorColumns(ctx), author_display_name: author.name, author_role_label: roleLabel, body: `${author.name} a proposé un nouveau créneau : ${formatSlot(startAt, ctx.timezone, venueName)}.`, message_type: "SYSTEM", event: "SLOT_PROPOSED" });
   if (body.data.message) {
-    await insertMessage(ctx.db, { club_id: ctx.clubId, request_id: row.id, author_user_id: ctx.actor.userId, author_membership_id: ctx.membershipId, author_display_name: author.name, author_role_label: roleLabel, body: body.data.message, message_type: "USER" });
+    await insertMessage(ctx.db, { club_id: ctx.clubId, request_id: row.id, ...authorColumns(ctx), author_display_name: author.name, author_role_label: roleLabel, body: body.data.message, message_type: "USER" });
   }
 
   const fresh = (await loadRequest(ctx.db, ctx.clubId, row.id)) as RequestRow;
-  return c.json(await buildDetail(ctx.db, fresh, ctx.actor, venues));
-});
-
-// ---------------------------------------------------------------------------
-// /v1/clubs/:clubId/matches/:matchId/derogation-availability (+ slot-check)
-// ---------------------------------------------------------------------------
-// Middlewares PAR ROUTE (jamais `use("*")`) : ce routeur partage le préfixe
-// `/matches/:matchId` avec les Tables de marque (`matchTablesRouter`), dont
-// les middlewares de rôle ne doivent pas s'appliquer ici — et inversement.
-// Monté AVANT `matchTablesRouter` (src/api/v1/index.ts).
-export const derogationAvailabilityRouter = new Hono<AppEnv>();
+  return buildDetail(ctx.db, fresh, ctx.actor, venues);
+}
 
 async function matchForPlanning(ctx: Ctx, matchId: string): Promise<MatchRow> {
   const match = await loadMatch(ctx.db, ctx.clubId, matchId);
@@ -423,14 +408,13 @@ async function matchForPlanning(ctx: Ctx, matchId: string): Promise<MatchRow> {
   return match;
 }
 
-/** GET ...?date=YYYY-MM-DD — occupation des gymnases et créneaux candidats (match cible exclu). */
-derogationAvailabilityRouter.get("/derogation-availability", requireAuth, requireClubMembership, async (c) => {
-  const query = DerogationAvailabilityQueryDtoSchema.safeParse(c.req.query());
+/** Occupation des gymnases et créneaux candidats d'un jour (match cible exclu). */
+export async function handleAvailability(ctx: Ctx, matchId: string, rawQuery: Record<string, string>) {
+  const query = DerogationAvailabilityQueryDtoSchema.safeParse(rawQuery);
   if (!query.success) throw badRequest(query.error.issues.map((i) => i.message).join(" "));
   const date = parseLocalDate(query.data.date);
   if (!date) throw badRequest("Date invalide.");
-  const ctx = await context(c);
-  const match = await matchForPlanning(ctx, c.req.param("matchId") as string);
+  const match = await matchForPlanning(ctx, matchId);
 
   const dayStart = zonedWallTimeToUtc(date.year, date.month, date.day, 0, 0, 0, ctx.timezone);
   const dayEnd = new Date(dayStart.getTime() + 26 * 3_600_000);
@@ -444,8 +428,8 @@ derogationAvailabilityRouter.get("/derogation-availability", requireAuth, requir
   const isHome = match.is_home === true;
   const result = computeAvailability({ date: query.data.date, timezone: ctx.timezone, rules, isHome, venues: venueRefs(venues), matches, pending, targetMatchId: match.id, targetTeamId: match.team_id, now: new Date() });
 
-  return c.json({
-    matchType: isHome ? "HOME" : "AWAY",
+  return {
+    matchType: isHome ? ("HOME" as const) : ("AWAY" as const),
     date: query.data.date,
     timezone: ctx.timezone,
     rules: { durationMinutes: result.durationMinutes, slotStepMinutes: DEFAULT_SLOT_STEP_MINUTES, earliestStart: result.rule?.earliestStart ?? null, latestStart: result.rule?.latestStart ?? null, gridStart: result.grid.earliestStart, gridEnd: result.grid.latestStart },
@@ -456,21 +440,20 @@ derogationAvailabilityRouter.get("/derogation-availability", requireAuth, requir
       candidateStartTimes: v.candidates.map((slot) => candidateDto(slot, venues)),
     })),
     awayCandidateStartTimes: result.awayCandidates.map((slot) => candidateDto(slot, venues)),
-  });
-});
+  };
+}
 
-/** GET ...?startAt=&venueId= — vérification serveur d'une heure personnalisée (jamais un calcul front seul). */
-derogationAvailabilityRouter.get("/derogation-slot-check", requireAuth, requireClubMembership, async (c) => {
-  const query = DerogationSlotCheckQueryDtoSchema.safeParse(c.req.query());
+/** Vérification serveur d'une heure personnalisée (jamais un calcul front seul). */
+export async function handleSlotCheck(ctx: Ctx, matchId: string, rawQuery: Record<string, string>) {
+  const query = DerogationSlotCheckQueryDtoSchema.safeParse(rawQuery);
   if (!query.success) throw badRequest(query.error.issues.map((i) => i.message).join(" "));
-  const ctx = await context(c);
-  const match = await matchForPlanning(ctx, c.req.param("matchId") as string);
+  const match = await matchForPlanning(ctx, matchId);
   const venues = await loadClubVenues(ctx.db, ctx.clubId);
   const startAt = new Date(query.data.startAt);
   const result = await checkSlot({ db: ctx.db, clubId: ctx.clubId, timezone: ctx.timezone, match, startAt, venueId: query.data.venueId ?? null, venues, now: new Date() });
   const endAt = new Date(startAt.getTime() + DEFAULT_MATCH_DURATION_MINUTES * 60_000);
 
-  return c.json({
+  return {
     ok: result.ok,
     code: result.ok ? null : result.code,
     message: result.ok ? null : result.message,
@@ -478,5 +461,35 @@ derogationAvailabilityRouter.get("/derogation-slot-check", requireAuth, requireC
     endAt: endAt.toISOString(),
     conflicts: !result.ok && result.code === "DEROGATION_SLOT_CONFLICT" ? result.conflicts.map((cf) => conflictDto(cf, venues)) : [],
     warnings: result.ok ? result.warnings.map(warningDto) : [],
-  });
+  };
+}
+
+// ---------------------------------------------------------------------------
+// /v1/clubs/:clubId/derogation-requests (espace club, compte)
+// ---------------------------------------------------------------------------
+export const derogationRequestsRouter = new Hono<AppEnv>();
+derogationRequestsRouter.use("*", requireAuth);
+derogationRequestsRouter.use("*", requireClubMembership);
+
+derogationRequestsRouter.get("/context", async (c) => c.json(await handleContext(await context(c))));
+derogationRequestsRouter.get("/", async (c) => c.json(await handleList(await context(c), c.req.query())));
+derogationRequestsRouter.get("/:requestId", async (c) => c.json(await handleGet(await context(c), c.req.param("requestId"))));
+derogationRequestsRouter.post("/", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  return c.json(await handleCreate(await context(c), body), 201);
 });
+derogationRequestsRouter.post("/:requestId/messages", async (c) => c.json(await handleMessage(await context(c), c.req.param("requestId"), await c.req.json().catch(() => ({})))));
+derogationRequestsRouter.post("/:requestId/actions", async (c) => c.json(await handleAction(await context(c), c.req.param("requestId"), await c.req.json().catch(() => ({})))));
+derogationRequestsRouter.post("/:requestId/proposals", async (c) => c.json(await handlePropose(await context(c), c.req.param("requestId"), await c.req.json().catch(() => ({})))));
+
+// ---------------------------------------------------------------------------
+// /v1/clubs/:clubId/matches/:matchId/derogation-availability (+ slot-check)
+// ---------------------------------------------------------------------------
+// Middlewares PAR ROUTE (jamais `use("*")`) : ce routeur partage le préfixe
+// `/matches/:matchId` avec les Tables de marque (`matchTablesRouter`), dont
+// les middlewares de rôle ne doivent pas s'appliquer ici — et inversement.
+// Monté AVANT `matchTablesRouter` (src/api/v1/index.ts).
+export const derogationAvailabilityRouter = new Hono<AppEnv>();
+
+derogationAvailabilityRouter.get("/derogation-availability", requireAuth, requireClubMembership, async (c) => c.json(await handleAvailability(await context(c), c.req.param("matchId") as string, c.req.query())));
+derogationAvailabilityRouter.get("/derogation-slot-check", requireAuth, requireClubMembership, async (c) => c.json(await handleSlotCheck(await context(c), c.req.param("matchId") as string, c.req.query())));

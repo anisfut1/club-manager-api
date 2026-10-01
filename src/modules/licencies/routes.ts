@@ -24,7 +24,7 @@ export const licenciesRouter = new Hono<AppEnv>();
 licenciesRouter.use("*", requireAuth);
 licenciesRouter.use("*", requireClubMembership);
 
-const LICENCIE_COLUMNS = "id, club_id, first_name, last_name, license_number, birth_date, email, phone, photo_url, team_id, active, ffbb_licence_id, category_label, sexe, public_admin";
+const LICENCIE_COLUMNS = "id, club_id, first_name, last_name, license_number, birth_date, email, phone, photo_url, team_id, active, ffbb_licence_id, category_label, sexe, public_admin, public_coach, public_coordinator";
 
 interface LicencieRow {
   id: string;
@@ -42,6 +42,8 @@ interface LicencieRow {
   category_label: string | null;
   sexe: "M" | "F" | null;
   public_admin: boolean;
+  public_coach: boolean;
+  public_coordinator: boolean;
 }
 
 function mapLicencieRow(row: LicencieRow): LicencieDto {
@@ -61,6 +63,8 @@ function mapLicencieRow(row: LicencieRow): LicencieDto {
     categoryLabel: row.category_label,
     sexe: row.sexe,
     publicAdmin: row.public_admin === true,
+    publicCoach: row.public_coach === true,
+    publicCoordinator: row.public_coordinator === true,
   };
 }
 
@@ -237,6 +241,8 @@ licenciesRouter.patch("/:licencieId/profile", async (c) => {
     team_id: string | null;
     active: boolean;
     public_admin: boolean;
+    public_coach: boolean;
+    public_coordinator: boolean;
   }> = {};
   if (parsed.data.photoUrl !== undefined) patch.photo_url = parsed.data.photoUrl;
   if (parsed.data.email !== undefined) patch.email = parsed.data.email;
@@ -248,6 +254,8 @@ licenciesRouter.patch("/:licencieId/profile", async (c) => {
   if (parsed.data.teamId !== undefined) patch.team_id = parsed.data.teamId;
   if (parsed.data.active !== undefined) patch.active = parsed.data.active;
   if (parsed.data.publicAdmin !== undefined) patch.public_admin = parsed.data.publicAdmin;
+  if (parsed.data.publicCoach !== undefined) patch.public_coach = parsed.data.publicCoach;
+  if (parsed.data.publicCoordinator !== undefined) patch.public_coordinator = parsed.data.publicCoordinator;
 
   if (Object.keys(patch).length === 0) return c.json(mapLicencieRow(existing));
 

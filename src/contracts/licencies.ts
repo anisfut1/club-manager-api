@@ -28,6 +28,10 @@ export const LicencieDtoSchema = z
     sexe: z.enum(["M", "F"]).nullable(),
     /** Accès "admin" à l'espace public sans compte (dérogations en lecture seule, retour du club 2026-10-01) — posé par un club_admin, aucun droit dans l'espace connecté. */
     publicAdmin: z.boolean(),
+    /** Coach (espace public sans compte) : demande des dérogations internes pour tout match à venir du club — posé par un club_admin depuis /joueurs. */
+    publicCoach: z.boolean(),
+    /** Coordinateur des dérogations (espace public sans compte) : reçoit et traite les demandes — posé par un club_admin depuis /joueurs. */
+    publicCoordinator: z.boolean(),
   })
   .openapi("LicencieDto");
 
@@ -124,6 +128,9 @@ export const UpdateLicencieProfileDtoSchema = z
     active: z.boolean().optional(),
     /** club_admin uniquement — voir LicencieDto.publicAdmin. */
     publicAdmin: z.boolean().optional(),
+    /** club_admin uniquement — voir LicencieDto.publicCoach / publicCoordinator. */
+    publicCoach: z.boolean().optional(),
+    publicCoordinator: z.boolean().optional(),
   })
   .openapi("UpdateLicencieProfileDto");
 

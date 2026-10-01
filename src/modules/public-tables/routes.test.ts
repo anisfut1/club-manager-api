@@ -175,7 +175,7 @@ describe("POST .../licencies/:licencieId/request-link — retour du club : \"il 
     const token = tokenFromLastEmail();
     const meRes = await request(`/me?token=${token}`);
     expect(meRes.status).toBe(200);
-    expect(await meRes.json()).toEqual({ licencie: { id: THOMAS.id, firstName: "Thomas", lastName: "Martin" }, isClubAdmin: false });
+    expect(await meRes.json()).toEqual({ licencie: { id: THOMAS.id, firstName: "Thomas", lastName: "Martin" }, isClubAdmin: false, derogationRequests: { canCreate: false, canManage: false } });
 
     expect(state.licencies.find((l) => l.id === THOMAS.id)?.email).toBe("thomas@example.test");
   });

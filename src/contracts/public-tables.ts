@@ -58,7 +58,14 @@ export const RequestPersonalLinkDtoSchema = z
 export const RequestPersonalLinkResultDtoSchema = z.object({ sent: z.literal(true), maskedEmail: z.string() }).openapi("RequestPersonalLinkResultDto");
 
 /** `isClubAdmin` : le licencié est rattaché à un compte club_admin actif de CE club — seul cas où la vue publique des dérogations s'ouvre. */
-export const PublicMeDtoSchema = z.object({ licencie: LicencieRefDtoSchema, isClubAdmin: z.boolean() }).openapi("PublicMeDto");
+export const PublicMeDtoSchema = z
+  .object({
+    licencie: LicencieRefDtoSchema,
+    isClubAdmin: z.boolean(),
+    /** Demandes de dérogation internes : coach (`licencies.public_coach`) / coordinateur (`public_coordinator`), posés depuis /joueurs. */
+    derogationRequests: z.object({ canCreate: z.boolean(), canManage: z.boolean() }),
+  })
+  .openapi("PublicMeDto");
 
 export const PublicTableAssignmentsForMatchDtoSchema = z
   .object({

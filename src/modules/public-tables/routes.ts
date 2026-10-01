@@ -14,6 +14,8 @@ import { getEnv } from "../../config/env.js";
 import { isEmailConfigured, sendEmail } from "../../email/resend.js";
 import { buildPersonalLinkEmail, maskEmail } from "../../email/personal-link-email.js";
 import { loadClubDerogations } from "../derogations/list.js";
+import { loadLicencieActor } from "../derogation-requests/service.js";
+import { canCreateAny, canManageRequests } from "../derogation-requests/policy.js";
 
 /** Délai minimal entre deux envois de lien pour un même licencié — limite le spam et la rotation abusive du jeton par un tiers. */
 export const PERSONAL_LINK_COOLDOWN_MS = 60_000;
@@ -62,16 +64,21 @@ publicTablesRouter.use("*", resolvePublicClub<PublicEnv>());
  * (§"sinon faut faire une demande admin", jamais un message qui aiderait à
  * deviner un jeton valide).
  */
+export async function licencieFromToken(supabase: DbClient, clubId: string, token: string): Promise<{ id: string; first_name: string; last_name: string; team_id: string | null }> {
+  const tokenHash = hashPublicToken(token);
+  const { data: claim } = await supabase.from("licencie_public_tokens").select("licencie_id").eq("club_id", clubId).eq("token_hash", tokenHash).is("revoked_at", null).maybeSingle();
+  if (!claim) throw unauthorized("Lien personnel invalide ou révoqué — demande à un·e responsable du club de réinitialiser ton profil.");
+
+  const { data: licencie } = await supabase.from("licencies").select("id, first_name, last_name, team_id").eq("id", claim.licencie_id).eq("club_id", clubId).maybeSingle();
+  if (!licencie) throw unauthorized("Lien personnel invalide.");
+  return licencie;
+}
+
 async function resolvePublicLicencie(c: { get: (k: "supabase" | "publicClub") => DbClient | PublicClub; set: (k: "publicLicencie", v: PublicLicencie) => void }, token: string): Promise<void> {
   const supabase = c.get("supabase") as DbClient;
   const club = c.get("publicClub") as PublicClub;
 
-  const tokenHash = hashPublicToken(token);
-  const { data: claim } = await supabase.from("licencie_public_tokens").select("licencie_id").eq("club_id", club.id).eq("token_hash", tokenHash).is("revoked_at", null).maybeSingle();
-  if (!claim) throw unauthorized("Lien personnel invalide ou révoqué — demande à un·e responsable du club de réinitialiser ton profil.");
-
-  const { data: licencie } = await supabase.from("licencies").select("id, first_name, last_name, team_id").eq("id", claim.licencie_id).eq("club_id", club.id).maybeSingle();
-  if (!licencie) throw unauthorized("Lien personnel invalide.");
+  const licencie = await licencieFromToken(supabase, club.id, token);
 
   c.set("publicLicencie", { id: licencie.id, firstName: licencie.first_name, lastName: licencie.last_name, teamId: licencie.team_id });
 }
@@ -222,8 +229,12 @@ publicTablesRouter.get("/me", async (c) => {
 
   await resolvePublicLicencie(c, query.data.token);
   const licencie = c.get("publicLicencie");
-  const isClubAdmin = await isLicencieClubAdmin(c.get("supabase"), c.get("publicClub").id, licencie.id);
-  return c.json({ licencie: { id: licencie.id, firstName: licencie.firstName, lastName: licencie.lastName }, isClubAdmin });
+  const supabase = c.get("supabase");
+  const clubId = c.get("publicClub").id;
+  const [isClubAdmin, actor] = await Promise.all([isLicencieClubAdmin(supabase, clubId, licencie.id), loadLicencieActor(supabase, clubId, licencie.id)]);
+  // Demandes de dérogation internes : rôles posés depuis /joueurs (coach, coordinateur) ou compte rattaché.
+  const derogationRequests = { canCreate: canCreateAny(actor), canManage: canManageRequests(actor) };
+  return c.json({ licencie: { id: licencie.id, firstName: licencie.firstName, lastName: licencie.lastName }, isClubAdmin, derogationRequests });
 });
 
 /**

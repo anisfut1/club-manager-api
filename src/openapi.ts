@@ -863,6 +863,30 @@ registry.registerPath({
   responses: { 200: jsonResponse("Vérification serveur d'une heure personnalisée", DerogationSlotCheckDtoSchema), ...errorResponses, ...validationResponses },
 });
 
+/**
+ * Mêmes demandes depuis l'ESPACE PUBLIC sans compte : licencié reconnu par
+ * son lien personnel (`?token=` sur chaque requête), rôles posés depuis
+ * /joueurs (`public_coach`, `public_coordinator`, `public_admin`).
+ */
+const publicTokenQuery = z.object({ token: z.string().min(1) });
+const publicDerogationErrors = {
+  400: jsonResponse("Requête invalide / lien manquant", ErrorEnvelopeSchema),
+  401: jsonResponse("Lien personnel invalide ou révoqué", ErrorEnvelopeSchema),
+  403: jsonResponse("Licencié sans rôle coach/coordinateur (DEROGATION_ROLE_REQUIRED) ou action non autorisée", ErrorEnvelopeSchema),
+  404: jsonResponse("Introuvable", ErrorEnvelopeSchema),
+};
+const publicRequestParams = clubSlugParam.extend({ requestId: z.string().uuid() });
+
+registry.registerPath({ method: "get", path: "/v1/public/clubs/{clubSlug}/derogation-requests/context", request: { params: clubSlugParam, query: publicTokenQuery }, responses: { 200: jsonResponse("Contexte (espace public)", DerogationContextDtoSchema), ...publicDerogationErrors } });
+registry.registerPath({ method: "get", path: "/v1/public/clubs/{clubSlug}/derogation-requests", request: { params: clubSlugParam, query: DerogationRequestListQueryDtoSchema.merge(publicTokenQuery) }, responses: { 200: jsonResponse("Demandes visibles (espace public)", DerogationRequestListDtoSchema), ...publicDerogationErrors } });
+registry.registerPath({ method: "post", path: "/v1/public/clubs/{clubSlug}/derogation-requests", request: { params: clubSlugParam, query: publicTokenQuery, body: { content: { "application/json": { schema: CreateDerogationRequestDtoSchema } } } }, responses: { 201: jsonResponse("Demande créée (espace public)", DerogationRequestDetailDtoSchema), ...publicDerogationErrors, 409: jsonResponse("Conflit de créneau, demande déjà active, aucun coordinateur", ErrorEnvelopeSchema) } });
+registry.registerPath({ method: "get", path: "/v1/public/clubs/{clubSlug}/derogation-requests/availability", request: { params: clubSlugParam, query: DerogationAvailabilityQueryDtoSchema.merge(publicTokenQuery).extend({ matchId: z.string().uuid() }) }, responses: { 200: jsonResponse("Occupation des gymnases (espace public)", DerogationAvailabilityDtoSchema), ...publicDerogationErrors } });
+registry.registerPath({ method: "get", path: "/v1/public/clubs/{clubSlug}/derogation-requests/slot-check", request: { params: clubSlugParam, query: DerogationSlotCheckQueryDtoSchema.merge(publicTokenQuery).extend({ matchId: z.string().uuid() }) }, responses: { 200: jsonResponse("Vérification d'une heure (espace public)", DerogationSlotCheckDtoSchema), ...publicDerogationErrors } });
+registry.registerPath({ method: "get", path: "/v1/public/clubs/{clubSlug}/derogation-requests/{requestId}", request: { params: publicRequestParams, query: publicTokenQuery }, responses: { 200: jsonResponse("Demande + conversation (espace public)", DerogationRequestDetailDtoSchema), ...publicDerogationErrors } });
+registry.registerPath({ method: "post", path: "/v1/public/clubs/{clubSlug}/derogation-requests/{requestId}/messages", request: { params: publicRequestParams, query: publicTokenQuery, body: { content: { "application/json": { schema: PostDerogationMessageDtoSchema } } } }, responses: { 200: jsonResponse("Message ajouté", DerogationRequestDetailDtoSchema), ...publicDerogationErrors } });
+registry.registerPath({ method: "post", path: "/v1/public/clubs/{clubSlug}/derogation-requests/{requestId}/actions", request: { params: publicRequestParams, query: publicTokenQuery, body: { content: { "application/json": { schema: DerogationActionDtoSchema } } } }, responses: { 200: jsonResponse("Statut mis à jour", DerogationRequestDetailDtoSchema), ...publicDerogationErrors, ...unprocessable } });
+registry.registerPath({ method: "post", path: "/v1/public/clubs/{clubSlug}/derogation-requests/{requestId}/proposals", request: { params: publicRequestParams, query: publicTokenQuery, body: { content: { "application/json": { schema: ProposeDerogationSlotDtoSchema } } } }, responses: { 200: jsonResponse("Nouveau créneau proposé", DerogationRequestDetailDtoSchema), ...publicDerogationErrors } });
+
 /** Membres & rôles (club_admin) — désignation des coachs et du coordinateur. */
 const clubAndMembershipParams = clubIdParam.extend({ membershipId: z.string().uuid() });
 

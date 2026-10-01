@@ -51,6 +51,8 @@ export interface FakeLicencieRow {
   category_label?: string | null;
   sexe?: "M" | "F" | null;
   public_admin?: boolean;
+  public_coach?: boolean;
+  public_coordinator?: boolean;
 }
 
 export interface FakeRoleRow {

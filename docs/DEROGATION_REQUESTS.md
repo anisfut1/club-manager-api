@@ -89,3 +89,28 @@ Lecture : `can_read_derogation_request(club_id, team_id, created_by)` (coordinat
 / club_admin du club, auteur, coach de l'équipe). Aucune écriture directe pour
 `authenticated` (tout passe par l'API, rôle service). Testé contre PostgreSQL :
 `supabase/tests/isolation_test.sql`, scénario 10.
+
+## Coachs et coordinateurs SANS COMPTE (lien personnel) — 2026-10-01
+
+Retour du club : « dans la liste des joueurs, comme on a fait pour l'admin, on
+le fait pour les coachs et coordinateurs. Pas besoin de spécifier l'équipe,
+juste le rôle coach. Et coordinateur pour le coordinateur ».
+
+- Drapeaux sur le licencié, posés par un club_admin depuis /joueurs
+  (`PATCH /v1/clubs/:clubId/licencies/:id` → `publicCoach`, `publicCoordinator`),
+  à côté de `publicAdmin` (migration `20261001150000_licencie_derogation_roles.sql`).
+- Espace public : `/v1/public/clubs/:clubSlug/derogation-requests/*?token=` —
+  context, liste, détail, création, messages, actions, propositions,
+  `availability?matchId=&date=`, `slot-check?matchId=&startAt=&venueId=`.
+  MÊMES handlers que l'espace club (routes.ts) : mêmes règles de créneau,
+  mêmes transitions, même conversation.
+- Rôles de l'acteur public (`loadLicencieActor`) : `public_coach` → coach de
+  TOUTES les équipes ; `public_coordinator` → coordinateur ; `public_admin` →
+  droits club_admin ; + rôles d'un compte actif rattaché au licencié.
+  Licencié sans aucun de ces rôles → 403 `DEROGATION_ROLE_REQUIRED`.
+- « Aucun coordinateur configuré » : ni membre `correspondant_club`, ni
+  licencié actif `public_coordinator`.
+- Auteur = compte (`*_user_id`) OU licencié (`*_licencie_id`), `on delete set
+  null` : la suppression d'un licencié reste possible, les noms affichés sont
+  des instantanés.
+- `GET /v1/public/clubs/:clubSlug/me` expose `derogationRequests: { canCreate, canManage }`.

@@ -359,3 +359,95 @@ describe("aucune écriture externe (§94, §106)", () => {
     vi.unstubAllGlobals();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Espace public sans compte : rôles posés depuis /joueurs (retour du club,
+// 2026-10-01 : « comme on a fait pour l'admin, on le fait pour les coachs et
+// coordinateurs »), lien personnel `?token=` sur chaque requête.
+// ---------------------------------------------------------------------------
+const { hashPublicToken } = await import("../public-tables/token.js");
+
+function licencie(id: string, firstName: string, flags: { public_coach?: boolean; public_coordinator?: boolean } = {}) {
+  return { id, club_id: CLUB_A.id, first_name: firstName, last_name: "Test", license_number: null, birth_date: null, email: null, phone: null, photo_url: null, active: true, ...flags };
+}
+
+function giveToken(licencieId: string, token: string) {
+  state.publicTokens.push({ id: `tok-${licencieId}`, club_id: CLUB_A.id, licencie_id: licencieId, token_hash: hashPublicToken(token), email: null, created_at: "2026-09-30T10:00:00Z", revoked_at: null, revoked_by: null });
+}
+
+function publicRequest(path: string, token: string | null, init: { method?: string; body?: unknown } = {}) {
+  const sep = path.includes("?") ? "&" : "?";
+  return app.request(`/v1/public/clubs/${CLUB_A.slug}/derogation-requests${path}${token ? `${sep}token=${token}` : ""}`, {
+    method: init.method ?? "GET",
+    headers: { "content-type": "application/json" },
+    body: init.body === undefined ? undefined : JSON.stringify(init.body),
+  });
+}
+
+describe("espace public : licencié Coach / Coordinateur (drapeaux /joueurs)", () => {
+  beforeEach(() => {
+    // Aucun coordinateur « compte » : seul le licencié coordinateur reçoit les demandes.
+    state.roles = state.roles.filter((r) => r.role !== "correspondant_club");
+    state.licencies.push(licencie("lic-karim", "Karim", { public_coach: true }), licencie("lic-sophie", "Sophie", { public_coordinator: true }), licencie("lic-joueur", "Léo"));
+    giveToken("lic-karim", "tok-karim");
+    giveToken("lic-sophie", "tok-sophie");
+    giveToken("lic-joueur", "tok-joueur");
+  });
+
+  it("coach licencié : toutes les équipes (pas de portée), crée une demande en son nom, le coordinateur licencié la traite", async () => {
+    const ctxRes = await publicRequest("/context", "tok-karim");
+    expect(ctxRes.status).toBe(200);
+    const ctx = await json<{ canCreate: boolean; canManage: boolean; coordinatorsConfigured: boolean; requesterDisplayName: string; eligibleMatches: { id: string }[] }>(ctxRes);
+    expect(ctx).toMatchObject({ canCreate: true, canManage: false, coordinatorsConfigured: true, requesterDisplayName: "Karim" });
+    expect(ctx.eligibleMatches.map((m) => m.id).sort()).toEqual([TARGET.id, SUNDAY_OTHER.id, U18_MATCH.id].sort());
+
+    const created = await publicRequest("", "tok-karim", { method: "POST", body: { matchId: U18_MATCH.id, requestedStartAt: SUNDAY_15H, requestedVenueId: VENUE_B } });
+    expect(created.status).toBe(201);
+    const detail = await json<Detail & { createdByMe: boolean }>(created);
+    expect(detail.requesterDisplayName).toBe("Karim");
+    expect(detail.createdByMe).toBe(true);
+    expect(detail.permissions.actions).toEqual(["CANCEL"]);
+    expect(state.derogationRequests[0]).toMatchObject({ created_by_user_id: null, created_by_licencie_id: "lic-karim" });
+
+    // Coordinateur licencié : voit la demande et la prend en charge.
+    const inbox = await json<{ requests: { id: string }[] }>(await publicRequest("", "tok-sophie"));
+    expect(inbox.requests.map((r) => r.id)).toEqual([detail.id]);
+    const taken = await publicRequest(`/${detail.id}/actions`, "tok-sophie", { method: "POST", body: { action: "TAKE_IN_CHARGE" } });
+    expect(taken.status).toBe(200);
+    const after = await json<Detail>(taken);
+    expect(after.status).toBe("IN_PROGRESS");
+    expect(after.messages.at(-1)).toMatchObject({ type: "SYSTEM", body: "Sophie a pris en charge la demande.", authorRoleLabel: "Coordinateur" });
+
+    // Et la même demande est visible côté espace club par un admin.
+    as("admin");
+    expect((await request(`/derogation-requests/${detail.id}`)).status).toBe(200);
+  });
+
+  it("disponibilités et vérification d'heure accessibles au coach licencié", async () => {
+    const res = await publicRequest(`/availability?matchId=${TARGET.id}&date=2026-10-11`, "tok-karim");
+    expect(res.status).toBe(200);
+    expect((await json<{ matchType: string }>(res)).matchType).toBe("HOME");
+    const check = await publicRequest(`/slot-check?matchId=${TARGET.id}&startAt=${encodeURIComponent("2026-10-11T14:00:00+02:00")}&venueId=${VENUE_A}`, "tok-karim");
+    expect((await json<{ ok: boolean; code: string | null }>(check)).code).toBe("DEROGATION_SLOT_CONFLICT");
+  });
+
+  it("licencié sans rôle → 403 ; lien absent/invalide → 400/401 ; aucune écriture", async () => {
+    expect((await publicRequest("/context", "tok-joueur")).status).toBe(403);
+    expect((await publicRequest("/context", null)).status).toBe(400);
+    expect((await publicRequest("/context", "inconnu")).status).toBe(401);
+    expect((await publicRequest("", "tok-joueur", { method: "POST", body: { matchId: TARGET.id, requestedStartAt: SUNDAY_15H, requestedVenueId: VENUE_B } })).status).toBe(403);
+    expect(state.derogationRequests).toHaveLength(0);
+  });
+
+  it("le coach licencié ne voit pas les actions du coordinateur et ne lit pas une demande d'un autre sans rôle", async () => {
+    const created = await json<Detail>(await publicRequest("", "tok-karim", { method: "POST", body: { matchId: TARGET.id, requestedStartAt: SUNDAY_15H, requestedVenueId: VENUE_B } }));
+    expect((await publicRequest(`/${created.id}/actions`, "tok-karim", { method: "POST", body: { action: "TAKE_IN_CHARGE" } })).status).toBe(403);
+  });
+
+  it("aucun coordinateur (ni compte, ni licencié) → création refusée NO_COORDINATOR", async () => {
+    state.licencies = state.licencies.map((l) => ({ ...l, public_coordinator: false }));
+    const res = await publicRequest("", "tok-karim", { method: "POST", body: { matchId: TARGET.id, requestedStartAt: SUNDAY_15H, requestedVenueId: VENUE_B } });
+    expect(res.status).toBe(409);
+    expect((await json<{ error: { code: string } }>(res)).error.code).toBe("NO_COORDINATOR");
+  });
+});

@@ -14,6 +14,7 @@ import { platformRouter } from "../../modules/platform/routes.js";
 import { tableAssignmentsRouter, matchTablesRouter } from "../../modules/tables/routes.js";
 import { publicTablesRouter } from "../../modules/public-tables/routes.js";
 import { derogationAvailabilityRouter, derogationRequestsRouter } from "../../modules/derogation-requests/routes.js";
+import { publicDerogationRequestsRouter } from "../../modules/derogation-requests/public-routes.js";
 import { membersRouter } from "../../modules/members/routes.js";
 import { clubVenuesRouter } from "../../modules/club-venues/routes.js";
 import { standingsRouter } from "../../modules/standings/routes.js";
@@ -59,6 +60,8 @@ v1Router.route("/clubs/:clubId/matches/:matchId/documents", documentsRouter);
 v1Router.route("/clubs/:clubId/matches/:matchId", derogationAvailabilityRouter);
 v1Router.route("/clubs/:clubId/matches/:matchId", matchTablesRouter);
 v1Router.route("/clubs/:clubId/table-assignments", tableAssignmentsRouter);
+// Demandes de dérogation internes depuis l'espace public (lien personnel) — avant les autres routeurs publics.
+v1Router.route("/public/clubs/:clubSlug/derogation-requests", publicDerogationRequestsRouter);
 v1Router.route("/public/clubs/:clubSlug", publicTablesRouter);
 v1Router.route("/public/clubs/:clubSlug", publicMatchesRouter);
 v1Router.route("/clubs/:clubId/integrations", integrationsRouter);

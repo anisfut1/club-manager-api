@@ -8,6 +8,11 @@ import type { ClubRole } from "../../db/types.js";
  *  - `correspondant_club` = le COORDINATEUR (libellé UI) : reçoit et traite
  *    toutes les demandes du club ;
  *  - `club_admin` : mêmes droits que le coordinateur + création.
+ *
+ * L'acteur est soit un COMPTE (`userId`, espace club), soit un LICENCIÉ
+ * reconnu par son lien personnel (`licencieId`, espace public sans compte —
+ * drapeaux `licencies.public_coach` / `public_coordinator` / `public_admin`
+ * traduits en rôles, voir service.ts `loadLicencieActor`).
  */
 
 export type DerogationRequestStatus = "REQUESTED" | "IN_PROGRESS" | "NEEDS_CHANGE" | "COMPLETED" | "CANCELLED";
@@ -22,7 +27,8 @@ export interface RoleGrant {
 }
 
 export interface Actor {
-  userId: string;
+  userId: string | null;
+  licencieId: string | null;
   roles: readonly RoleGrant[];
 }
 
@@ -52,6 +58,12 @@ export function coachesTeam(actor: Actor, teamId: string | null): boolean {
   return teamId !== null && teams.has(teamId);
 }
 
+/** Peut créer au moins une demande (club_admin, ou coach d'au moins une équipe). */
+export function canCreateAny(actor: Actor): boolean {
+  const teams = coachedTeams(actor);
+  return isClubAdminActor(actor) || teams === "ALL" || teams.size > 0;
+}
+
 /** Créer une demande pour un match de cette équipe. */
 export function canCreateForTeam(actor: Actor, teamId: string | null): boolean {
   return isClubAdminActor(actor) || coachesTeam(actor, teamId);
@@ -59,18 +71,28 @@ export function canCreateForTeam(actor: Actor, teamId: string | null): boolean {
 
 export interface RequestRef {
   teamId: string | null;
-  createdByUserId: string;
+  createdByUserId: string | null;
+  createdByLicencieId: string | null;
   status: DerogationRequestStatus;
+}
+
+/** Même identité (compte OU licencié) — jamais `null === null`. */
+export function isSameIdentity(actor: Actor, userId: string | null, licencieId: string | null): boolean {
+  return (actor.userId !== null && actor.userId === userId) || (actor.licencieId !== null && actor.licencieId === licencieId);
+}
+
+export function isAuthor(actor: Actor, request: RequestRef): boolean {
+  return isSameIdentity(actor, request.createdByUserId, request.createdByLicencieId);
 }
 
 /** Même règle que la fonction SQL `can_read_derogation_request` (RLS). */
 export function canReadRequest(actor: Actor, request: RequestRef): boolean {
-  return canManageRequests(actor) || request.createdByUserId === actor.userId || coachesTeam(actor, request.teamId);
+  return canManageRequests(actor) || isAuthor(actor, request) || coachesTeam(actor, request.teamId);
 }
 
 /** Côté coach : auteur ou coach de l'équipe. */
 export function isRequesterSide(actor: Actor, request: RequestRef): boolean {
-  return request.createdByUserId === actor.userId || coachesTeam(actor, request.teamId);
+  return isAuthor(actor, request) || coachesTeam(actor, request.teamId);
 }
 
 export function isActiveStatus(status: DerogationRequestStatus): boolean {

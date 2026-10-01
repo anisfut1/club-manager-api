@@ -153,7 +153,8 @@ export interface Database {
           club_id: string;
           match_id: string;
           team_id: string | null;
-          created_by_user_id: string;
+          created_by_user_id: string | null;
+          created_by_licencie_id: string | null;
           requester_membership_id: string | null;
           requester_display_name: string;
           original_scheduled_at: string | null;
@@ -171,7 +172,8 @@ export interface Database {
           club_id: string;
           match_id: string;
           team_id?: string | null;
-          created_by_user_id: string;
+          created_by_user_id?: string | null;
+          created_by_licencie_id?: string | null;
           requester_membership_id?: string | null;
           requester_display_name: string;
           original_scheduled_at?: string | null;
@@ -187,8 +189,8 @@ export interface Database {
       >;
 
       derogation_proposals: Table<
-        { id: string; club_id: string; request_id: string; proposed_by_user_id: string; proposed_by_display_name: string; requested_start_at: string; requested_club_venue_id: string | null; is_custom_weekday: boolean; created_at: string },
-        { id?: string; club_id: string; request_id: string; proposed_by_user_id: string; proposed_by_display_name: string; requested_start_at: string; requested_club_venue_id?: string | null; is_custom_weekday?: boolean; created_at?: string }
+        { id: string; club_id: string; request_id: string; proposed_by_user_id: string | null; proposed_by_licencie_id: string | null; proposed_by_display_name: string; requested_start_at: string; requested_club_venue_id: string | null; is_custom_weekday: boolean; created_at: string },
+        { id?: string; club_id: string; request_id: string; proposed_by_user_id?: string | null; proposed_by_licencie_id?: string | null; proposed_by_display_name: string; requested_start_at: string; requested_club_venue_id?: string | null; is_custom_weekday?: boolean; created_at?: string }
       >;
 
       derogation_messages: Table<
@@ -197,6 +199,7 @@ export interface Database {
           club_id: string;
           request_id: string;
           author_user_id: string | null;
+          author_licencie_id: string | null;
           author_membership_id: string | null;
           author_display_name: string;
           author_role_label: string | null;
@@ -210,6 +213,7 @@ export interface Database {
           club_id: string;
           request_id: string;
           author_user_id?: string | null;
+          author_licencie_id?: string | null;
           author_membership_id?: string | null;
           author_display_name: string;
           author_role_label?: string | null;
@@ -242,6 +246,8 @@ export interface Database {
           category_label: string | null;
           sexe: "M" | "F" | null;
           public_admin: boolean;
+          public_coach: boolean;
+          public_coordinator: boolean;
           created_at: string;
           updated_at: string;
         },
@@ -261,6 +267,8 @@ export interface Database {
           category_label?: string | null;
           sexe?: "M" | "F" | null;
           public_admin?: boolean;
+          public_coach?: boolean;
+          public_coordinator?: boolean;
           created_at?: string;
           updated_at?: string;
         }

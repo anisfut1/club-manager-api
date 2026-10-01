@@ -3,7 +3,7 @@ import type { ClubRole, DerogationRequestStatus } from "../../db/types.js";
 import { DEFAULT_MATCH_DURATION_MINUTES } from "../../scheduling/match-slot.js";
 import { formatTeamNameWithGender } from "../../util/team-name.js";
 import type { PendingProposal, PlanningRules, ScheduledMatch, VenueRef } from "./availability.js";
-import { ACTIVE_STATUSES, COORDINATOR_ROLE, availableActions, canPropose, canReadRequest, needsCoordinatorAttention, type Actor } from "./policy.js";
+import { ACTIVE_STATUSES, COORDINATOR_ROLE, availableActions, canPropose, canReadRequest, isSameIdentity, needsCoordinatorAttention, type Actor, type RoleGrant } from "./policy.js";
 
 /**
  * Accès aux données des demandes de dérogation internes. Toujours via le
@@ -18,9 +18,46 @@ const durationMs = DEFAULT_MATCH_DURATION_MINUTES * 60_000;
 const endOf = (iso: string) => new Date(new Date(iso).getTime() + durationMs).toISOString();
 
 export async function loadActor(db: DbClient, membershipId: string, userId: string): Promise<Actor> {
-  const { data, error } = await db.from("membership_roles").select("role, scope_team_id").eq("membership_id", membershipId);
+  const [{ data, error }, { data: membership }] = await Promise.all([
+    db.from("membership_roles").select("role, scope_team_id").eq("membership_id", membershipId),
+    db.from("club_memberships").select("licencie_id").eq("id", membershipId).maybeSingle(),
+  ]);
   if (error) throw new Error(`Lecture des rôles échouée : ${error.message}`);
-  return { userId, roles: (data ?? []).map((r) => ({ role: r.role as ClubRole, scopeTeamId: r.scope_team_id ?? null })) };
+  // Licencié rattaché au compte : ses demandes faites via le lien personnel restent « les siennes » une fois connecté.
+  return { userId, licencieId: membership?.licencie_id ?? null, roles: (data ?? []).map((r) => ({ role: r.role as ClubRole, scopeTeamId: r.scope_team_id ?? null })) };
+}
+
+/**
+ * Acteur de l'espace PUBLIC (lien personnel, sans compte) — retour du club,
+ * 2026-10-01 : rôles posés depuis /joueurs sur le licencié, sans portée
+ * d'équipe (« juste le rôle coach ») :
+ *  - `public_coach` → coach de toutes les équipes ;
+ *  - `public_coordinator` → coordinateur ;
+ *  - `public_admin` → mêmes droits qu'un club_admin pour les demandes.
+ * S'y ajoutent les rôles d'un compte ACTIF rattaché à ce licencié (même
+ * règle que `isLicencieClubAdmin` pour les dérogations FBI publiques).
+ */
+export async function loadLicencieActor(db: DbClient, clubId: string, licencieId: string): Promise<Actor> {
+  const [{ data: licencie }, { data: memberships }] = await Promise.all([
+    db.from("licencies").select("public_admin, public_coach, public_coordinator").eq("id", licencieId).eq("club_id", clubId).maybeSingle(),
+    db.from("club_memberships").select("id, user_id").eq("club_id", clubId).eq("licencie_id", licencieId).eq("status", "active"),
+  ]);
+  const roles: RoleGrant[] = [];
+  if (licencie?.public_coach) roles.push({ role: "coach", scopeTeamId: null });
+  if (licencie?.public_coordinator) roles.push({ role: COORDINATOR_ROLE, scopeTeamId: null });
+  if (licencie?.public_admin) roles.push({ role: "club_admin", scopeTeamId: null });
+  const ids = (memberships ?? []).map((m) => m.id);
+  if (ids.length) {
+    const { data: grants } = await db.from("membership_roles").select("role, scope_team_id").in("membership_id", ids);
+    for (const g of grants ?? []) if (["coach", COORDINATOR_ROLE, "club_admin"].includes(g.role)) roles.push({ role: g.role as ClubRole, scopeTeamId: g.scope_team_id ?? null });
+  }
+  const userId = memberships?.length === 1 ? memberships[0]!.user_id : null;
+  return { userId, licencieId, roles };
+}
+
+/** L'acteur public a-t-il un rôle sur les demandes de dérogation ? */
+export function hasDerogationRole(actor: Actor): boolean {
+  return actor.roles.some((r) => r.role === "coach" || r.role === COORDINATOR_ROLE || r.role === "club_admin");
 }
 
 /** « Demande formulée par » : prénom du licencié rattaché, sinon nom d'affichage, sinon partie locale de l'email. */
@@ -37,8 +74,10 @@ export async function resolveRequesterName(db: DbClient, membershipId: string, u
   return { name: local || "Coach", source: "EMAIL" };
 }
 
-/** Au moins un membre actif avec le rôle coordinateur (`correspondant_club`). */
+/** Au moins un coordinateur : membre actif `correspondant_club`, ou licencié actif marqué « Coordinateur » depuis /joueurs. */
 export async function coordinatorsConfigured(db: DbClient, clubId: string): Promise<boolean> {
+  const { data: flagged } = await db.from("licencies").select("id").eq("club_id", clubId).eq("public_coordinator", true).eq("active", true).limit(1);
+  if ((flagged ?? []).length > 0) return true;
   const { data: memberships } = await db.from("club_memberships").select("id").eq("club_id", clubId).eq("status", "active");
   const ids = (memberships ?? []).map((m) => m.id);
   if (ids.length === 0) return false;
@@ -178,7 +217,8 @@ export interface RequestRow {
   club_id: string;
   match_id: string;
   team_id: string | null;
-  created_by_user_id: string;
+  created_by_user_id: string | null;
+  created_by_licencie_id: string | null;
   requester_membership_id: string | null;
   requester_display_name: string;
   original_scheduled_at: string | null;
@@ -193,7 +233,7 @@ export interface RequestRow {
 }
 
 export const REQUEST_COLUMNS =
-  "id, club_id, match_id, team_id, created_by_user_id, requester_membership_id, requester_display_name, original_scheduled_at, original_venue_id, requested_start_at, requested_club_venue_id, is_custom_weekday, status, created_at, updated_at, last_message_at";
+  "id, club_id, match_id, team_id, created_by_user_id, created_by_licencie_id, requester_membership_id, requester_display_name, original_scheduled_at, original_venue_id, requested_start_at, requested_club_venue_id, is_custom_weekday, status, created_at, updated_at, last_message_at";
 
 export async function loadRequest(db: DbClient, clubId: string, requestId: string): Promise<RequestRow | null> {
   const { data } = await db.from("derogation_requests").select(REQUEST_COLUMNS).eq("id", requestId).eq("club_id", clubId).maybeSingle();
@@ -201,7 +241,7 @@ export async function loadRequest(db: DbClient, clubId: string, requestId: strin
 }
 
 export function requestRef(row: RequestRow) {
-  return { teamId: row.team_id, createdByUserId: row.created_by_user_id, status: row.status };
+  return { teamId: row.team_id, createdByUserId: row.created_by_user_id, createdByLicencieId: row.created_by_licencie_id, status: row.status };
 }
 
 function excerpt(body: string): string {
@@ -236,7 +276,7 @@ export async function buildSummaries(db: DbClient, rows: readonly RequestRow[], 
         ? matchRef(match, labels)
         : { id: row.match_id, numero: null, teamId: row.team_id, teamName: null, categoryLabel: null, opponentName: null, isHome: null, matchDatetime: null, venueName: null, status: "unknown" },
       requesterDisplayName: row.requester_display_name,
-      createdByMe: row.created_by_user_id === actor.userId,
+      createdByMe: isSameIdentity(actor, row.created_by_user_id, row.created_by_licencie_id),
       originalScheduledAt: row.original_scheduled_at,
       requestedStartAt: row.requested_start_at,
       requestedEndAt: endOf(row.requested_start_at),
@@ -254,7 +294,7 @@ export async function buildDetail(db: DbClient, row: RequestRow, actor: Actor, v
   const [summary] = await buildSummaries(db, [row], actor, venues);
   const [{ data: proposals }, { data: messages }, match] = await Promise.all([
     db.from("derogation_proposals").select("id, requested_start_at, requested_club_venue_id, is_custom_weekday, proposed_by_display_name, created_at").eq("request_id", row.id).order("created_at"),
-    db.from("derogation_messages").select("id, message_type, event, body, author_display_name, author_role_label, author_user_id, created_at").eq("request_id", row.id).order("created_at"),
+    db.from("derogation_messages").select("id, message_type, event, body, author_display_name, author_role_label, author_user_id, author_licencie_id, created_at").eq("request_id", row.id).order("created_at"),
     loadMatch(db, row.club_id, row.match_id),
   ]);
   const venueById = new Map(venues.map((v) => [v.id, v]));
@@ -283,7 +323,7 @@ export async function buildDetail(db: DbClient, row: RequestRow, actor: Actor, v
       body: m.body,
       authorDisplayName: m.author_display_name,
       authorRoleLabel: m.author_role_label,
-      isMine: m.author_user_id === actor.userId && m.message_type === "USER",
+      isMine: isSameIdentity(actor, m.author_user_id, m.author_licencie_id) && m.message_type === "USER",
       createdAt: m.created_at,
     })),
     permissions: {
