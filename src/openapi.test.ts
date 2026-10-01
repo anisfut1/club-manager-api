@@ -86,6 +86,7 @@ describe("generateOpenApiDocument", () => {
     expect(doc.paths["/v1/public/clubs/{clubSlug}/licencies/{licencieId}/claim"]).toBeUndefined();
     expect(doc.paths["/v1/public/clubs/{clubSlug}/derogations"]).toHaveProperty("get");
     expect(doc.paths["/v1/public/clubs/{clubSlug}/standings"]).toHaveProperty("get");
+    expect(doc.paths["/v1/clubs/{clubId}/standings"]!.get!.security).toEqual([{ BearerAuth: [] }]);
     expect(doc.paths["/v1/public/clubs/{clubSlug}/matches/{matchId}/table-assignments/{role}"]).toHaveProperty("put");
     expect(doc.paths["/v1/public/clubs/{clubSlug}/matches/{matchId}/table-assignments/{role}"]).toHaveProperty("delete");
 

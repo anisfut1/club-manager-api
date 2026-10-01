@@ -516,6 +516,14 @@ registry.registerPath({
  */
 registry.registerPath({
   method: "get",
+  path: "/v1/clubs/{clubId}/standings",
+  security: bearerAuth,
+  request: { params: clubIdParam },
+  responses: { 200: jsonResponse("Classements FFBB des poules où le club est engagé", PoolStandingsListDtoSchema), ...errorResponses },
+});
+
+registry.registerPath({
+  method: "get",
   path: "/v1/public/clubs/{clubSlug}/standings",
   // Classements FFBB des poules où le club est engagé — retour du club, 2026-10-01.
   request: { params: clubSlugParam },

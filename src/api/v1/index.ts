@@ -13,6 +13,7 @@ import { licenciesRouter } from "../../modules/licencies/routes.js";
 import { platformRouter } from "../../modules/platform/routes.js";
 import { tableAssignmentsRouter, matchTablesRouter } from "../../modules/tables/routes.js";
 import { publicTablesRouter } from "../../modules/public-tables/routes.js";
+import { standingsRouter } from "../../modules/standings/routes.js";
 import { publicMatchesRouter } from "../../modules/public-matches/routes.js";
 import type { MeDto } from "../../contracts/me.js";
 
@@ -60,5 +61,6 @@ v1Router.route("/clubs/:clubId/issues", issuesRouter);
 v1Router.route("/clubs/:clubId/derogations", derogationsRouter);
 v1Router.route("/clubs/:clubId/emarque-imports", emarqueImportsRouter);
 v1Router.route("/clubs/:clubId/licencies", licenciesRouter);
+v1Router.route("/clubs/:clubId/standings", standingsRouter);
 v1Router.route("/jobs", jobStatusRouter);
 v1Router.route("/platform", platformRouter);
