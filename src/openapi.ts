@@ -66,6 +66,7 @@ import {
   PublicAccessListDtoSchema,
   PublicAccessResetResultDtoSchema,
 } from "./contracts/public-tables.js";
+import { PoolStandingsListDtoSchema } from "./contracts/standings.js";
 
 /**
  * Spec OpenAPI assemblée à partir des MÊMES schémas zod que les DTO utilisés
@@ -513,6 +514,14 @@ registry.registerPath({
  * d'écriture (dérogation créer/répondre, vérifier sur FBI — `club_admin`
  * uniquement, jamais exposées publiquement).
  */
+registry.registerPath({
+  method: "get",
+  path: "/v1/public/clubs/{clubSlug}/standings",
+  // Classements FFBB des poules où le club est engagé — retour du club, 2026-10-01.
+  request: { params: clubSlugParam },
+  responses: { 200: jsonResponse("Classements FFBB (copiés à chaque synchronisation)", PoolStandingsListDtoSchema), 404: jsonResponse("Introuvable", ErrorEnvelopeSchema) },
+});
+
 registry.registerPath({
   method: "get",
   path: "/v1/public/clubs/{clubSlug}/teams",

@@ -271,6 +271,29 @@ async function upsertVenue(supabase: Client, ffbbVenueId: string | null, name: s
   return data.id;
 }
 
+/**
+ * Classements des poules du club (retour du club, 2026-10-01 : "et même le
+ * classement... qui est dispo sur FFBB et important"). Étape best-effort :
+ * un échec (champ refusé par l'API, réseau) est journalisé et n'interrompt
+ * JAMAIS la synchronisation des matchs ; les classements déjà stockés
+ * restent alors affichés avec leur date de mise à jour.
+ */
+export async function syncPoolStandings(supabase: Client, provider: FfbbPublicProvider, poolIdByFfbbId: Map<string, string>, clubId: string): Promise<void> {
+  if (poolIdByFfbbId.size === 0) return;
+  try {
+    const standings = await provider.listPoolStandings([...poolIdByFfbbId.keys()]);
+    const updatedAt = new Date().toISOString();
+    for (const pool of standings) {
+      const poolId = poolIdByFfbbId.get(pool.poolFfbbId);
+      if (!poolId || pool.rows.length === 0) continue;
+      const { error } = await supabase.from("pools").update({ standings: pool.rows, standings_updated_at: updatedAt }).eq("id", poolId);
+      if (error) logError("Écriture du classement d'une poule échouée", error, { clubId, poolFfbbId: pool.poolFfbbId });
+    }
+  } catch (error) {
+    logError("Récupération des classements FFBB échouée (matchs synchronisés quand même)", error, { clubId });
+  }
+}
+
 export interface SyncFfbbClub {
   id: string;
   ffbbClubId: string;
@@ -322,6 +345,8 @@ export async function syncFfbb(supabase: Client, provider: FfbbPublicProvider, c
 
     const poolIdByFfbbId = await upsertPools(supabase, snapshot.pools, competitionIdByFfbbId);
     stats.poolsUpserted = poolIdByFfbbId.size;
+
+    await syncPoolStandings(supabase, provider, poolIdByFfbbId, club.id);
 
     const competitionsByFfbbId = new Map(snapshot.competitions.map((c) => [c.ffbbId, c]));
     const teamIdByEngagementFfbbId = await upsertEngagements(

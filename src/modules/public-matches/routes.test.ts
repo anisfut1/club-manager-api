@@ -193,3 +193,41 @@ describe("GET /v1/public/clubs/:clubSlug/teams", () => {
     expect(body.teams.map((t) => t.id)).toEqual(["team-u13m"]);
   });
 });
+
+describe("GET /v1/public/clubs/:clubSlug/standings — classements FFBB (retour du club, 2026-10-01)", () => {
+  const STANDINGS = [
+    { engagementFfbbId: "eng-a", teamName: "SC CLUB A - 1", logoUrl: null, position: 1, points: 10, played: 5, won: 5, lost: 0, draws: null, forfeits: 0, pointsFor: 400, pointsAgainst: 300, difference: 100, outOfRanking: false },
+    { engagementFfbbId: "eng-x", teamName: "ADVERSAIRE - 1", logoUrl: null, position: 2, points: 8, played: 5, won: 3, lost: 2, draws: null, forfeits: 0, pointsFor: 350, pointsAgainst: 330, difference: 20, outOfRanking: false },
+  ];
+
+  it("renvoie les classements des seules poules où CE club est engagé, avec sa ligne marquée", async () => {
+    state.competitions = [{ id: "comp-1", category_label: "U13", name: "Départementale U13 M" }];
+    state.pools = [
+      { id: "11111111-1111-4111-8111-111111111111", name: "Poule A", competition_id: "comp-1", standings: STANDINGS, standings_updated_at: "2026-10-01T03:00:00Z" },
+      { id: "22222222-2222-4222-8222-222222222222", name: "Poule B", competition_id: "comp-1", standings: STANDINGS, standings_updated_at: null },
+    ];
+    state.engagements = [
+      { club_id: CLUB_A.id, team_id: TEAM_U13M.id, ffbb_engagement_id: "eng-a", pool_id: "11111111-1111-4111-8111-111111111111" },
+      { club_id: CLUB_B.id, team_id: "team-b", ffbb_engagement_id: "eng-b", pool_id: "22222222-2222-4222-8222-222222222222" },
+    ];
+
+    const res = await request("/standings");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { standings: { poolName: string; teamName: string; categoryLabel: string; competitionName: string; rows: { teamName: string; isClub: boolean }[] }[] };
+    expect(body.standings).toHaveLength(1);
+    expect(body.standings[0]).toMatchObject({ poolName: "Poule A", teamName: "U13 M", categoryLabel: "U13", competitionName: "Départementale U13 M" });
+    expect(body.standings[0]!.rows.map((r) => [r.teamName, r.isClub])).toEqual([
+      ["SC CLUB A - 1", true],
+      ["ADVERSAIRE - 1", false],
+    ]);
+  });
+
+  it("ignore une poule sans classement encore récupéré ou au format inattendu", async () => {
+    state.competitions = [{ id: "comp-1", category_label: "U13", name: "D" }];
+    state.pools = [{ id: "11111111-1111-4111-8111-111111111111", name: "Poule A", competition_id: "comp-1", standings: { inattendu: true }, standings_updated_at: null }];
+    state.engagements = [{ club_id: CLUB_A.id, team_id: TEAM_U13M.id, ffbb_engagement_id: "eng-a", pool_id: "11111111-1111-4111-8111-111111111111" }];
+
+    const body = (await (await request("/standings")).json()) as { standings: unknown[] };
+    expect(body.standings).toEqual([]);
+  });
+});

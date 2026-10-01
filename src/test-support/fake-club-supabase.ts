@@ -104,6 +104,22 @@ export interface FakeMatchRow {
 export interface FakeCompetitionRow {
   id: string;
   category_label: string | null;
+  name?: string;
+}
+
+export interface FakeEngagementRow {
+  club_id: string;
+  team_id: string;
+  ffbb_engagement_id: string;
+  pool_id: string | null;
+}
+
+export interface FakePoolRow {
+  id: string;
+  name: string;
+  competition_id: string;
+  standings: unknown;
+  standings_updated_at: string | null;
 }
 
 export interface FakeTeamRow {
@@ -253,6 +269,8 @@ export interface FakeClubSupabaseState {
   tableAssignments: FakeTableAssignmentRow[];
   refereeOverrides: FakeRefereeOverrideRow[];
   publicTokens: FakePublicTokenRow[];
+  engagements: FakeEngagementRow[];
+  pools: FakePoolRow[];
   matchDocuments: FakeMatchDocumentRow[];
   isPlatformAdmin: boolean;
   /** Clés `${clubId}:${integration}` actuellement verrouillées (voir try_acquire_sync_lock/release_sync_lock). */
@@ -279,6 +297,8 @@ export function makeFakeClubSupabaseState(overrides: Partial<FakeClubSupabaseSta
     tableAssignments: [],
     refereeOverrides: [],
     publicTokens: [],
+    engagements: [],
+    pools: [],
     matchDocuments: [],
     isPlatformAdmin: false,
     syncLocks: new Set(),
@@ -810,6 +830,10 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
           return matchesTable;
         case "competitions":
           return competitionsTable;
+        case "ffbb_team_engagements":
+          return { select: (_cols?: string) => queryable(state.engagements) };
+        case "pools":
+          return { select: (_cols?: string) => queryable(state.pools) };
         case "teams":
           return teamsTable;
         case "emarque_imports":

@@ -262,6 +262,8 @@ export interface Database {
           competition_id: string;
           name: string;
           raw_ffbb_payload: unknown;
+          standings: unknown;
+          standings_updated_at: string | null;
           ffbb_last_seen_at: string;
           created_at: string;
           updated_at: string;
@@ -272,6 +274,8 @@ export interface Database {
           competition_id: string;
           name: string;
           raw_ffbb_payload?: unknown;
+          standings?: unknown;
+          standings_updated_at?: string | null;
           ffbb_last_seen_at?: string;
           created_at?: string;
           updated_at?: string;

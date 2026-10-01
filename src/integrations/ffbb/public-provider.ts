@@ -8,6 +8,8 @@ import type {
   NormalizedMatchStatus,
   NormalizedOrganisme,
   NormalizedPool,
+  NormalizedPoolStandings,
+  NormalizedStandingRow,
   NormalizedTeamEngagement,
   NormalizedVenue,
 } from "./types.js";
@@ -103,6 +105,78 @@ interface RawPool {
   id: number | string;
   nom?: string;
   id_competition?: number | string;
+}
+
+interface RawClassement {
+  idEngagement?: { id?: number | string; nom?: string; nomUsuel?: string } | number | string | null;
+  organisme?: { id?: number | string; nom?: string; logo?: { id?: string | null } | null } | number | string | null;
+  position?: number | string | null;
+  points?: number | string | null;
+  matchJoues?: number | string | null;
+  gagnes?: number | string | null;
+  perdus?: number | string | null;
+  nuls?: number | string | null;
+  nombreForfaits?: number | string | null;
+  paniersMarques?: number | string | null;
+  paniersEncaisses?: number | string | null;
+  difference?: number | string | null;
+  horsClassement?: unknown;
+}
+
+interface RawPoolWithStandings {
+  id: number | string;
+  classements?: RawClassement[] | null;
+}
+
+/** Champs du classement d'une poule — noms confirmés par ffbb-data-client 2.4.x (`PouleFields.CLASSEMENTS_*`), jamais testés en direct d'ici (réseau bloqué). */
+const CLASSEMENT_FIELDS = [
+  "id",
+  "classements.idEngagement.id",
+  "classements.idEngagement.nom",
+  "classements.idEngagement.nomUsuel",
+  "classements.organisme.id",
+  "classements.organisme.nom",
+  "classements.organisme.logo.id",
+  "classements.position",
+  "classements.points",
+  "classements.matchJoues",
+  "classements.gagnes",
+  "classements.perdus",
+  "classements.nuls",
+  "classements.nombreForfaits",
+  "classements.paniersMarques",
+  "classements.paniersEncaisses",
+  "classements.difference",
+  "classements.horsClassement",
+];
+
+function toNumberOrNull(value: number | string | null | undefined): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+export function normalizeStandingRow(raw: RawClassement): NormalizedStandingRow {
+  const engagement = raw.idEngagement && typeof raw.idEngagement === "object" ? raw.idEngagement : null;
+  const organisme = raw.organisme && typeof raw.organisme === "object" ? raw.organisme : null;
+  const engagementId = engagement ? toIdString(engagement.id) : typeof raw.idEngagement === "number" || typeof raw.idEngagement === "string" ? String(raw.idEngagement) : null;
+  return {
+    engagementFfbbId: engagementId,
+    teamName: engagement?.nom ?? engagement?.nomUsuel ?? organisme?.nom ?? "Équipe",
+    organismeFfbbId: organisme ? toIdString(organisme.id) : typeof raw.organisme === "number" || typeof raw.organisme === "string" ? String(raw.organisme) : null,
+    logoUrl: buildAssetUrl(organisme?.logo?.id),
+    position: toNumberOrNull(raw.position),
+    points: toNumberOrNull(raw.points),
+    played: toNumberOrNull(raw.matchJoues),
+    won: toNumberOrNull(raw.gagnes),
+    lost: toNumberOrNull(raw.perdus),
+    draws: toNumberOrNull(raw.nuls),
+    forfeits: toNumberOrNull(raw.nombreForfaits),
+    pointsFor: toNumberOrNull(raw.paniersMarques),
+    pointsAgainst: toNumberOrNull(raw.paniersEncaisses),
+    difference: toNumberOrNull(raw.difference),
+    outOfRanking: raw.horsClassement === true || raw.horsClassement === "true" || raw.horsClassement === 1,
+  };
 }
 
 interface RawEngagement {
@@ -342,6 +416,28 @@ export class FfbbPublicProvider {
       competitionFfbbId: toIdString(row.id_competition) ?? "",
       name: row.nom ?? "Poule",
       raw: row,
+    }));
+  }
+
+  /**
+   * Classements des poules (retour du club, 2026-10-01). Requête séparée de
+   * `listPools` : si l'API refuse un de ces champs, seule cette étape
+   * échoue — jamais la synchronisation des matchs (voir sync.ts).
+   */
+  async listPoolStandings(poolFfbbIds: string[]): Promise<NormalizedPoolStandings[]> {
+    if (poolFfbbIds.length === 0) return [];
+
+    const rows = await this.client.listAllItems<RawPoolWithStandings>(FFBB_ENDPOINTS.poules, {
+      fields: CLASSEMENT_FIELDS,
+      filter: { id: { _in: poolFfbbIds } },
+    });
+
+    return rows.map((row) => ({
+      poolFfbbId: requireIdString(row.id),
+      rows: (row.classements ?? [])
+        .filter((c): c is RawClassement => Boolean(c))
+        .map(normalizeStandingRow)
+        .sort((a, b) => (a.position ?? Number.MAX_SAFE_INTEGER) - (b.position ?? Number.MAX_SAFE_INTEGER)),
     }));
   }
 

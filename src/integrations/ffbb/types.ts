@@ -36,6 +36,35 @@ export interface NormalizedPool {
   raw: unknown;
 }
 
+/**
+ * Une ligne du classement FFBB d'une poule (`ffbbserver_poules.classements`,
+ * champs confirmés par le client open source ffbb-data-client 2.4.x,
+ * `models/poule_fields.py`). Demande du club, 2026-10-01 : "et même le
+ * classement... qui est dispo sur FFBB".
+ */
+export interface NormalizedStandingRow {
+  engagementFfbbId: string | null;
+  teamName: string;
+  organismeFfbbId: string | null;
+  logoUrl: string | null;
+  position: number | null;
+  points: number | null;
+  played: number | null;
+  won: number | null;
+  lost: number | null;
+  draws: number | null;
+  forfeits: number | null;
+  pointsFor: number | null;
+  pointsAgainst: number | null;
+  difference: number | null;
+  outOfRanking: boolean;
+}
+
+export interface NormalizedPoolStandings {
+  poolFfbbId: string;
+  rows: NormalizedStandingRow[];
+}
+
 export interface NormalizedTeamEngagement {
   ffbbId: string;
   name: string | null;

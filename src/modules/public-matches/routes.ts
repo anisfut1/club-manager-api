@@ -5,6 +5,7 @@ import { resolvePublicClub, type PublicClub } from "../public/club-resolver.js";
 import { listMatchesForClub, loadMatchDetails } from "../matches/shared.js";
 import { loadMatchDocuments } from "../documents/shared.js";
 import type { TeamDto } from "../../contracts/clubs.js";
+import { loadClubStandings } from "../standings/shared.js";
 
 /**
  * Vue PUBLIQUE en lecture seule des matchs (retour du club, 2026-09-29 :
@@ -102,4 +103,14 @@ publicMatchesRouter.get("/matches/:matchId/documents", async (c) => {
  * dérogations sont réservées aux club_admin / platform_admin (retour du club,
  * 2026-10-01), jamais lues ni exposées pour un visiteur anonyme.
  */
+/**
+ * GET /v1/public/clubs/:clubSlug/standings — classements FFBB des poules
+ * où le club est engagé (retour du club, 2026-10-01 : onglet « Résultats »
+ * de l'espace public). Données publiques FFBB, lecture seule.
+ */
+publicMatchesRouter.get("/standings", async (c) => {
+  const standings = await loadClubStandings(c.get("supabase"), c.get("publicClub").id);
+  return c.json({ standings });
+});
+
 publicMatchesRouter.get("/matches/:matchId/derogation", (c) => c.json({ derogation: null }));
