@@ -15,6 +15,7 @@ export interface PublicClub {
   slug: string;
   name: string;
   logoUrl: string | null;
+  accentColor: string | null;
   timezone: string;
 }
 
@@ -37,13 +38,13 @@ export function resolvePublicClub<Env extends { Variables: { supabase: DbClient;
     if (!slug) throw badRequest("Paramètre de route :clubSlug manquant.");
 
     const supabase = createServiceSupabaseClient();
-    const { data: club } = await supabase.from("clubs").select("id, slug, name, logo_url, timezone, status").eq("slug", slug).maybeSingle();
+    const { data: club } = await supabase.from("clubs").select("id, slug, name, logo_url, accent_color, timezone, status").eq("slug", slug).maybeSingle();
 
     // 404 générique, jamais de distinction "club inexistant" vs "club suspendu" — même prudence que requireClubContext côté admin.
     if (!club || club.status !== "active") throw notFound("Club introuvable.");
 
     c.set("supabase", supabase);
-    c.set("publicClub", { id: club.id, slug: club.slug, name: club.name, logoUrl: club.logo_url, timezone: club.timezone });
+    c.set("publicClub", { id: club.id, slug: club.slug, name: club.name, logoUrl: club.logo_url, accentColor: club.accent_color, timezone: club.timezone });
 
     await next();
   };

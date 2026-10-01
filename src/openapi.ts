@@ -56,9 +56,9 @@ import {
 import {
   PublicClubDtoSchema,
   PublicLicenciesListDtoSchema,
-  ClaimLicencieDtoSchema,
-  ClaimResultDtoSchema,
   PublicMeDtoSchema,
+  RequestPersonalLinkDtoSchema,
+  RequestPersonalLinkResultDtoSchema,
   PublicTableAssignmentsListDtoSchema,
   PublicTableAssignmentsQueryDtoSchema,
   PublicTokenQueryDtoSchema,
@@ -433,10 +433,31 @@ registry.registerPath({
 
 registry.registerPath({
   method: "post",
-  path: "/v1/public/clubs/{clubSlug}/licencies/{licencieId}/claim",
-  // Atomique (index unique partiel côté DB) — retour du club : "une fois qu'un nom est choisi, il peut plus être choisi".
-  request: { params: clubSlugAndLicencieIdParams, body: { content: { "application/json": { schema: ClaimLicencieDtoSchema } } } },
-  responses: { 200: jsonResponse("Jeton personnel — renvoyé UNE SEULE FOIS, jamais récupérable ensuite", ClaimResultDtoSchema), 404: jsonResponse("Introuvable", ErrorEnvelopeSchema), 409: jsonResponse("Déjà revendiqué", ErrorEnvelopeSchema) },
+  path: "/v1/public/clubs/{clubSlug}/licencies/{licencieId}/request-link",
+  // Le jeton n'est JAMAIS dans la réponse : uniquement envoyé par email (Resend) — retour du club, 2026-10-01.
+  request: { params: clubSlugAndLicencieIdParams, body: { content: { "application/json": { schema: RequestPersonalLinkDtoSchema } } } },
+  responses: {
+    200: jsonResponse("Lien personnel envoyé par email (adresse masquée)", RequestPersonalLinkResultDtoSchema),
+    400: jsonResponse("Requête invalide ou email requis (EMAIL_REQUIRED)", ErrorEnvelopeSchema),
+    404: jsonResponse("Introuvable", ErrorEnvelopeSchema),
+    409: jsonResponse("Nom déjà choisi sans adresse email connue (ALREADY_CLAIMED)", ErrorEnvelopeSchema),
+    429: jsonResponse("Lien envoyé il y a moins d'une minute (LINK_RECENTLY_SENT)", ErrorEnvelopeSchema),
+    502: jsonResponse("Envoi refusé par le service d'email (EMAIL_SEND_FAILED)", ErrorEnvelopeSchema),
+    503: jsonResponse("Envoi d'email non configuré (EMAIL_NOT_CONFIGURED)", ErrorEnvelopeSchema),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/public/clubs/{clubSlug}/derogations",
+  // Lecture seule, réservée aux licenciés rattachés à un compte club_admin actif — retour du club, 2026-10-01.
+  request: { params: clubSlugParam, query: PublicTokenQueryDtoSchema },
+  responses: {
+    200: jsonResponse("Dérogations connues du club (lecture seule)", z.object({ derogations: z.array(DerogationListItemDtoSchema) })),
+    401: jsonResponse("Jeton invalide ou révoqué", ErrorEnvelopeSchema),
+    403: jsonResponse("Licencié non administrateur du club (CLUB_ADMIN_REQUIRED)", ErrorEnvelopeSchema),
+    404: jsonResponse("Introuvable", ErrorEnvelopeSchema),
+  },
 });
 
 registry.registerPath({

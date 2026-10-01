@@ -405,31 +405,11 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
   };
 
   const membershipsTable = {
-    select: (_cols?: string) => ({
-      eq(_c1: string, clubId: string) {
-        return {
-          eq(_c2: string, userId: string) {
-            return {
-              eq(_c3: string, status: string) {
-                return {
-                  maybeSingle: () =>
-                    Promise.resolve({
-                      data: state.memberships.find((m) => m.club_id === clubId && m.user_id === userId && m.status === status) ?? null,
-                      error: null,
-                    }),
-                };
-              },
-            };
-          },
-        };
-      },
-    }),
+    select: (_cols?: string) => queryable(state.memberships),
   };
 
   const rolesTable = {
-    select: (_cols?: string) => ({
-      eq: (_col: string, membershipId: string) => Promise.resolve({ data: state.roles.filter((r) => r.membership_id === membershipId), error: null }),
-    }),
+    select: (_cols?: string) => queryable(state.roles),
   };
 
   const fbiCredentialsTable = {
@@ -642,7 +622,6 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
     },
   };
 
-  let publicTokenCounter = 0;
   const publicTokensTable = {
     select: (_cols?: string) => queryable(state.publicTokens),
     // Simule les 2 index uniques de la migration (club_id+licencie_id PARTIEL sur actifs, et token_hash) — jamais un simple push sans vérification.
@@ -651,8 +630,8 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
       const tokenHashDuplicate = state.publicTokens.some((t) => t.token_hash === row.token_hash);
       if (activeLicencieDuplicate || tokenHashDuplicate) return Promise.resolve({ error: { code: "23505", message: "duplicate key value violates unique constraint" } });
 
-      publicTokenCounter += 1;
-      const created: FakePublicTokenRow = { id: `public-token-${publicTokenCounter}`, email: null, created_at: new Date().toISOString(), revoked_at: null, revoked_by: null, ...row };
+      // Identifiant dérivé de l'état partagé (pas d'un compteur local) : un client fake est reconstruit à chaque requête.
+      const created: FakePublicTokenRow = { id: `public-token-${state.publicTokens.length + 1}`, email: null, created_at: new Date().toISOString(), revoked_at: null, revoked_by: null, ...row };
       state.publicTokens.push(created);
       return Promise.resolve({ error: null });
     },

@@ -1,15 +1,22 @@
 import { Hono } from "hono";
 import type { DbClient } from "../../db/client.js";
-import { badRequest, conflict, notFound, unauthorized } from "../../api-error.js";
+import { badRequest, conflict, forbidden, notFound, serviceUnavailable, tooManyRequests, unauthorized } from "../../api-error.js";
 import {
-  ClaimLicencieDtoSchema,
   PublicAssignRoleQueryDtoSchema,
   PublicTableAssignmentsQueryDtoSchema,
   PublicTokenQueryDtoSchema,
+  RequestPersonalLinkDtoSchema,
 } from "../../contracts/public-tables.js";
 import { assignTableRole, loadHomeMatchOrThrow, loadTableAssignmentsList, removeTableRole } from "../tables/shared.js";
 import { generatePublicToken, hashPublicToken } from "./token.js";
 import { resolvePublicClub, type PublicClub } from "../public/club-resolver.js";
+import { getEnv } from "../../config/env.js";
+import { isEmailConfigured, sendEmail } from "../../email/resend.js";
+import { buildPersonalLinkEmail, maskEmail } from "../../email/personal-link-email.js";
+import { loadClubDerogations } from "../derogations/list.js";
+
+/** Délai minimal entre deux envois de lien pour un même licencié — limite le spam et la rotation abusive du jeton par un tiers. */
+export const PERSONAL_LINK_COOLDOWN_MS = 60_000;
 
 /**
  * Flux PUBLIC sans compte des Tables de marque (retour du club,
@@ -72,7 +79,7 @@ async function resolvePublicLicencie(c: { get: (k: "supabase" | "publicClub") =>
 /** GET /v1/public/clubs/:clubSlug — infos club minimales, jamais de données membres/rôles/FFBB ici. */
 publicTablesRouter.get("/", (c) => {
   const club = c.get("publicClub");
-  return c.json({ slug: club.slug, name: club.name, logoUrl: club.logoUrl, timezone: club.timezone });
+  return c.json({ slug: club.slug, name: club.name, logoUrl: club.logoUrl, accentColor: club.accentColor, timezone: club.timezone });
 });
 
 /** GET /v1/public/clubs/:clubSlug/licencies — roster pour choisir son nom. `claimed` seulement (jamais qui/quand, aucune PII d'un tiers). */
@@ -93,35 +100,114 @@ publicTablesRouter.get("/licencies", async (c) => {
 });
 
 /**
- * POST /v1/public/clubs/:clubSlug/licencies/:licencieId/claim — choix du
- * nom (§"il choisit son nom dans la liste... une fois qu'un nom est
- * choisi, il peut plus être choisi"). Atomique via l'index unique PARTIEL
- * de la migration : jamais un SELECT-puis-INSERT applicatif, seule la
- * contrainte DB garantit qu'une double revendication simultanée du même
- * nom échoue proprement (§ même raisonnement que fbi_jobs, claim atomique).
+ * Base du lien envoyé par email : l'origine de la requête si elle fait
+ * partie des origines autorisées (le visiteur revient sur le frontend
+ * qu'il utilise déjà), sinon PUBLIC_APP_URL, sinon la première origine
+ * https de FRONTEND_ORIGINS. Jamais une origine arbitraire fournie par un
+ * tiers — sinon un attaquant pourrait faire envoyer un lien piégé.
  */
-publicTablesRouter.post("/licencies/:licencieId/claim", async (c) => {
+export function resolvePublicAppBaseUrl(requestOrigin: string | undefined): string {
+  const env = getEnv();
+  const allowed = env.FRONTEND_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean);
+  if (requestOrigin && allowed.includes(requestOrigin)) return requestOrigin;
+  if (env.PUBLIC_APP_URL) return env.PUBLIC_APP_URL.replace(/\/+$/, "");
+  return allowed.find((o) => o.startsWith("https://")) ?? allowed[0] ?? "";
+}
+
+/**
+ * POST /v1/public/clubs/:clubSlug/licencies/:licencieId/request-link —
+ * retour du club, 2026-10-01 : "il va chercher son nom, il va mettre son
+ * mail et on va mettre un système d'envoi de mail... un bouton qui renvoie
+ * vers son lien avec token". Le jeton n'est JAMAIS renvoyé dans la réponse :
+ * seul le propriétaire de la boîte mail peut l'obtenir.
+ *
+ * Adresse de destination :
+ *  - une adresse est déjà connue (`licencies.email`, ou celle d'un lien
+ *    actif) → l'email part TOUJOURS là, l'adresse saisie est ignorée
+ *    (c'est aussi le "lien perdu ?") ;
+ *  - aucune adresse connue et nom encore libre → l'adresse saisie est
+ *    exigée, puis enregistrée sur la fiche du licencié après envoi réussi ;
+ *  - aucune adresse connue mais nom déjà choisi (ancien flux, lien affiché
+ *    à l'écran) → refus : seul un·e responsable peut réinitialiser, sinon
+ *    n'importe qui pourrait détourner ce profil avec sa propre adresse.
+ *
+ * Chaque envoi émet un NOUVEAU jeton et révoque l'ancien (l'index unique
+ * partiel n'autorise qu'un lien actif par licencié) ; en cas d'échec
+ * d'envoi, l'ancien lien est restauré.
+ */
+publicTablesRouter.post("/licencies/:licencieId/request-link", async (c) => {
   const supabase = c.get("supabase");
   const club = c.get("publicClub");
   const licencieId = c.req.param("licencieId");
   if (!licencieId) throw badRequest("Paramètre de route :licencieId manquant.");
 
-  const body = ClaimLicencieDtoSchema.safeParse(await c.req.json().catch(() => ({})));
+  const body = RequestPersonalLinkDtoSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!body.success) throw badRequest(body.error.issues.map((i) => i.message).join(" "));
 
-  const { data: licencie } = await supabase.from("licencies").select("id, first_name, last_name").eq("id", licencieId).eq("club_id", club.id).eq("active", true).maybeSingle();
+  const { data: licencie } = await supabase.from("licencies").select("id, first_name, last_name, email").eq("id", licencieId).eq("club_id", club.id).eq("active", true).maybeSingle();
   if (!licencie) throw notFound("Licencié introuvable pour ce club.");
 
-  const token = generatePublicToken();
-  const { error } = await supabase.from("licencie_public_tokens").insert({ club_id: club.id, licencie_id: licencie.id, token_hash: hashPublicToken(token), email: body.data.email ?? null });
+  const { data: activeTokens } = await supabase.from("licencie_public_tokens").select("id, email, created_at").eq("club_id", club.id).eq("licencie_id", licencie.id).is("revoked_at", null);
+  const activeToken = (activeTokens ?? [])[0] ?? null;
 
-  if (error) {
-    if (error.code === "23505") throw conflict("Ce nom a déjà été choisi par quelqu'un d'autre. Si c'est une erreur, demande à un·e responsable du club de réinitialiser ce profil.", "ALREADY_CLAIMED");
-    throw new Error(`Revendication du profil échouée : ${error.message}`);
+  const knownEmail = licencie.email?.trim() || activeToken?.email?.trim() || null;
+  if (!knownEmail && activeToken) {
+    throw conflict("Ce nom a déjà été choisi sans adresse email. Demande à un·e responsable du club de réinitialiser ce profil.", "ALREADY_CLAIMED");
+  }
+  const targetEmail = knownEmail ?? body.data.email ?? null;
+  if (!targetEmail) throw badRequest("Indique ton adresse email pour recevoir ton lien personnel.", "EMAIL_REQUIRED");
+
+  if (activeToken && Date.now() - new Date(activeToken.created_at).getTime() < PERSONAL_LINK_COOLDOWN_MS) {
+    throw tooManyRequests(`Un lien vient d'être envoyé à ${maskEmail(targetEmail)}. Vérifie ta boîte mail (et les spams) avant de redemander.`, "LINK_RECENTLY_SENT");
   }
 
-  return c.json({ token, licencie: { id: licencie.id, firstName: licencie.first_name, lastName: licencie.last_name } });
+  // Avant toute écriture : sans clé Resend, ne jamais révoquer un lien existant pour rien.
+  if (!isEmailConfigured()) throw serviceUnavailable("L'envoi d'email n'est pas encore configuré pour ce club. Contacte un·e responsable.", "EMAIL_NOT_CONFIGURED");
+
+  const revokedAt = new Date().toISOString();
+  if (activeToken) await supabase.from("licencie_public_tokens").update({ revoked_at: revokedAt }).eq("id", activeToken.id).is("revoked_at", null);
+
+  const token = generatePublicToken();
+  const tokenHash = hashPublicToken(token);
+  const { error } = await supabase.from("licencie_public_tokens").insert({ club_id: club.id, licencie_id: licencie.id, token_hash: tokenHash, email: targetEmail });
+  if (error) {
+    // Deux demandes simultanées pour le même nom : la seconde perd la course (index unique partiel), l'autre lien est le bon.
+    if (error.code === "23505") throw tooManyRequests("Une demande de lien est déjà en cours pour ce nom. Réessaie dans une minute.", "LINK_RECENTLY_SENT");
+    if (activeToken) await supabase.from("licencie_public_tokens").update({ revoked_at: null }).eq("id", activeToken.id);
+    throw new Error(`Création du lien personnel échouée : ${error.message}`);
+  }
+
+  const returnTo = body.data.returnTo ?? "tables";
+  const link = `${resolvePublicAppBaseUrl(c.req.header("origin"))}/public/${encodeURIComponent(club.slug)}/${returnTo}?token=${encodeURIComponent(token)}`;
+  const message = buildPersonalLinkEmail({ clubName: club.name, clubLogoUrl: club.logoUrl, accentColor: club.accentColor, firstName: licencie.first_name, link });
+
+  try {
+    await sendEmail({ to: targetEmail, fromName: club.name, ...message });
+  } catch (sendError) {
+    await supabase.from("licencie_public_tokens").update({ revoked_at: new Date().toISOString() }).eq("token_hash", tokenHash).is("revoked_at", null);
+    if (activeToken) await supabase.from("licencie_public_tokens").update({ revoked_at: null }).eq("id", activeToken.id);
+    throw sendError;
+  }
+
+  // "faudra aussi du coup stocker le mail du licencié" — seulement une première adresse, jamais l'écrasement d'une adresse existante.
+  if (!licencie.email) await supabase.from("licencies").update({ email: targetEmail }).eq("id", licencie.id).eq("club_id", club.id);
+
+  return c.json({ sent: true as const, maskedEmail: maskEmail(targetEmail) });
 });
+
+/**
+ * Le licencié du jeton est-il rattaché à un compte `club_admin` ACTIF de ce
+ * club (club_memberships.licencie_id + membership_roles) ? Retour du club,
+ * 2026-10-01 : les dérogations ne s'ouvrent publiquement qu'aux admins du
+ * club — le jeton seul ne suffit jamais.
+ */
+export async function isLicencieClubAdmin(supabase: DbClient, clubId: string, licencieId: string): Promise<boolean> {
+  const { data: memberships } = await supabase.from("club_memberships").select("id").eq("club_id", clubId).eq("licencie_id", licencieId).eq("status", "active");
+  const membershipIds = (memberships ?? []).map((m) => m.id);
+  if (membershipIds.length === 0) return false;
+  const { data: roles } = await supabase.from("membership_roles").select("membership_id").in("membership_id", membershipIds).eq("role", "club_admin");
+  return (roles ?? []).length > 0;
+}
 
 /** GET /v1/public/clubs/:clubSlug/me?token= — vérifie/résout l'identité (pour un lien déjà en poche, ex: au chargement de la page). */
 publicTablesRouter.get("/me", async (c) => {
@@ -130,7 +216,31 @@ publicTablesRouter.get("/me", async (c) => {
 
   await resolvePublicLicencie(c, query.data.token);
   const licencie = c.get("publicLicencie");
-  return c.json({ licencie: { id: licencie.id, firstName: licencie.firstName, lastName: licencie.lastName } });
+  const isClubAdmin = await isLicencieClubAdmin(c.get("supabase"), c.get("publicClub").id, licencie.id);
+  return c.json({ licencie: { id: licencie.id, firstName: licencie.firstName, lastName: licencie.lastName }, isClubAdmin });
+});
+
+/**
+ * GET /v1/public/clubs/:clubSlug/derogations?token= — lecture SEULE des
+ * dérogations depuis l'espace public (retour du club, 2026-10-01 : "s'il
+ * clique sur dérogation, ça va lui demander de se co si token pas
+ * reconnu"), réservée aux licenciés rattachés à un compte club_admin
+ * actif : 401 sans jeton valide, 403 avec un jeton valide non admin.
+ * Aucune action (répondre, vérifier sur FBI) n'est exposée ici.
+ */
+publicTablesRouter.get("/derogations", async (c) => {
+  const query = PublicTokenQueryDtoSchema.safeParse(c.req.query());
+  if (!query.success) throw badRequest(query.error.issues.map((i) => i.message).join(" "));
+
+  await resolvePublicLicencie(c, query.data.token);
+  const supabase = c.get("supabase");
+  const club = c.get("publicClub");
+  const me = c.get("publicLicencie");
+
+  if (!(await isLicencieClubAdmin(supabase, club.id, me.id))) throw forbidden("Accès réservé aux administrateurs du club.", "CLUB_ADMIN_REQUIRED");
+
+  const derogations = await loadClubDerogations(supabase, club.id);
+  return c.json({ derogations });
 });
 
 /** GET /v1/public/clubs/:clubSlug/table-assignments?token=&from=&to= — même contenu que la vue admin, `me` en plus. */

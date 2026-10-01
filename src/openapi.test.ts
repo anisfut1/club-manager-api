@@ -82,14 +82,17 @@ describe("generateOpenApiDocument", () => {
     const publicPaths = ["/v1/public/clubs/{clubSlug}", "/v1/public/clubs/{clubSlug}/licencies", "/v1/public/clubs/{clubSlug}/me", "/v1/public/clubs/{clubSlug}/table-assignments"];
     for (const path of publicPaths) expect(doc.paths).toHaveProperty(path);
 
-    expect(doc.paths["/v1/public/clubs/{clubSlug}/licencies/{licencieId}/claim"]).toHaveProperty("post");
+    expect(doc.paths["/v1/public/clubs/{clubSlug}/licencies/{licencieId}/request-link"]).toHaveProperty("post");
+    expect(doc.paths["/v1/public/clubs/{clubSlug}/licencies/{licencieId}/claim"]).toBeUndefined();
+    expect(doc.paths["/v1/public/clubs/{clubSlug}/derogations"]).toHaveProperty("get");
     expect(doc.paths["/v1/public/clubs/{clubSlug}/matches/{matchId}/table-assignments/{role}"]).toHaveProperty("put");
     expect(doc.paths["/v1/public/clubs/{clubSlug}/matches/{matchId}/table-assignments/{role}"]).toHaveProperty("delete");
 
     const publicOps = [
       doc.paths["/v1/public/clubs/{clubSlug}"]!.get!,
       doc.paths["/v1/public/clubs/{clubSlug}/licencies"]!.get!,
-      doc.paths["/v1/public/clubs/{clubSlug}/licencies/{licencieId}/claim"]!.post!,
+      doc.paths["/v1/public/clubs/{clubSlug}/licencies/{licencieId}/request-link"]!.post!,
+      doc.paths["/v1/public/clubs/{clubSlug}/derogations"]!.get!,
       doc.paths["/v1/public/clubs/{clubSlug}/me"]!.get!,
       doc.paths["/v1/public/clubs/{clubSlug}/table-assignments"]!.get!,
       doc.paths["/v1/public/clubs/{clubSlug}/matches/{matchId}/table-assignments/{role}"]!.put!,
@@ -97,7 +100,8 @@ describe("generateOpenApiDocument", () => {
     ];
     for (const op of publicOps) expect(op.security ?? []).toEqual([]); // jamais de session Supabase sur ce flux
 
-    expect(doc.components?.schemas).toHaveProperty("ClaimResultDto");
+    expect(doc.components?.schemas).toHaveProperty("RequestPersonalLinkResultDto");
+    expect(doc.components?.schemas).not.toHaveProperty("ClaimResultDto");
     expect(doc.components?.schemas).toHaveProperty("PublicTableAssignmentsListDto");
   });
 

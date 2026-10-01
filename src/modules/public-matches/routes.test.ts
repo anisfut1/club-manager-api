@@ -96,7 +96,7 @@ describe("GET /v1/public/clubs/:clubSlug — aucune session requise", () => {
   it("renvoie les infos club minimales sans header Authorization", async () => {
     const res = await request("");
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ slug: "club-a", name: "Club A Basket", logoUrl: null, timezone: "Europe/Paris" });
+    expect(await res.json()).toEqual({ slug: "club-a", name: "Club A Basket", logoUrl: null, accentColor: null, timezone: "Europe/Paris" });
   });
 
   it("404 pour un slug inconnu, jamais une erreur différente", async () => {

@@ -10,7 +10,7 @@
  * mais distinguable côté frontend d'un autre conflit. Sans code explicite,
  * `code` retombe sur le nom du statut générique (comportement inchangé).
  */
-export type ApiErrorKind = "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "BAD_REQUEST" | "CONFLICT" | "INTERNAL_ERROR";
+export type ApiErrorKind = "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "BAD_REQUEST" | "CONFLICT" | "TOO_MANY_REQUESTS" | "INTERNAL_ERROR" | "BAD_GATEWAY" | "SERVICE_UNAVAILABLE";
 
 const STATUS_BY_KIND: Record<ApiErrorKind, number> = {
   UNAUTHORIZED: 401,
@@ -18,7 +18,10 @@ const STATUS_BY_KIND: Record<ApiErrorKind, number> = {
   NOT_FOUND: 404,
   BAD_REQUEST: 400,
   CONFLICT: 409,
+  TOO_MANY_REQUESTS: 429,
   INTERNAL_ERROR: 500,
+  BAD_GATEWAY: 502,
+  SERVICE_UNAVAILABLE: 503,
 };
 
 export class ApiError extends Error {
@@ -37,8 +40,8 @@ export function unauthorized(message = "Authentification requise."): ApiError {
   return new ApiError("UNAUTHORIZED", message);
 }
 
-export function forbidden(message = "Accès refusé."): ApiError {
-  return new ApiError("FORBIDDEN", message);
+export function forbidden(message = "Accès refusé.", code?: string): ApiError {
+  return new ApiError("FORBIDDEN", message, code);
 }
 
 export function notFound(message = "Ressource introuvable."): ApiError {
@@ -51,4 +54,18 @@ export function badRequest(message: string, code?: string): ApiError {
 
 export function conflict(message: string, code?: string): ApiError {
   return new ApiError("CONFLICT", message, code);
+}
+
+export function tooManyRequests(message: string, code?: string): ApiError {
+  return new ApiError("TOO_MANY_REQUESTS", message, code);
+}
+
+/** Un service tiers (ex: Resend) a refusé ou échoué — jamais la faute de l'appelant. */
+export function badGateway(message: string, code?: string): ApiError {
+  return new ApiError("BAD_GATEWAY", message, code);
+}
+
+/** Fonctionnalité non configurée sur ce déploiement (ex: clé Resend absente). */
+export function serviceUnavailable(message: string, code?: string): ApiError {
+  return new ApiError("SERVICE_UNAVAILABLE", message, code);
 }

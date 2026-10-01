@@ -22,6 +22,14 @@ const envSchema = z.object({
     .optional()
     .transform((value) => value === "true"),
   FBI_BASE_URL: z.string().url().optional().default("https://extranet.ffbb.com/fbi"),
+  // Envoi des liens personnels par email (voir src/email/resend.ts). Optionnels :
+  // sans clé, la demande de lien répond 503 explicitement, le reste de l'API
+  // fonctionne normalement.
+  RESEND_API_KEY: z.string().min(1).optional(),
+  RESEND_FROM: z.string().min(1).optional(),
+  // URL publique du frontend SCSB utilisée dans les liens envoyés par email
+  // quand l'origine de la requête n'est pas exploitable (voir public-tables).
+  PUBLIC_APP_URL: z.string().url().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

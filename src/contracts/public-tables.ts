@@ -14,6 +14,7 @@ export const PublicClubDtoSchema = z
     slug: z.string(),
     name: z.string(),
     logoUrl: z.string().nullable(),
+    accentColor: z.string().nullable(),
     timezone: z.string(),
   })
   .openapi("PublicClubDto");
@@ -34,17 +35,30 @@ export const PublicLicencieDtoSchema = z
 
 export const PublicLicenciesListDtoSchema = z.object({ licencies: z.array(PublicLicencieDtoSchema) }).openapi("PublicLicenciesListDto");
 
-/** POST .../licencies/:licencieId/claim — choix du nom (§ "il choisit son nom dans la liste"). Email optionnel, jamais vérifié en V1 (pas d'envoi automatique). */
-export const ClaimLicencieDtoSchema = z.object({ email: z.string().email().nullable().optional() }).openapi("ClaimLicencieDto");
+/** Page du frontend public vers laquelle le bouton de l'email ramène (le lien porte toujours `?token=`). */
+export const PublicLinkTargetSchema = z.enum(["matchs", "tables", "derogations"]).openapi("PublicLinkTarget");
 
 /**
- * `token` n'est renvoyé QU'ICI, une seule fois — jamais récupérable
- * ensuite (seul son hash est stocké, voir la migration). Le frontend doit
- * l'afficher immédiatement et inviter la personne à conserver son lien.
+ * POST .../licencies/:licencieId/request-link (retour du club, 2026-10-01 :
+ * "il va chercher son nom, il va mettre son mail... un bouton qui renvoie
+ * vers son lien avec token"). Le lien n'est JAMAIS renvoyé dans la réponse,
+ * uniquement envoyé par email. `email` n'est utilisé que si le licencié n'a
+ * encore aucune adresse connue — sinon l'email part TOUJOURS à l'adresse
+ * déjà enregistrée (le champ saisi est ignoré), ce qui sert aussi de
+ * "lien perdu ?".
  */
-export const ClaimResultDtoSchema = z.object({ token: z.string(), licencie: LicencieRefDtoSchema }).openapi("ClaimResultDto");
+export const RequestPersonalLinkDtoSchema = z
+  .object({
+    email: z.string().trim().email("Adresse email invalide.").max(254).nullable().optional(),
+    returnTo: PublicLinkTargetSchema.optional(),
+  })
+  .openapi("RequestPersonalLinkDto");
 
-export const PublicMeDtoSchema = z.object({ licencie: LicencieRefDtoSchema }).openapi("PublicMeDto");
+/** `maskedEmail` (ex: `c***@gmail.com`) : jamais l'adresse complète renvoyée à un visiteur anonyme. */
+export const RequestPersonalLinkResultDtoSchema = z.object({ sent: z.literal(true), maskedEmail: z.string() }).openapi("RequestPersonalLinkResultDto");
+
+/** `isClubAdmin` : le licencié est rattaché à un compte club_admin actif de CE club — seul cas où la vue publique des dérogations s'ouvre. */
+export const PublicMeDtoSchema = z.object({ licencie: LicencieRefDtoSchema, isClubAdmin: z.boolean() }).openapi("PublicMeDto");
 
 export const PublicTableAssignmentsForMatchDtoSchema = z
   .object({

@@ -24,16 +24,57 @@ email de groupe, etc.) : `https://.../public/{clubSlug}/tables`. Il n'y a
 À la première visite, la personne **choisit son nom** dans la liste des
 licenciés actifs du club (`GET /v1/public/clubs/:clubSlug/licencies`, qui
 renvoie `claimed: true/false` par licencié — jamais qui a déjà choisi
-quoi, seulement si c'est encore possible). Ce choix
-(`POST .../licencies/:licencieId/claim`) **mint un jeton personnel secret**
-à haute entropie (32 octets aléatoires), renvoyé **une seule fois** dans la
-réponse — seul son hash SHA-256 est stocké côté serveur
-(`licencie_public_tokens.token_hash`), jamais le jeton en clair (même
-précaution que `fbi_credentials`, voir `docs/MULTI_TENANCY.md`). Le
-frontend doit immédiatement inviter la personne à **conserver ce lien**
-(bookmark) : c'est sa seule preuve d'identité pour la suite, il n'existe
-aucun mécanisme de récupération automatique (pas d'envoi d'email en V1,
-voir "Hors périmètre V1" ci-dessous).
+quoi, seulement si c'est encore possible), puis **demande son lien par
+email** (`POST .../licencies/:licencieId/request-link`, retour du club,
+2026-10-01 : "il va chercher son nom, il va mettre son mail... un bouton
+qui renvoie vers son lien avec token. On va faire ça avec Resend").
+
+Cette demande **mint un jeton personnel secret** à haute entropie
+(32 octets aléatoires) et l'envoie **uniquement par email** (Resend, HTML
+avec un bouton "Ouvrir mon espace" + le lien en texte) : le jeton n'est
+**jamais** dans la réponse HTTP, seule `maskedEmail` (`c***@gmail.com`)
+l'est. Seul son hash SHA-256 est stocké (`licencie_public_tokens.token_hash`),
+jamais le jeton en clair (même précaution que `fbi_credentials`, voir
+`docs/MULTI_TENANCY.md`).
+
+Adresse de destination :
+
+- **Adresse déjà connue** (`licencies.email`, ou celle du lien actif) →
+  l'email part TOUJOURS à cette adresse, l'adresse saisie est ignorée.
+  C'est aussi le "lien perdu ?" : redemander renvoie un nouveau lien au
+  même endroit.
+- **Aucune adresse connue, nom encore libre** → l'adresse saisie est
+  exigée (`400 EMAIL_REQUIRED` sinon), puis enregistrée dans
+  `licencies.email` **après** un envoi réussi (jamais l'écrasement d'une
+  adresse existante — un·e admin la corrige depuis la fiche du licencié).
+- **Aucune adresse connue mais nom déjà choisi** (ancien flux, lien
+  affiché à l'écran) → `409 ALREADY_CLAIMED` : seul·e un·e admin peut
+  réinitialiser, sinon n'importe qui pourrait détourner ce profil avec sa
+  propre adresse.
+
+Chaque envoi **remplace** le lien précédent (ancien jeton révoqué, un seul
+lien actif par licencié), avec un délai minimal d'une minute entre deux
+envois (`429 LINK_RECENTLY_SENT`). Si Resend refuse l'envoi (`502
+EMAIL_SEND_FAILED`), le nouveau jeton est révoqué et l'ancien lien
+restauré ; sans `RESEND_API_KEY`, la demande répond `503
+EMAIL_NOT_CONFIGURED` **avant** toute écriture.
+
+Le lien pointe vers `{origine}/public/{clubSlug}/{returnTo}?token=…`
+(`returnTo` ∈ `matchs | tables | derogations`, défaut `tables`).
+L'origine est celle de la requête si elle figure dans `FRONTEND_ORIGINS`,
+sinon `PUBLIC_APP_URL`, sinon la première origine https de
+`FRONTEND_ORIGINS` — jamais une origine arbitraire.
+
+### Configuration Resend
+
+- `RESEND_API_KEY` (Vercel, projet club-manager-api) — jamais commitée.
+- `RESEND_FROM` (optionnel, défaut `SCSB <onboarding@resend.dev>`) — le
+  nom affiché est remplacé par le nom du club, l'adresse est conservée.
+- **Sans domaine vérifié** sur Resend, l'expéditeur `onboarding@resend.dev`
+  ne livre **qu'à l'adresse du propriétaire du compte Resend** : toute
+  autre adresse est refusée (`502`). Vérifier un domaine dans Resend puis
+  définir `RESEND_FROM="Nom du club <noreply@domaine-verifie>"` pour
+  envoyer à tout le monde.
 
 **Un nom ne peut être choisi qu'une seule fois** tant qu'il est actif — un
 index UNIQUE PARTIEL en base (`(club_id, licencie_id) WHERE revoked_at IS
@@ -143,10 +184,18 @@ n'exigent **aucun** header `Authorization` :
 - `GET /` — infos club minimales (`slug`, `name`, `logoUrl`, `timezone`),
   jamais de données membre/rôle/FFBB.
 - `GET /licencies` — roster pour choisir son nom (`claimed` seulement).
-- `POST /licencies/:licencieId/claim` (body `{ email? }`) — mint le jeton
-  personnel, renvoyé une seule fois.
+- `POST /licencies/:licencieId/request-link` (body `{ email?, returnTo? }`)
+  — envoie le lien personnel par email, jamais dans la réponse (voir plus
+  haut). Remplace l'ancien `POST .../claim` (supprimé).
 - `GET /me?token=` — résout l'identité (vérification d'un lien déjà en
-  poche).
+  poche) ; `isClubAdmin` indique si ce licencié est rattaché à un compte
+  `club_admin` actif du club.
+- `GET /derogations?token=` — dérogations du club en **lecture seule**,
+  réservées aux licenciés rattachés (`club_memberships.licencie_id`) à un
+  compte `club_admin` ACTIF de ce club : `401` sans jeton valide, `403
+  CLUB_ADMIN_REQUIRED` sinon. Le jeton seul ne suffit jamais (retour du
+  club, 2026-10-01 : dérogations "admins seulement"). Aucune action
+  (répondre, vérifier sur FBI) n'est exposée publiquement.
 - `GET /table-assignments?token=&from=&to=` — même contenu que la vue
   admin (`GET /v1/clubs/:clubId/table-assignments`), avec `me` en plus.
 - `PUT /matches/:matchId/table-assignments/:role?token=` — auto-
@@ -164,11 +213,6 @@ Côté admin authentifié (sous `/v1/clubs/:clubId/table-assignments`) :
 
 ## Hors périmètre V1 (documenté, non implémenté)
 
-- **Aucun envoi d'email automatique** du lien personnel — l'adresse email
-  optionnelle collectée à la revendication est un simple champ de contact
-  pour un admin, jamais utilisée pour un envoi (aucun fournisseur
-  transactionnel configuré dans ce projet). Le frontend doit clairement
-  inviter la personne à conserver son lien elle-même.
 - **Aucune expiration automatique** du jeton — seule une révocation admin
   explicite le rend inactif (choix confirmé par le club).
 - **Aucune vérification de l'identité** au moment du choix du nom — rien
@@ -177,10 +221,11 @@ Côté admin authentifié (sous `/v1/clubs/:clubId/table-assignments`) :
   à faible enjeu (choix confirmé par le club : "il choisit son nom dans la
   liste", sans étape de vérification supplémentaire). La réinitialisation
   admin reste le filet de sécurité en cas d'usurpation constatée.
-- **Aucune limitation de débit** (rate limiting) sur `POST .../claim` — un
-  visiteur du lien pourrait en théorie revendiquer tous les noms restants
-  avant les autres. Risque jugé faible pour un lien distribué en interne à
-  un club, mais non mitigé techniquement en V1.
+- **Limitation de débit minimale** : une minute entre deux envois pour un
+  même licencié, rien de global — un visiteur pourrait encore revendiquer
+  plusieurs noms libres avec sa propre adresse. Risque jugé faible pour un
+  lien distribué en interne à un club ; la réinitialisation admin reste le
+  filet de sécurité.
 - Le flux public **n'expose jamais** la bascule "pas besoin d'arbitre"
   (`referee-status`) — décision organisationnelle réservée à l'admin, voir
   `docs/TABLE_ASSIGNMENTS.md`.
