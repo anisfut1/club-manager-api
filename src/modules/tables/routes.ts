@@ -261,13 +261,12 @@ tableAssignmentsRouter.post("/public-access/:licencieId/link", requireClubRole("
   if (!licencieId) throw badRequest("Paramètre de route :licencieId manquant.");
 
   const serviceSupabase = createServiceSupabaseClient();
-  const { data: licencie } = await serviceSupabase.from("licencies").select("id, email, public_admin, public_coach, public_coordinator").eq("id", licencieId).eq("club_id", club.id).maybeSingle();
+  const { data: licencie } = await serviceSupabase.from("licencies").select("id, email").eq("id", licencieId).eq("club_id", club.id).maybeSingle();
   if (!licencie) throw notFound("Licencié introuvable pour ce club.");
 
   const { token, created } = await revealOrIssueToken(serviceSupabase, { clubId: club.id, licencieId, email: licencie.email ?? null, adminUserId: user.id });
-  // Ouvre directement l'onglet utile : Dérogations pour un admin/coach/coordinateur, sinon Tables.
-  const target = licencie.public_admin || licencie.public_coach || licencie.public_coordinator ? "derogations" : "tables";
-  return c.json({ link: personalLinkUrl(resolvePublicAppBaseUrl(c.req.header("origin")), club.slug, target, token), created });
+  // Ouvre l'accueil personnel (agenda de ses équipes, tables, dérogations selon ses rôles).
+  return c.json({ link: personalLinkUrl(resolvePublicAppBaseUrl(c.req.header("origin")), club.slug, "accueil", token), created });
 });
 
 /**

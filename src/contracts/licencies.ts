@@ -32,6 +32,8 @@ export const LicencieDtoSchema = z
     publicCoach: z.boolean(),
     /** Coordinateur des dérogations (espace public sans compte) : reçoit et traite les demandes — posé par un club_admin depuis /joueurs. */
     publicCoordinator: z.boolean(),
+    /** Équipes COACHÉES (accueil coach de l'espace public) — distinct de `teamId` (équipe où il joue). */
+    coachedTeamIds: z.array(z.string().uuid()),
   })
   .openapi("LicencieDto");
 
@@ -131,6 +133,8 @@ export const UpdateLicencieProfileDtoSchema = z
     /** club_admin uniquement — voir LicencieDto.publicCoach / publicCoordinator. */
     publicCoach: z.boolean().optional(),
     publicCoordinator: z.boolean().optional(),
+    /** club_admin uniquement — équipes coachées (remplace la liste). */
+    coachedTeamIds: z.array(z.string().uuid()).max(20).optional(),
   })
   .openapi("UpdateLicencieProfileDto");
 
@@ -168,6 +172,7 @@ export const CreateLicencieDtoSchema = z
     publicAdmin: z.boolean().optional(),
     publicCoach: z.boolean().optional(),
     publicCoordinator: z.boolean().optional(),
+    coachedTeamIds: z.array(z.string().uuid()).max(20).optional(),
   })
   .strict()
   .openapi("CreateLicencieDto");

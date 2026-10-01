@@ -25,7 +25,7 @@ export const licenciesRouter = new Hono<AppEnv>();
 licenciesRouter.use("*", requireAuth);
 licenciesRouter.use("*", requireClubMembership);
 
-const LICENCIE_COLUMNS = "id, club_id, first_name, last_name, license_number, birth_date, email, phone, photo_url, team_id, active, ffbb_licence_id, category_label, sexe, public_admin, public_coach, public_coordinator";
+const LICENCIE_COLUMNS = "id, club_id, first_name, last_name, license_number, birth_date, email, phone, photo_url, team_id, active, ffbb_licence_id, category_label, sexe, public_admin, public_coach, public_coordinator, coached_team_ids";
 
 interface LicencieRow {
   id: string;
@@ -45,6 +45,16 @@ interface LicencieRow {
   public_admin: boolean;
   public_coach: boolean;
   public_coordinator: boolean;
+  coached_team_ids: string[] | null;
+}
+
+/** Équipes coachées : dédoublonnées, toutes du MÊME club (sinon 400). */
+async function validateClubTeamIds(db: DbClient, clubId: string, teamIds: readonly string[]): Promise<string[]> {
+  const unique = [...new Set(teamIds)];
+  if (unique.length === 0) return [];
+  const { data } = await db.from("teams").select("id").eq("club_id", clubId).in("id", unique);
+  if ((data ?? []).length !== unique.length) throw badRequest("Une des équipes coachées n'appartient pas à ce club.");
+  return unique;
 }
 
 function mapLicencieRow(row: LicencieRow): LicencieDto {
@@ -66,6 +76,7 @@ function mapLicencieRow(row: LicencieRow): LicencieDto {
     publicAdmin: row.public_admin === true,
     publicCoach: row.public_coach === true,
     publicCoordinator: row.public_coordinator === true,
+    coachedTeamIds: row.coached_team_ids ?? [],
   };
 }
 
@@ -244,6 +255,7 @@ licenciesRouter.patch("/:licencieId/profile", async (c) => {
     public_admin: boolean;
     public_coach: boolean;
     public_coordinator: boolean;
+    coached_team_ids: string[];
   }> = {};
   if (parsed.data.photoUrl !== undefined) patch.photo_url = parsed.data.photoUrl;
   if (parsed.data.email !== undefined) patch.email = parsed.data.email;
@@ -257,6 +269,7 @@ licenciesRouter.patch("/:licencieId/profile", async (c) => {
   if (parsed.data.publicAdmin !== undefined) patch.public_admin = parsed.data.publicAdmin;
   if (parsed.data.publicCoach !== undefined) patch.public_coach = parsed.data.publicCoach;
   if (parsed.data.publicCoordinator !== undefined) patch.public_coordinator = parsed.data.publicCoordinator;
+  if (parsed.data.coachedTeamIds !== undefined) patch.coached_team_ids = await validateClubTeamIds(serviceSupabase, club.id, parsed.data.coachedTeamIds);
 
   if (Object.keys(patch).length === 0) return c.json(mapLicencieRow(existing));
 
@@ -299,6 +312,7 @@ licenciesRouter.post("/", requireClubRole("club_admin"), async (c) => {
       public_admin: input.publicAdmin ?? false,
       public_coach: input.publicCoach ?? false,
       public_coordinator: input.publicCoordinator ?? false,
+      coached_team_ids: input.coachedTeamIds ? await validateClubTeamIds(serviceSupabase, club.id, input.coachedTeamIds) : [],
     })
     .select(LICENCIE_COLUMNS)
     .single();

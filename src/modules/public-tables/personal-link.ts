@@ -18,7 +18,7 @@ export function decryptPublicToken(payload: EncryptedPayload, clubId: string, li
   return decryptSecret(payload, aad(clubId, licencieId));
 }
 
-export function personalLinkUrl(baseUrl: string, clubSlug: string, target: "tables" | "derogations" | "matchs", token: string): string {
+export function personalLinkUrl(baseUrl: string, clubSlug: string, target: "accueil" | "tables" | "derogations" | "matchs", token: string): string {
   return `${baseUrl}/public/${encodeURIComponent(clubSlug)}/${target}?token=${encodeURIComponent(token)}`;
 }
 

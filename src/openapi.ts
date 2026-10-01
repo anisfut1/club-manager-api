@@ -81,6 +81,7 @@ import {
   PostDerogationMessageDtoSchema,
   ProposeDerogationSlotDtoSchema,
 } from "./contracts/derogation-requests.js";
+import { PublicHomeDtoSchema } from "./contracts/public-home.js";
 import { ClubMemberListDtoSchema, InviteMemberDtoSchema, SetMemberRolesDtoSchema } from "./contracts/members.js";
 import { ClubVenueAdminDtoSchema, ClubVenueListDtoSchema, UpdateClubVenueDtoSchema } from "./contracts/club-venues.js";
 import { PoolStandingsListDtoSchema } from "./contracts/standings.js";
@@ -908,6 +909,14 @@ registry.registerPath({ method: "get", path: "/v1/public/clubs/{clubSlug}/deroga
 registry.registerPath({ method: "post", path: "/v1/public/clubs/{clubSlug}/derogation-requests/{requestId}/messages", request: { params: publicRequestParams, query: publicTokenQuery, body: { content: { "application/json": { schema: PostDerogationMessageDtoSchema } } } }, responses: { 200: jsonResponse("Message ajouté", DerogationRequestDetailDtoSchema), ...publicDerogationErrors } });
 registry.registerPath({ method: "post", path: "/v1/public/clubs/{clubSlug}/derogation-requests/{requestId}/actions", request: { params: publicRequestParams, query: publicTokenQuery, body: { content: { "application/json": { schema: DerogationActionDtoSchema } } } }, responses: { 200: jsonResponse("Statut mis à jour", DerogationRequestDetailDtoSchema), ...publicDerogationErrors, ...unprocessable } });
 registry.registerPath({ method: "post", path: "/v1/public/clubs/{clubSlug}/derogation-requests/{requestId}/proposals", request: { params: publicRequestParams, query: publicTokenQuery, body: { content: { "application/json": { schema: ProposeDerogationSlotDtoSchema } } } }, responses: { 200: jsonResponse("Nouveau créneau proposé", DerogationRequestDetailDtoSchema), ...publicDerogationErrors } });
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/public/clubs/{clubSlug}/home",
+  // Accueil personnel (lien personnel) : équipes jouées/coachées, agenda, résultats, tables de marque.
+  request: { params: clubSlugParam, query: z.object({ token: z.string().min(1) }) },
+  responses: { 200: jsonResponse("Accueil personnel", PublicHomeDtoSchema), 400: jsonResponse("Lien manquant", ErrorEnvelopeSchema), 401: jsonResponse("Lien invalide ou révoqué", ErrorEnvelopeSchema), 404: jsonResponse("Introuvable", ErrorEnvelopeSchema) },
+});
 
 /** Membres & rôles (club_admin) — désignation des coachs et du coordinateur. */
 const clubAndMembershipParams = clubIdParam.extend({ membershipId: z.string().uuid() });

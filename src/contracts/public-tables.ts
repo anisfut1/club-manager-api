@@ -36,7 +36,7 @@ export const PublicLicencieDtoSchema = z
 export const PublicLicenciesListDtoSchema = z.object({ licencies: z.array(PublicLicencieDtoSchema) }).openapi("PublicLicenciesListDto");
 
 /** Page du frontend public vers laquelle le bouton de l'email ramène (le lien porte toujours `?token=`). */
-export const PublicLinkTargetSchema = z.enum(["matchs", "tables", "derogations"]).openapi("PublicLinkTarget");
+export const PublicLinkTargetSchema = z.enum(["accueil", "matchs", "tables", "derogations"]).openapi("PublicLinkTarget");
 
 /**
  * POST .../licencies/:licencieId/request-link (retour du club, 2026-10-01 :

@@ -248,6 +248,7 @@ export interface Database {
           public_admin: boolean;
           public_coach: boolean;
           public_coordinator: boolean;
+          coached_team_ids: string[];
           created_at: string;
           updated_at: string;
         },
@@ -269,6 +270,7 @@ export interface Database {
           public_admin?: boolean;
           public_coach?: boolean;
           public_coordinator?: boolean;
+          coached_team_ids?: string[];
           created_at?: string;
           updated_at?: string;
         }

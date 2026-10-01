@@ -415,7 +415,7 @@ describe("POST .../public-access/:licencieId/link — retour du club : « l'admi
     expect(first.status).toBe(200);
     const a = (await first.json()) as { link: string; created: boolean };
     expect(a.created).toBe(true);
-    expect(a.link).toMatch(/\/public\/[^/]+\/tables\?token=/);
+    expect(a.link).toMatch(/\/public\/[^/]+\/accueil\?token=/);
     const token = new URL(a.link).searchParams.get("token")!;
     expect(state.publicTokens).toHaveLength(1);
     expect(state.publicTokens[0]).toMatchObject({ token_hash: hashPublicToken(token), revoked_at: null });

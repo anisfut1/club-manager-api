@@ -346,3 +346,21 @@ describe("POST /v1/clubs/:clubId/licencies (club_admin) — ajout manuel (coach 
     expect(state.licencies).toHaveLength(0);
   });
 });
+
+describe("équipes coachées (accueil coach de l'espace public)", () => {
+  const T1 = "11111111-1111-4111-8111-000000000001";
+  const T_B = "11111111-1111-4111-8111-0000000000bb";
+  const patch = (id: string, body: unknown) => request(`/${id}/profile`, { method: "PATCH", body: JSON.stringify(body) });
+
+  it("club_admin pose les équipes coachées (dédoublonnées) ; une équipe d'un autre club est refusée", async () => {
+    state.teams = [
+      { id: T1, club_id: CLUB_A.id, name: "U15", sexe: "F", active: true },
+      { id: T_B, club_id: CLUB_B.id, name: "U15", sexe: "F", active: true },
+    ];
+    state.licencies = [licencie({ id: "l1" })];
+    const ok = await patch("l1", { publicCoach: true, coachedTeamIds: [T1, T1] });
+    expect(ok.status).toBe(200);
+    expect(((await ok.json()) as { coachedTeamIds: string[] }).coachedTeamIds).toEqual([T1]);
+    expect((await patch("l1", { coachedTeamIds: [T_B] })).status).toBe(400);
+  });
+});

@@ -53,6 +53,7 @@ export interface FakeLicencieRow {
   public_admin?: boolean;
   public_coach?: boolean;
   public_coordinator?: boolean;
+  coached_team_ids?: string[];
 }
 
 export interface FakeRoleRow {
