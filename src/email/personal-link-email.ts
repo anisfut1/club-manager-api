@@ -26,8 +26,19 @@ function safeAccent(color: string | null): string {
   return color && /^#[0-9a-fA-F]{6}$/.test(color) ? color : DEFAULT_ACCENT;
 }
 
+/** Texte du bouton lisible sur l'accent du club : sombre sur une couleur claire (ex. jaune), blanc sinon. */
+function inkFor(hex: string): string {
+  const [r, g, b] = [1, 3, 5].map((i) => {
+    const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  }) as [number, number, number];
+  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return luminance > 0.4 ? "#111827" : "#ffffff";
+}
+
 export function buildPersonalLinkEmail(input: PersonalLinkEmailInput): { subject: string; html: string; text: string } {
   const accent = safeAccent(input.accentColor);
+  const ink = inkFor(accent);
   const club = escapeHtml(input.clubName);
   const firstName = escapeHtml(input.firstName);
   const link = escapeHtml(input.link);
@@ -70,7 +81,7 @@ export function buildPersonalLinkEmail(input: PersonalLinkEmailInput): { subject
             <table role="presentation" cellpadding="0" cellspacing="0" border="0">
               <tr>
                 <td align="center" bgcolor="${accent}" style="border-radius:12px;">
-                  <a href="${link}" target="_blank" rel="noopener" style="display:inline-block;padding:14px 28px;font-size:16px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:12px;">Ouvrir mon espace</a>
+                  <a href="${link}" target="_blank" rel="noopener" style="display:inline-block;padding:14px 28px;font-size:16px;font-weight:600;color:${ink};text-decoration:none;border-radius:12px;">Ouvrir mon espace</a>
                 </td>
               </tr>
             </table>
