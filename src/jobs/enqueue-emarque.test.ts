@@ -33,7 +33,7 @@ function makeFakeSupabase(options: {
           select: () => ({
             eq: () => ({
               eq: () => ({
-                in: () => Promise.resolve({ data: options.candidates, error: null }),
+                in: () => ({ gte: () => Promise.resolve({ data: options.candidates, error: null }) }),
               }),
             }),
           }),

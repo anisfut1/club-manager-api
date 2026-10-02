@@ -6,6 +6,7 @@ import { BrowserFbiClient, type BrowserFbiSession } from "../integrations/fbi/br
 import { launchServerlessBrowser } from "../integrations/fbi/browser-launcher.js";
 import { classifyFbiLoginStatus, FbiError } from "../integrations/fbi/errors.js";
 import { inferMatchDocumentType, mimeTypeForFileName } from "../integrations/fbi/document-type.js";
+import { looksLikeZip } from "../integrations/fbi/emarque-search.js";
 import { emarqueStoragePath, resolveSeasonLabel, uploadEmarqueFile } from "../storage/emarque-storage.js";
 import { nextErrorBackoffSeconds, nextWaitingBackoffSeconds } from "./backoff.js";
 import { getEnv } from "../config/env.js";
@@ -151,6 +152,22 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
 
     for (const doc of toDownload) {
       const buffer = await client.downloadDocument(session, doc.url);
+
+      // Retour du club, 2026-10-02 : FBI renvoie une page HTML (pas une erreur HTTP) quand le fichier
+      // n'est pas encore disponible — jamais l'enregistrer comme e-Marque (le parsing échouerait) :
+      // le match reste « en attente », nouvelle tentative plus tard.
+      if (doc.fileName.toLowerCase().endsWith(".zip") && !looksLikeZip(buffer)) {
+        const preview = buffer.subarray(0, 200).toString("utf8").replace(/\s+/g, " ").trim();
+        await supabase.from("matches").update({ emarque_status: "waiting_for_emarque" }).eq("id", job.match_id);
+        await rescheduleJob(
+          supabase,
+          job,
+          nextWaitingBackoffSeconds(job.attempt_count),
+          `[info, pas une erreur] FBI n'a pas renvoyé de ZIP e-Marque pour la rencontre ${match.numero} (${buffer.length} octets, début : ${preview})`,
+        );
+        logInfo("Job discover_emarque : fichier e-Marque pas encore disponible (réponse non-ZIP)", { clubId: job.club_id, jobId: job.id, matchId: job.match_id });
+        return false;
+      }
       const sha256 = createHash("sha256").update(buffer).digest("hex");
       const type = inferMatchDocumentType(doc.fileName);
       const storagePath = emarqueStoragePath(job.club_id, season, job.match_id, doc.fileName);

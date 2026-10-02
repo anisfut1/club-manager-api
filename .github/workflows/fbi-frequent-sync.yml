@@ -27,8 +27,22 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 14
     steps:
+      # Synchro FFBB (scores, matchs passés en « joué », calendrier) — retour
+      # du club, 2026-10-02 : elle n'était appelée QUE par le cron Vercel
+      # quotidien (3h), alors qu'elle est prévue toutes les 15 min
+      # (FFBB_SYNC_INTERVAL_MINUTES) : un match du samedi ne passait en
+      # « joué » — donc n'entrait dans la file e-Marque — que le dimanche
+      # matin. Auto-limitée côté API (un club n'est resynchronisé que s'il est
+      # dû) ; un échec ici ne doit jamais empêcher les jobs FBI ci-dessous.
+      - name: Synchroniser FFBB (scores, matchs joués)
+        continue-on-error: true
+        run: |
+          curl --fail --silent --show-error --max-time 240 \
+            -X GET "https://club-manager-api-two.vercel.app/internal/cron/ffbb" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+
       # Empile les jobs récurrents (discover_emarque, reconcile_schedule,
       # check_all_derogations) — idempotent : ne duplique jamais un job déjà
       # en attente/en cours pour un club (contrainte unique côté DB).

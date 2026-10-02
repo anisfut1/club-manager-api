@@ -130,7 +130,7 @@ describe("processDiscoverEmarqueJob", () => {
       ],
       diagnostic: null,
     });
-    downloadDocumentMock.mockResolvedValue(Buffer.from("contenu-zip-synthetique"));
+    downloadDocumentMock.mockResolvedValue(Buffer.from("PK\x03\x04contenu-zip-synthetique", "latin1"));
 
     const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [] };
     const supabase = makeFakeSupabase({ match: { id: "match-1", club_id: "club-1", numero: "2813", match_datetime: "2025-09-27T19:00:00.000Z" }, recorders });
@@ -144,6 +144,23 @@ describe("processDiscoverEmarqueJob", () => {
     expect(recorders.matchUpdates.map((u) => (u.patch as { emarque_status: string }).emarque_status)).toEqual(["downloading", "downloaded"]);
     expect(closeSessionMock).toHaveBeenCalledOnce();
     expect(closeBrowserMock).toHaveBeenCalledOnce();
+  });
+
+  it("réponse FBI non-ZIP (fichier pas encore disponible) : rien d'enregistré, match en attente, nouvelle tentative — retour du club 2026-10-02", async () => {
+    getFbiCredentialsMock.mockResolvedValue({ username: "clubxxxx", password: "correct" });
+    loginMock.mockResolvedValue({ context: {}, page: {} });
+    findEmarqueDocumentsMock.mockResolvedValue({ documents: [{ url: "https://fbi.test/telechargerFeuilleMatchEmarque.fbi?idRenc=x", fileName: "emarque_BU15MN1_6_2.zip" }], diagnostic: null });
+    downloadDocumentMock.mockResolvedValue(Buffer.from("<html><body>Aucun fichier</body></html>"));
+
+    const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [] };
+    const supabase = makeFakeSupabase({ match: { id: "match-1", club_id: "club-1", numero: "6", match_datetime: "2026-09-27T11:00:00.000Z" }, recorders });
+
+    await processDiscoverEmarqueJob(supabase, baseJob());
+
+    expect(recorders.documentInserts).toHaveLength(0);
+    expect(recorders.jobUpdates.at(-1)).toMatchObject({ patch: expect.objectContaining({ status: "pending" }) });
+    expect(String((recorders.jobUpdates.at(-1)!.patch as { last_error: string }).last_error)).toContain("pas renvoyé de ZIP e-Marque");
+    expect(recorders.matchUpdates.at(-1)).toEqual({ id: "match-1", patch: { emarque_status: "waiting_for_emarque" } });
   });
 
   it("replanifie (jamais un échec) quand aucun document n'est encore disponible", async () => {
@@ -207,7 +224,7 @@ describe("processDiscoverEmarqueJob", () => {
     getFbiCredentialsMock.mockResolvedValue({ username: "clubxxxx", password: "correct" });
     loginMock.mockResolvedValue({ context: {}, page: {} });
     findEmarqueDocumentsMock.mockResolvedValue({ documents: [{ url: "https://fbi.test/export/2813.zip", fileName: "2813.zip" }], diagnostic: null });
-    downloadDocumentMock.mockResolvedValue(Buffer.from("contenu-zip-synthetique"));
+    downloadDocumentMock.mockResolvedValue(Buffer.from("PK\x03\x04contenu-zip-synthetique", "latin1"));
 
     const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [] };
     const supabase = makeFakeSupabase({ match: { id: "match-1", club_id: "club-1", numero: "2813", match_datetime: null }, recorders, documentInsertConflict: true });

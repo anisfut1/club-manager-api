@@ -330,6 +330,62 @@ describe("BrowserFbiClient.findEmarqueDocuments (§ 'Dix-huitième déclenchemen
   });
 });
 
+describe("BrowserFbiClient.findEmarqueDocuments — recherche directe (retour du club, 2026-10-02 : matchs sans stats)", () => {
+  const emRow = (division: string, numero: string, em: string) => [
+    "",
+    `<div class='alignGauche' title='${division}'>${division}</div>`,
+    `<div style='text-align: right'>${numero}</div>`,
+    "A",
+    "B",
+    "<div>27/09/2026</div>",
+    "<div>13:00</div>",
+    "SALLE",
+    em,
+    "68",
+    "",
+    "75",
+    "",
+    "",
+  ];
+  const emLink = (token: string, id: string) => `<div><a class="emarquepictureafter emarqueV2${id}" onclick="telechargerMatch('${token}','${id}' )"></a></div>`;
+
+  beforeEach(() => {
+    server.setRoute({ method: "POST", path: "/rechercherRencontreSaisieResultat.fbi", action: "controleRecherche", contentType: "text/html", body: "<table><tbody></tbody></table>" });
+    server.setRoute({
+      path: "/rechercherRencontreSaisieResultat.fbi",
+      action: "executeRecherche",
+      contentType: "application/json",
+      body: JSON.stringify({
+        iTotalRecords: 3,
+        aaData: [emRow("BU11MN2", "6", emLink("AAA%3D%3D", "1")), emRow("BU15MN1", "6", emLink("BBB%2F%3D", "2")), emRow("BU18MN2", "6", "<div></div>")],
+      }),
+    });
+  });
+
+  it("trouve le jeton EM de la BONNE division et renvoie l'URL de téléchargement directe — sans dépendre du clic sur l'icône", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 100 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    const { documents, diagnostic } = await client.findEmarqueDocuments(session, "6", "2026-2027", "BU15MN1");
+
+    expect(diagnostic).toBeNull();
+    expect(documents).toEqual([{ url: `${server.baseUrl}/telechargerFeuilleMatchEmarque.fbi?action=emV2&plugin=true&idRenc=BBB%2F%3D`, fileName: "emarque_BU15MN1_6_2.zip" }]);
+    await client.closeSession(session);
+  });
+
+  it("ligne trouvée sans lien EM : liste vide et diagnostic « pas une erreur » (nouvelle tentative plus tard)", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 100 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    const { documents, diagnostic } = await client.findEmarqueDocuments(session, "6", "2026-2027", "BU18MN2");
+
+    expect(documents).toEqual([]);
+    expect(diagnostic).toContain("[info, pas une erreur]");
+    expect(diagnostic).toContain("BU18MN2");
+    await client.closeSession(session);
+  });
+});
+
 describe("BrowserFbiClient.fetchScheduleRows (rapprochement calendrier FFBB/FBI, voir docs/FBI.md)", () => {
   it("lit le tableau de résultats confirmé (même fixture que findEmarqueDocuments) par libellé d'en-tête, sur les deux passes 'non joué'", async () => {
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });

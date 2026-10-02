@@ -6,6 +6,7 @@ import { normalizeScheduleRow } from "./schedule-row.js";
 import { normalizeDerogationRow, compareDerogationDateDepot } from "./derogation-row.js";
 import type { DerogationCreationRequest, DerogationResponseDecision, DerogationResponseOutcome, FbiDerogationDetailFields, FbiDerogationRow, FbiScheduleRow } from "./types.js";
 import { logInfo } from "../../logger.js";
+import { emarqueDownloadUrl, executeSearchQuery, parseSearchResponse, pickRow, searchFormFields } from "./emarque-search.js";
 
 /**
  * BrowserFbiClient — automatisation Playwright de FBI, utilisée UNIQUEMENT
@@ -327,7 +328,17 @@ export class BrowserFbiClient {
     const { page } = session;
 
     const trace: string[] = [];
-    trace.push(await this.tryNavigateToSearchScreen(page));
+    const navigation = await this.tryNavigateToSearchScreen(page);
+
+    // Recherche DIRECTE d'abord (retour du club, 2026-10-02) — voir `emarque-search.ts`.
+    const direct = await this.tryDirectEmarqueSearch(session, matchNumber, season, division);
+    if (direct.kind === "document") return { documents: [direct.document], diagnostic: null };
+    if (direct.kind === "no_emarque") {
+      return { documents: [], diagnostic: `[info, pas une erreur] Rencontre ${matchNumber} trouvée sur FBI mais sans e-Marque téléchargeable pour l'instant (colonne EM vide). ${direct.note}` };
+    }
+
+    // Repli : parcours historique à la souris (jamais retiré — filet de sécurité si FBI change ses requêtes).
+    trace.push(`${navigation} ; recherche directe : ${direct.note}`);
     trace.push(await this.tryPrepareSearchFilters(page, season, division));
     trace.push(await this.trySearchByMatchNumber(page, matchNumber));
     const openResult = await this.tryOpenMatchResult(page, matchNumber, division);
@@ -492,6 +503,63 @@ export class BrowserFbiClient {
     }
 
     return { documents, diagnostic };
+  }
+
+  /**
+   * Recherche e-Marque sans piloter le formulaire (voir `emarque-search.ts`) :
+   * mêmes requêtes que le navigateur, même session. `unavailable` (forme de
+   * page/réponse inattendue) et `not_found` laissent l'appelant retomber sur
+   * le parcours à la souris — jamais un échec du job à ce stade.
+   */
+  private async tryDirectEmarqueSearch(
+    session: BrowserFbiSession,
+    matchNumber: string,
+    season: string | null,
+    division: string | null,
+  ): Promise<
+    | { kind: "document"; document: { url: string; fileName: string }; note: string }
+    | { kind: "no_emarque" | "not_found" | "unavailable"; note: string }
+  > {
+    const { page, context } = session;
+    try {
+      const seasonOptions = await page
+        .locator('select[name$="idSaison"] option')
+        .evaluateAll((options) => options.map((o) => ({ value: (o as HTMLOptionElement).value, label: (o.textContent ?? "").trim(), selected: (o as HTMLOptionElement).selected })));
+      const seasonOption = (season ? seasonOptions.find((o) => o.label.includes(season)) : undefined) ?? seasonOptions.find((o) => o.selected && o.value);
+      if (!seasonOption?.value) return { kind: "unavailable", note: `saison "${season ?? "?"}" introuvable dans le formulaire (${seasonOptions.length} options)` };
+
+      const criteria = { seasonId: seasonOption.value, matchNumber };
+      const searchUrl = `${this.baseUrl}/rechercherRencontreSaisieResultat.fbi`;
+      const headers = { "X-Requested-With": "XMLHttpRequest", Referer: searchUrl };
+
+      const control = await context.request.post(`${searchUrl}?action=controleRecherche`, { form: searchFormFields(criteria), headers, timeout: 30000 });
+      if (!control.ok()) return { kind: "unavailable", note: `controleRecherche HTTP ${control.status()}` };
+
+      const execute = await context.request.get(`${searchUrl}?${executeSearchQuery(criteria)}`, { headers, timeout: 30000 });
+      if (!execute.ok()) return { kind: "unavailable", note: `executeRecherche HTTP ${execute.status()}` };
+      const body = await execute.text();
+
+      let rows;
+      try {
+        rows = parseSearchResponse(body);
+      } catch (error) {
+        return { kind: "unavailable", note: `réponse executeRecherche illisible (${error instanceof Error ? error.message : String(error)}) : ${body.slice(0, 300)}` };
+      }
+
+      const summary = rows.map((r) => `${r.division}#${r.matchNumber}${r.emarqueToken ? "(EM)" : ""}`).join(", ") || "aucune ligne";
+      const row = pickRow(rows, matchNumber, division);
+      if (!row) return { kind: "not_found", note: `saison "${seasonOption.label}", aucune ligne n°${matchNumber}${division ? ` en ${division}` : ""} (lignes : ${summary})` };
+      if (!row.emarqueToken) return { kind: "no_emarque", note: `ligne ${row.division} n°${row.matchNumber} sans lien EM (lignes : ${summary})` };
+      if (!row.emarqueV2) return { kind: "unavailable", note: `lien EM non V2 pour ${row.division} n°${row.matchNumber} — repli sur le clic` };
+
+      return {
+        kind: "document",
+        document: { url: emarqueDownloadUrl(this.baseUrl, row.emarqueToken), fileName: `emarque_${row.division}_${row.matchNumber}_${row.fbiMatchId ?? "x"}.zip` },
+        note: `ligne ${row.division} n°${row.matchNumber} trouvée (recherche directe)`,
+      };
+    } catch (error) {
+      return { kind: "unavailable", note: `recherche directe impossible : ${error instanceof Error ? error.message : String(error)}` };
+    }
   }
 
   /**

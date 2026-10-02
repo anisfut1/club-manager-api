@@ -10,6 +10,8 @@ import { readFileSync } from "node:fs";
 export interface StaticRoute {
   method?: "GET" | "POST";
   path: string;
+  /** Distingue deux routes d'un même chemin par leur paramètre `?action=` (ex. pages FBI `...fbi?action=executeRecherche`). */
+  action?: string;
   contentType: string;
   body: string | Buffer;
 }
@@ -20,14 +22,15 @@ export class TestServer {
   baseUrl = "";
 
   setRoute(route: StaticRoute): void {
-    this.routes.set(`${route.method ?? "GET"} ${route.path}`, route);
+    this.routes.set(`${route.method ?? "GET"} ${route.path}${route.action ? `?action=${route.action}` : ""}`, route);
   }
 
   async start(): Promise<void> {
     this.server = createServer((req, res) => {
       const url = new URL(req.url ?? "/", "http://localhost");
       const key = `${req.method} ${url.pathname}`;
-      const route = this.routes.get(key);
+      const action = url.searchParams.get("action");
+      const route = (action ? this.routes.get(`${key}?action=${action}`) : undefined) ?? this.routes.get(key);
 
       if (!route) {
         res.writeHead(404).end("not found");

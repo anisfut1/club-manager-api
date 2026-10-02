@@ -39,7 +39,7 @@ function buildFakeSupabase(state: FakeState) {
           select: () => ({
             eq: (_col: string, clubId: string) => ({
               eq: () => ({
-                in: () => Promise.resolve({ data: state.candidatesByClub[clubId] ?? [], error: null }),
+                in: () => ({ gte: () => Promise.resolve({ data: state.candidatesByClub[clubId] ?? [], error: null }) }),
               }),
             }),
           }),

@@ -1,5 +1,6 @@
 import type { DbClient } from "../db/client.js";
 import { logError, logInfo } from "../logger.js";
+import { currentSeasonStart } from "../season.js";
 
 const UNIQUE_VIOLATION = "23505";
 
@@ -52,7 +53,10 @@ export async function enqueueEmarqueDiscoveryJobsForClub(supabase: DbClient, clu
     .select("id, numero")
     .eq("club_id", clubId)
     .eq("status", "played")
-    .in("emarque_status", ["pending", "waiting_for_emarque"]);
+    .in("emarque_status", ["pending", "waiting_for_emarque"])
+    // Saison en cours uniquement (retour du club, 2026-10-02) : 28 matchs de la saison
+    // précédente (avril-mai), jamais disponibles sur FBI, saturaient la file d'un job / 15 min.
+    .gte("match_datetime", currentSeasonStart().toISOString());
 
   if (candidatesError) {
     throw new Error(`Recherche des matchs candidats à la découverte e-Marque échouée : ${candidatesError.message}`);
