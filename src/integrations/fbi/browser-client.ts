@@ -2195,6 +2195,28 @@ export class BrowserFbiClient {
    * souvent.
    */
   async downloadDocument(session: BrowserFbiSession, url: string): Promise<Buffer> {
+    // D'abord DEPUIS LA PAGE (fetch du navigateur, même session) — constaté
+    // en production le 2026-10-02 (rencontre n°1) : `context.request` (pile
+    // réseau Node) échouait en "connect ETIMEDOUT" 3 fois de suite alors
+    // que le navigateur venait de se connecter et de trouver le document.
+    // Une vraie réponse HTTP en erreur reste une erreur ; seul un échec
+    // réseau du navigateur fait retomber sur `context.request` ci-dessous.
+    const inPage = await session.page
+      .evaluate(async (documentUrl) => {
+        const response = await fetch(documentUrl, { credentials: "include" });
+        if (!response.ok) return { status: response.status, base64: null };
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        let binary = "";
+        for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+          binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+        }
+        return { status: response.status, base64: btoa(binary) };
+      }, url)
+      .catch(() => null);
+
+    if (inPage?.base64 != null) return Buffer.from(inPage.base64, "base64");
+    if (inPage) throw new FbiError(`Téléchargement FBI : réponse HTTP ${inPage.status} (${url})`, "REQUEST_FAILED");
+
     const maxAttempts = 3;
     let lastNetworkError: unknown;
 

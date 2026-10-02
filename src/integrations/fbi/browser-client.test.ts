@@ -826,6 +826,22 @@ describe("BrowserFbiClient.downloadDocument", () => {
     await client.closeSession(session);
   });
 
+  it("passe par le fetch du navigateur : fonctionne même quand la pile réseau Node (context.request) est injoignable (ETIMEDOUT constaté en production)", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+    const realRequest = session.context.request;
+    const brokenRequest = () => Promise.reject(new Error("apiRequestContext.get: connect ETIMEDOUT (test)"));
+    Object.defineProperty(session.context, "request", { value: { post: brokenRequest, get: brokenRequest }, configurable: true });
+
+    try {
+      const buffer = await client.downloadDocument(session, `${server.baseUrl}/export/2813.zip`);
+      expect(buffer.toString("utf8")).toBe("contenu-zip-synthetique");
+    } finally {
+      Object.defineProperty(session.context, "request", { value: realRequest, configurable: true });
+      await client.closeSession(session);
+    }
+  });
+
   it("lève REQUEST_FAILED sur une réponse HTTP en erreur", async () => {
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
     const session = await client.login({ username: "club1234", password: "secret" });
