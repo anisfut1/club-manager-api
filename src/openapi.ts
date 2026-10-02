@@ -64,6 +64,7 @@ import {
   PublicTableAssignmentsQueryDtoSchema,
   PublicTokenQueryDtoSchema,
   PublicAssignResultDtoSchema,
+  PublicAssignTableBodyDtoSchema,
   PublicAccessListDtoSchema,
   PublicAccessResetResultDtoSchema,
 } from "./contracts/public-tables.js";
@@ -509,12 +510,13 @@ registry.registerPath({
 registry.registerPath({
   method: "put",
   path: "/v1/public/clubs/{clubSlug}/matches/{matchId}/table-assignments/{role}",
-  // Auto-affectation UNIQUEMENT (licencieId vient du jeton, jamais du body) — ne remplace jamais un·e titulaire différent·e (retour du club, 2026-09-29).
-  request: { params: clubSlugAndMatchAndRoleParams, query: PublicTokenQueryDtoSchema },
+  // Sans corps : auto-affectation (ne remplace jamais un·e titulaire différent·e). Avec `licencieId` d'un·e autre : désignation par un coach / admin du club (2026-10-02).
+  request: { params: clubSlugAndMatchAndRoleParams, query: PublicTokenQueryDtoSchema, body: { required: false, content: { "application/json": { schema: PublicAssignTableBodyDtoSchema } } } },
   responses: {
-    200: jsonResponse("Auto-affectation enregistrée", PublicAssignResultDtoSchema),
+    200: jsonResponse("Affectation enregistrée", PublicAssignResultDtoSchema),
     400: jsonResponse("Requête invalide", ErrorEnvelopeSchema),
     401: jsonResponse("Jeton invalide ou révoqué", ErrorEnvelopeSchema),
+    403: jsonResponse("Désigner quelqu'un d'autre est réservé aux coachs / admins du club", ErrorEnvelopeSchema),
     404: jsonResponse("Introuvable", ErrorEnvelopeSchema),
     409: jsonResponse("Conflit métier ou poste déjà occupé par quelqu'un d'autre", ErrorEnvelopeSchema),
   },
@@ -523,13 +525,41 @@ registry.registerPath({
 registry.registerPath({
   method: "delete",
   path: "/v1/public/clubs/{clubSlug}/matches/{matchId}/table-assignments/{role}",
-  // Retrait de SA PROPRE affectation uniquement — 403 si le poste appartient à quelqu'un d'autre (retour du club, 2026-09-29).
+  // Retrait de SA PROPRE affectation — 403 si le poste appartient à quelqu'un d'autre, sauf pour un coach / admin du club (2026-10-02).
   request: { params: clubSlugAndMatchAndRoleParams, query: PublicTokenQueryDtoSchema },
   responses: {
     200: jsonResponse("Affectation retirée", z.object({ removed: z.literal(true) })),
     400: jsonResponse("Requête invalide", ErrorEnvelopeSchema),
     401: jsonResponse("Jeton invalide ou révoqué", ErrorEnvelopeSchema),
     403: jsonResponse("Ce poste appartient à quelqu'un d'autre", ErrorEnvelopeSchema),
+    404: jsonResponse("Introuvable", ErrorEnvelopeSchema),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/public/clubs/{clubSlug}/matches/{matchId}/table-suggestions",
+  // Coach / admin du club (2026-10-02) — mêmes suggestions, en lecture seule, que la vue admin.
+  request: { params: clubSlugAndMatchIdParams, query: PublicTokenQueryDtoSchema.extend({ role: TableAssignmentRoleSchema }) },
+  responses: {
+    200: jsonResponse("Candidats classés pour ce poste", TableSuggestionsDtoSchema),
+    400: jsonResponse("Requête invalide", ErrorEnvelopeSchema),
+    401: jsonResponse("Jeton invalide ou révoqué", ErrorEnvelopeSchema),
+    403: jsonResponse("Réservé aux coachs / admins du club", ErrorEnvelopeSchema),
+    404: jsonResponse("Introuvable", ErrorEnvelopeSchema),
+  },
+});
+
+registry.registerPath({
+  method: "put",
+  path: "/v1/public/clubs/{clubSlug}/matches/{matchId}/referee-status",
+  // « Pas besoin d'arbitre » depuis l'espace public — coach / admin du club (2026-10-02).
+  request: { params: clubSlugAndMatchIdParams, query: PublicTokenQueryDtoSchema, body: { content: { "application/json": { schema: PutRefereeStatusDtoSchema } } } },
+  responses: {
+    200: jsonResponse("Statut arbitre enregistré", RefereeStatusResultDtoSchema),
+    400: jsonResponse("Requête invalide", ErrorEnvelopeSchema),
+    401: jsonResponse("Jeton invalide ou révoqué", ErrorEnvelopeSchema),
+    403: jsonResponse("Réservé aux coachs / admins du club", ErrorEnvelopeSchema),
     404: jsonResponse("Introuvable", ErrorEnvelopeSchema),
   },
 });

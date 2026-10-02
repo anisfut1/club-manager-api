@@ -3,11 +3,13 @@ import type { DbClient } from "../../db/client.js";
 import { badRequest, conflict, forbidden, notFound, serviceUnavailable, tooManyRequests, unauthorized } from "../../api-error.js";
 import {
   PublicAssignRoleQueryDtoSchema,
+  PublicAssignTableBodyDtoSchema,
   PublicTableAssignmentsQueryDtoSchema,
   PublicTokenQueryDtoSchema,
   RequestPersonalLinkDtoSchema,
 } from "../../contracts/public-tables.js";
-import { assignTableRole, loadHomeMatchOrThrow, loadTableAssignmentsList, removeTableRole } from "../tables/shared.js";
+import { assignTableRole, buildTableSuggestions, loadHomeMatchOrThrow, loadTableAssignmentsList, removeTableRole, setRefereeNotNeeded } from "../tables/shared.js";
+import { PutRefereeStatusDtoSchema } from "../../contracts/tables.js";
 import { generatePublicToken, hashPublicToken } from "./token.js";
 import { encryptPublicToken } from "./personal-link.js";
 import { resolvePublicClub, type PublicClub } from "../public/club-resolver.js";
@@ -223,6 +225,24 @@ export async function isLicencieClubAdmin(supabase: DbClient, clubId: string, li
   return (roles ?? []).length > 0;
 }
 
+/**
+ * Gestion des Tables de marque depuis l'espace public (retour du club,
+ * 2026-10-02 : « qqn qui a le rôle coach ou admin depuis la page public
+ * puisse désigner qui il veut et retirer, comme un admin général »). Coach =
+ * `licencies.public_coach` ou rôle coach d'un compte rattaché ; admin = voir
+ * `isLicencieClubAdmin`. Revérifié à CHAQUE écriture, jamais déduit du client.
+ */
+export async function canManagePublicTables(supabase: DbClient, clubId: string, licencieId: string): Promise<boolean> {
+  if (await isLicencieClubAdmin(supabase, clubId, licencieId)) return true;
+  return canCreateAny(await loadLicencieActor(supabase, clubId, licencieId));
+}
+
+async function requireTablesManager(supabase: DbClient, clubId: string, licencieId: string): Promise<void> {
+  if (!(await canManagePublicTables(supabase, clubId, licencieId))) {
+    throw forbidden("Seuls les coachs et les administrateurs du club peuvent désigner ou retirer quelqu'un d'autre.", "TABLES_MANAGER_REQUIRED");
+  }
+}
+
 /** GET /v1/public/clubs/:clubSlug/me?token= — vérifie/résout l'identité (pour un lien déjà en poche, ex: au chargement de la page). */
 publicTablesRouter.get("/me", async (c) => {
   const query = PublicTokenQueryDtoSchema.safeParse(c.req.query());
@@ -235,7 +255,9 @@ publicTablesRouter.get("/me", async (c) => {
   const [isClubAdmin, actor] = await Promise.all([isLicencieClubAdmin(supabase, clubId, licencie.id), loadLicencieActor(supabase, clubId, licencie.id)]);
   // Demandes de dérogation internes : rôles posés depuis /joueurs (coach, coordinateur) ou compte rattaché.
   const derogationRequests = { canCreate: canCreateAny(actor), canManage: canManageRequests(actor) };
-  return c.json({ licencie: { id: licencie.id, firstName: licencie.firstName, lastName: licencie.lastName }, isClubAdmin, derogationRequests });
+  // Même règle que `canManagePublicTables`, sans relire la base.
+  const tables = { canManage: isClubAdmin || canCreateAny(actor) };
+  return c.json({ licencie: { id: licencie.id, firstName: licencie.firstName, lastName: licencie.lastName }, isClubAdmin, derogationRequests, tables });
 });
 
 /**
@@ -277,12 +299,12 @@ publicTablesRouter.get("/table-assignments", async (c) => {
 });
 
 /**
- * PUT .../matches/:matchId/table-assignments/:role?token= — auto-
- * affectation (§"la personne qui va se mettre sur un match"). Le
- * `licencieId` vient TOUJOURS du jeton, jamais du corps de la requête —
- * personne ne peut s'affecter au nom de quelqu'un d'autre. Ne remplace
- * JAMAIS un·e titulaire différent·e (`blockIfHeldBySomeoneElse`, voir
- * shared.ts) : c'est tout le sens de la demande.
+ * PUT .../matches/:matchId/table-assignments/:role?token= — sans corps :
+ * auto-affectation (§"la personne qui va se mettre sur un match"), qui ne
+ * remplace JAMAIS un·e titulaire différent·e (`blockIfHeldBySomeoneElse`).
+ * Avec `{ licencieId }` d'un·e autre : désignation par un coach / admin du
+ * club (retour du club, 2026-10-02), qui peut remplacer le titulaire comme
+ * l'admin connecté. L'identité de celui qui agit vient TOUJOURS du jeton.
  */
 publicTablesRouter.put("/matches/:matchId/table-assignments/:role", async (c) => {
   const matchId = c.req.param("matchId");
@@ -291,12 +313,25 @@ publicTablesRouter.put("/matches/:matchId/table-assignments/:role", async (c) =>
   const query = PublicAssignRoleQueryDtoSchema.safeParse({ ...c.req.query(), role: c.req.param("role") });
   if (!query.success) throw badRequest(query.error.issues.map((i) => i.message).join(" "));
 
+  const body = PublicAssignTableBodyDtoSchema.safeParse((await c.req.json().catch(() => null)) ?? {});
+  if (!body.success) throw badRequest(body.error.issues.map((i) => i.message).join(" "));
+
   await resolvePublicLicencie(c, query.data.token);
   const supabase = c.get("supabase");
   const club = c.get("publicClub");
   const me = c.get("publicLicencie");
 
   const match = await loadHomeMatchOrThrow(supabase, club.id, matchId);
+  const manager = await canManagePublicTables(supabase, club.id, me.id);
+
+  let target: PublicLicencie = me;
+  if (body.data.licencieId && body.data.licencieId !== me.id) {
+    if (!manager) throw forbidden("Seuls les coachs et les administrateurs du club peuvent désigner quelqu'un d'autre.", "TABLES_MANAGER_REQUIRED");
+    // Scopé à CE club — 404, jamais une 403 qui confirmerait son existence ailleurs.
+    const { data: other } = await supabase.from("licencies").select("id, first_name, last_name, team_id").eq("id", body.data.licencieId).eq("club_id", club.id).maybeSingle();
+    if (!other) throw notFound("Licencié introuvable pour ce club.");
+    target = { id: other.id, firstName: other.first_name, lastName: other.last_name, teamId: other.team_id };
+  }
 
   const assignment = await assignTableRole({
     readSupabase: supabase,
@@ -306,9 +341,9 @@ publicTablesRouter.put("/matches/:matchId/table-assignments/:role", async (c) =>
     matchVenueRawLabel: match.venue_raw_label,
     matchDatetime: match.match_datetime,
     role: query.data.role,
-    licencie: me,
+    licencie: target,
     createdByUserId: null,
-    blockIfHeldBySomeoneElse: true,
+    blockIfHeldBySomeoneElse: !manager,
   });
 
   return c.json({ assignment });
@@ -316,10 +351,10 @@ publicTablesRouter.put("/matches/:matchId/table-assignments/:role", async (c) =>
 
 /**
  * DELETE .../matches/:matchId/table-assignments/:role?token= — retrait de
- * SA PROPRE affectation uniquement (§"peuvent se supprimer eux-mêmes si le
- * token est tjr actif"). `removeTableRole` avec `onlyIfLicencieId` refuse
- * (403) si le poste appartient à quelqu'un d'autre — jamais une suppression
- * d'un tiers par ce flux, quelle que soit la raison.
+ * SA PROPRE affectation (§"peuvent se supprimer eux-mêmes si le token est
+ * tjr actif") : `onlyIfLicencieId` refuse (403) le poste de quelqu'un
+ * d'autre. Exception : un coach / admin du club retire n'importe qui
+ * (retour du club, 2026-10-02 : « comme un admin général »).
  */
 publicTablesRouter.delete("/matches/:matchId/table-assignments/:role", async (c) => {
   const matchId = c.req.param("matchId");
@@ -330,13 +365,54 @@ publicTablesRouter.delete("/matches/:matchId/table-assignments/:role", async (c)
   if (!query.success) throw badRequest(query.error.issues.map((i) => i.message).join(" "));
 
   await resolvePublicLicencie(c, query.data.token);
+  const supabase = c.get("supabase");
   const club = c.get("publicClub");
   const me = c.get("publicLicencie");
 
   const parsedRole = PublicAssignRoleQueryDtoSchema.shape.role.safeParse(role);
   if (!parsedRole.success) throw badRequest(`Rôle inconnu : ${role}.`);
 
-  await removeTableRole(club.id, matchId, parsedRole.data, { onlyIfLicencieId: me.id });
+  // Coach / admin du club : retire n'importe qui (retour du club, 2026-10-02) ; sinon seulement soi-même.
+  const manager = await canManagePublicTables(supabase, club.id, me.id);
+  await removeTableRole(club.id, matchId, parsedRole.data, manager ? undefined : { onlyIfLicencieId: me.id });
 
   return c.json({ removed: true as const });
+});
+
+/**
+ * GET .../matches/:matchId/table-suggestions?token=&role= — mêmes
+ * suggestions que la vue admin (lecture seule), pour un coach / admin du
+ * club qui désigne quelqu'un depuis l'espace public.
+ */
+publicTablesRouter.get("/matches/:matchId/table-suggestions", async (c) => {
+  const matchId = c.req.param("matchId");
+  if (!matchId) throw badRequest("Paramètre de route :matchId manquant.");
+  const query = PublicAssignRoleQueryDtoSchema.safeParse(c.req.query());
+  if (!query.success) throw badRequest(query.error.issues.map((i) => i.message).join(" "));
+
+  await resolvePublicLicencie(c, query.data.token);
+  const supabase = c.get("supabase");
+  const club = c.get("publicClub");
+  await requireTablesManager(supabase, club.id, c.get("publicLicencie").id);
+
+  return c.json(await buildTableSuggestions(supabase, { id: club.id, timezone: club.timezone }, matchId, query.data.role));
+});
+
+/** PUT .../matches/:matchId/referee-status?token= — « pas besoin d'arbitre », coach / admin du club uniquement. */
+publicTablesRouter.put("/matches/:matchId/referee-status", async (c) => {
+  const matchId = c.req.param("matchId");
+  if (!matchId) throw badRequest("Paramètre de route :matchId manquant.");
+  const query = PublicTokenQueryDtoSchema.safeParse(c.req.query());
+  if (!query.success) throw badRequest(query.error.issues.map((i) => i.message).join(" "));
+  const body = PutRefereeStatusDtoSchema.safeParse(await c.req.json().catch(() => null));
+  if (!body.success) throw badRequest(body.error.issues.map((i) => i.message).join(" "));
+
+  await resolvePublicLicencie(c, query.data.token);
+  const supabase = c.get("supabase");
+  const club = c.get("publicClub");
+  await requireTablesManager(supabase, club.id, c.get("publicLicencie").id);
+
+  await loadHomeMatchOrThrow(supabase, club.id, matchId);
+  await setRefereeNotNeeded(club.id, matchId, body.data.noRefereeNeeded, null);
+  return c.json({ refereeNotNeeded: body.data.noRefereeNeeded });
 });

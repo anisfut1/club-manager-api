@@ -6,11 +6,7 @@ import { requireAuth, requireClubMembership, requireAnyClubRole, requireClubRole
 import { createServiceSupabaseClient } from "../../db/client.js";
 import { badRequest, notFound } from "../../api-error.js";
 import { TableSuggestionsQueryDtoSchema, TableAssignmentsQueryDtoSchema, PutTableAssignmentDtoSchema, TableAssignmentRoleSchema, PutRefereeStatusDtoSchema } from "../../contracts/tables.js";
-import { computeMatchWindow } from "./match-window.js";
-import { DEFAULT_MATCH_DURATION_MINUTES } from "./suggestion-policy.js";
-import { computeTableSuggestions, type RankedCandidate, type UnavailableCandidate } from "./table-suggestion-service.js";
-import { loadClubDayContext, type ClubDayContext } from "./load-suggestion-data.js";
-import { assignTableRole, candidateTeamsDto, findTeamNames, loadHomeMatchOrThrow, loadTableAssignmentsList, removeTableRole } from "./shared.js";
+import { assignTableRole, buildTableSuggestions, loadHomeMatchOrThrow, loadTableAssignmentsList, removeTableRole, setRefereeNotNeeded } from "./shared.js";
 
 /**
  * Tables de marque (demande du club, 2026-09-28). DEUX routeurs montés à
@@ -41,33 +37,6 @@ matchTablesRouter.use("*", requireAuth);
 matchTablesRouter.use("*", requireClubMembership);
 matchTablesRouter.use("*", requireAnyClubRole(TABLE_MANAGER_ROLES));
 
-function mapRankedCandidateToDto(candidate: RankedCandidate, context: ClubDayContext) {
-  const teamNames = findTeamNames(context, candidate.licencieId);
-  return {
-    licencie: { id: candidate.licencieId, firstName: candidate.firstName, lastName: candidate.lastName },
-    teams: candidateTeamsDto({ teamIds: candidate.teamIds, teamNames }),
-    eligibility: candidate.eligibility,
-    priorityTier: candidate.priorityTier,
-    score: candidate.score,
-    reasons: candidate.reasons,
-    seasonAssignmentCount: candidate.seasonAssignmentCount,
-    sameDayAssignmentCount: candidate.sameDayAssignmentCount,
-    isCurrentHolder: candidate.isCurrentHolder,
-  };
-}
-
-function mapUnavailableCandidateToDto(candidate: UnavailableCandidate, context: ClubDayContext) {
-  const teamNames = findTeamNames(context, candidate.licencieId);
-  return {
-    licencie: { id: candidate.licencieId, firstName: candidate.firstName, lastName: candidate.lastName },
-    teams: candidateTeamsDto({ teamIds: candidate.teamIds, teamNames }),
-    eligibility: candidate.eligibility,
-    reasonCode: candidate.reasonCode,
-    reason: candidate.reason,
-    conflictingMatchId: candidate.conflictingMatchId,
-  };
-}
-
 /**
  * GET .../matches/:matchId/table-suggestions?role=SCORER (§37/§39) —
  * STRICTEMENT en lecture (§37 : "GET suggestions est READ-ONLY, il ne crée
@@ -83,28 +52,7 @@ matchTablesRouter.get("/table-suggestions", async (c) => {
   const query = TableSuggestionsQueryDtoSchema.safeParse(c.req.query());
   if (!query.success) throw badRequest(query.error.issues.map((i) => i.message).join(" "));
 
-  const match = await loadHomeMatchOrThrow(supabase, club.id, matchId);
-  const targetWindow = computeMatchWindow(new Date(match.match_datetime), DEFAULT_MATCH_DURATION_MINUTES);
-  const context = await loadClubDayContext(supabase, club.id, new Date(match.match_datetime), club.timezone);
-
-  const result = computeTableSuggestions({
-    targetMatchId: match.id,
-    targetRole: query.data.role,
-    targetWindow,
-    targetVenueRawLabel: match.venue_raw_label,
-    clubTimezone: club.timezone,
-    candidates: context.candidates,
-    teamMatches: context.teamMatches,
-    existingTableAssignments: context.existingTableAssignments,
-    seasonAssignmentCountByLicencieId: context.seasonAssignmentCountByLicencieId,
-    todayAssignmentCountByLicencieId: context.todayAssignmentCountByLicencieId,
-  });
-
-  return c.json({
-    recommended: result.recommended.map((r) => mapRankedCandidateToDto(r, context)),
-    available: result.available.map((r) => mapRankedCandidateToDto(r, context)),
-    unavailable: result.unavailable.map((u) => mapUnavailableCandidateToDto(u, context)),
-  });
+  return c.json(await buildTableSuggestions(supabase, { id: club.id, timezone: club.timezone }, matchId, query.data.role));
 });
 
 /**
@@ -184,18 +132,7 @@ matchTablesRouter.put("/referee-status", async (c) => {
 
   await loadHomeMatchOrThrow(supabase, club.id, matchId);
 
-  const serviceSupabase = createServiceSupabaseClient();
-
-  if (body.data.noRefereeNeeded) {
-    const { error } = await serviceSupabase
-      .from("match_referee_overrides")
-      .upsert({ club_id: club.id, match_id: matchId, no_referee_needed: true, created_by: user.id, updated_at: new Date().toISOString() }, { onConflict: "club_id,match_id" });
-    if (error) throw new Error(`Enregistrement du statut arbitre échoué : ${error.message}`);
-  } else {
-    // Absence de ligne = état par défaut ("un arbitre du club est nécessaire") — jamais une ligne à `false` (voir commentaire de la migration).
-    const { error } = await serviceSupabase.from("match_referee_overrides").delete().eq("club_id", club.id).eq("match_id", matchId);
-    if (error) throw new Error(`Suppression du statut arbitre échouée : ${error.message}`);
-  }
+  await setRefereeNotNeeded(club.id, matchId, body.data.noRefereeNeeded, user.id);
 
   return c.json({ refereeNotNeeded: body.data.noRefereeNeeded });
 });

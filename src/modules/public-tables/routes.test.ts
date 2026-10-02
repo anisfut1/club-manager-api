@@ -175,7 +175,7 @@ describe("POST .../licencies/:licencieId/request-link — retour du club : \"il 
     const token = tokenFromLastEmail();
     const meRes = await request(`/me?token=${token}`);
     expect(meRes.status).toBe(200);
-    expect(await meRes.json()).toEqual({ licencie: { id: THOMAS.id, firstName: "Thomas", lastName: "Martin" }, isClubAdmin: false, derogationRequests: { canCreate: false, canManage: false } });
+    expect(await meRes.json()).toEqual({ licencie: { id: THOMAS.id, firstName: "Thomas", lastName: "Martin" }, isClubAdmin: false, derogationRequests: { canCreate: false, canManage: false }, tables: { canManage: false } });
 
     expect(state.licencies.find((l) => l.id === THOMAS.id)?.email).toBe("thomas@example.test");
   });
@@ -404,5 +404,97 @@ describe("Réinitialisation admin — retour du club : \"sinon faut faire une de
     const reclaimRes = await requestLink(THOMAS.id, {});
     expect(reclaimRes.status).toBe(200);
     expect(sentEmails.at(-1)!.to).toEqual([`${THOMAS.id}@example.test`]);
+  });
+});
+
+describe("Coach / admin du club depuis l'espace public — retour du club, 2026-10-02 : « désigner qui il veut et retirer, comme un admin général »", () => {
+  const asCoach = () => {
+    state.licencies = state.licencies.map((l) => (l.id === THOMAS.id ? { ...l, public_coach: true } : l));
+  };
+  const put = (token: string, role: string, body?: unknown) =>
+    request(`/matches/${TARGET_MATCH.id}/table-assignments/${role}?token=${token}`, {
+      method: "PUT",
+      ...(body ? { headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {}),
+    });
+
+  it("/me expose tables.canManage : vrai pour un coach ou un admin, faux sinon", async () => {
+    const leaToken = await claim(LEA.id);
+    expect(((await (await request(`/me?token=${leaToken}`)).json()) as { tables: { canManage: boolean } }).tables.canManage).toBe(false);
+
+    asCoach();
+    const thomasToken = await claim(THOMAS.id);
+    expect(((await (await request(`/me?token=${thomasToken}`)).json()) as { tables: { canManage: boolean } }).tables.canManage).toBe(true);
+
+    state.licencies = state.licencies.map((l) => (l.id === LEA.id ? { ...l, public_admin: true } : l));
+    expect(((await (await request(`/me?token=${leaToken}`)).json()) as { tables: { canManage: boolean } }).tables.canManage).toBe(true);
+  });
+
+  it("un coach désigne quelqu'un d'autre — et peut remplacer le titulaire (jamais le cas pour un licencié sans rôle)", async () => {
+    asCoach();
+    const coachToken = await claim(THOMAS.id);
+    const leaToken = await claim(LEA.id);
+
+    await put(leaToken, "SCORER");
+    expect(state.tableAssignments[0]?.licencie_id).toBe(LEA.id);
+
+    const res = await put(coachToken, "SCORER", { licencieId: THOMAS.id });
+    expect(res.status).toBe(200);
+    expect(state.tableAssignments).toEqual([expect.objectContaining({ role: "SCORER", licencie_id: THOMAS.id })]);
+
+    const designate = await put(coachToken, "TIMEKEEPER", { licencieId: LEA.id });
+    expect(designate.status).toBe(200);
+    expect(state.tableAssignments.find((a) => a.role === "TIMEKEEPER")?.licencie_id).toBe(LEA.id);
+  });
+
+  it("403 TABLES_MANAGER_REQUIRED : un licencié sans rôle ne désigne jamais quelqu'un d'autre", async () => {
+    const leaToken = await claim(LEA.id);
+    const res = await put(leaToken, "SCORER", { licencieId: THOMAS.id });
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe("TABLES_MANAGER_REQUIRED");
+    expect(state.tableAssignments).toHaveLength(0);
+  });
+
+  it("404 pour un licencié d'un autre club, même désigné par un coach", async () => {
+    asCoach();
+    state.licencies.push({ ...LEA, id: "licencie-autre-club", club_id: CLUB_B.id });
+    const coachToken = await claim(THOMAS.id);
+    const res = await put(coachToken, "SCORER", { licencieId: "licencie-autre-club" });
+    expect(res.status).toBe(404);
+    expect(state.tableAssignments).toHaveLength(0);
+  });
+
+  it("un coach retire l'affectation de quelqu'un d'autre", async () => {
+    asCoach();
+    const coachToken = await claim(THOMAS.id);
+    const leaToken = await claim(LEA.id);
+    await put(leaToken, "SCORER");
+
+    const res = await request(`/matches/${TARGET_MATCH.id}/table-assignments/SCORER?token=${coachToken}`, { method: "DELETE" });
+    expect(res.status).toBe(200);
+    expect(state.tableAssignments).toHaveLength(0);
+  });
+
+  it("suggestions : 200 pour un coach (mêmes sections que l'admin), 403 sans rôle", async () => {
+    const leaToken = await claim(LEA.id);
+    expect((await request(`/matches/${TARGET_MATCH.id}/table-suggestions?token=${leaToken}&role=SCORER`)).status).toBe(403);
+
+    asCoach();
+    const coachToken = await claim(THOMAS.id);
+    const res = await request(`/matches/${TARGET_MATCH.id}/table-suggestions?token=${coachToken}&role=SCORER`);
+    expect(res.status).toBe(200);
+    expect(Object.keys((await res.json()) as object).sort()).toEqual(["available", "recommended", "unavailable"]);
+  });
+
+  it("« pas besoin d'arbitre » : coach uniquement", async () => {
+    const leaToken = await claim(LEA.id);
+    const body = { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ noRefereeNeeded: true }) };
+    expect((await request(`/matches/${TARGET_MATCH.id}/referee-status?token=${leaToken}`, body)).status).toBe(403);
+    expect(state.refereeOverrides).toHaveLength(0);
+
+    asCoach();
+    const coachToken = await claim(THOMAS.id);
+    const res = await request(`/matches/${TARGET_MATCH.id}/referee-status?token=${coachToken}`, body);
+    expect(res.status).toBe(200);
+    expect(state.refereeOverrides).toEqual([expect.objectContaining({ match_id: TARGET_MATCH.id, no_referee_needed: true, created_by: null })]);
   });
 });

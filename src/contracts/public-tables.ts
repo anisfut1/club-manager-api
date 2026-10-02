@@ -64,6 +64,11 @@ export const PublicMeDtoSchema = z
     isClubAdmin: z.boolean(),
     /** Demandes de dérogation internes : coach (`licencies.public_coach`) / coordinateur (`public_coordinator`), posés depuis /joueurs. */
     derogationRequests: z.object({ canCreate: z.boolean(), canManage: z.boolean() }),
+    /**
+     * Tables de marque (retour du club, 2026-10-02) : un coach ou un admin
+     * du club désigne / retire n'importe qui, comme l'admin connecté.
+     */
+    tables: z.object({ canManage: z.boolean() }),
   })
   .openapi("PublicMeDto");
 
@@ -100,6 +105,13 @@ export const PublicTableAssignmentsQueryDtoSchema = z
 export const PublicTokenQueryDtoSchema = z.object({ token: z.string().min(1, "token manquant.") }).openapi("PublicTokenQueryDto");
 
 export const PublicAssignRoleQueryDtoSchema = PublicTokenQueryDtoSchema.extend({ role: TableAssignmentRoleSchema });
+
+/**
+ * Corps OPTIONNEL du PUT public : sans `licencieId` (ou avec le sien) =
+ * auto-positionnement ; avec un autre `licencieId` = désignation, réservée
+ * aux coachs / admins du club (`tables.canManage`).
+ */
+export const PublicAssignTableBodyDtoSchema = z.object({ licencieId: z.string().min(1).optional() }).openapi("PublicAssignTableBodyDto");
 
 /** Réutilise le même DTO de résultat que le flux admin (`{ assignment }}`) — même forme des deux côtés. */
 export const PublicAssignResultDtoSchema = z.object({ assignment: TableAssignmentSlotDtoSchema }).openapi("PublicAssignResultDto");

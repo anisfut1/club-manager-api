@@ -5,7 +5,7 @@ import { formatTeamNameWithGender } from "../../util/team-name.js";
 import { computeDayRange } from "../../util/timezone.js";
 import { computeMatchWindow } from "./match-window.js";
 import { DEFAULT_MATCH_DURATION_MINUTES, type TableAssignmentRole } from "./suggestion-policy.js";
-import { determineEligibility, type LicencieCandidateInput } from "./table-suggestion-service.js";
+import { computeTableSuggestions, determineEligibility, type LicencieCandidateInput, type RankedCandidate, type UnavailableCandidate } from "./table-suggestion-service.js";
 import { loadClubDayContext, type ClubDayContext } from "./load-suggestion-data.js";
 
 /**
@@ -278,4 +278,80 @@ export async function removeTableRole(clubId: string, matchId: string, role: Tab
 
   const { error } = await serviceSupabase.from("table_assignments").delete().eq("club_id", clubId).eq("match_id", matchId).eq("role", role);
   if (error) throw new Error(`Suppression de l'affectation échouée : ${error.message}`);
+}
+
+function mapRankedCandidateToDto(candidate: RankedCandidate, context: ClubDayContext) {
+  const teamNames = findTeamNames(context, candidate.licencieId);
+  return {
+    licencie: { id: candidate.licencieId, firstName: candidate.firstName, lastName: candidate.lastName },
+    teams: candidateTeamsDto({ teamIds: candidate.teamIds, teamNames }),
+    eligibility: candidate.eligibility,
+    priorityTier: candidate.priorityTier,
+    score: candidate.score,
+    reasons: candidate.reasons,
+    seasonAssignmentCount: candidate.seasonAssignmentCount,
+    sameDayAssignmentCount: candidate.sameDayAssignmentCount,
+    isCurrentHolder: candidate.isCurrentHolder,
+  };
+}
+
+function mapUnavailableCandidateToDto(candidate: UnavailableCandidate, context: ClubDayContext) {
+  const teamNames = findTeamNames(context, candidate.licencieId);
+  return {
+    licencie: { id: candidate.licencieId, firstName: candidate.firstName, lastName: candidate.lastName },
+    teams: candidateTeamsDto({ teamIds: candidate.teamIds, teamNames }),
+    eligibility: candidate.eligibility,
+    reasonCode: candidate.reasonCode,
+    reason: candidate.reason,
+    conflictingMatchId: candidate.conflictingMatchId,
+  };
+}
+
+/**
+ * Suggestions pour un poste d'un match à domicile (§37/§39) — STRICTEMENT
+ * en lecture. Partagé par la vue admin et l'espace public des coachs /
+ * admins (retour du club, 2026-10-02 : « désigner qui il veut comme un
+ * admin général sur la page tables »).
+ */
+export async function buildTableSuggestions(supabase: DbClient, club: { id: string; timezone: string }, matchId: string, role: TableAssignmentRole) {
+  const match = await loadHomeMatchOrThrow(supabase, club.id, matchId);
+  const targetWindow = computeMatchWindow(new Date(match.match_datetime), DEFAULT_MATCH_DURATION_MINUTES);
+  const context = await loadClubDayContext(supabase, club.id, new Date(match.match_datetime), club.timezone);
+
+  const result = computeTableSuggestions({
+    targetMatchId: match.id,
+    targetRole: role,
+    targetWindow,
+    targetVenueRawLabel: match.venue_raw_label,
+    clubTimezone: club.timezone,
+    candidates: context.candidates,
+    teamMatches: context.teamMatches,
+    existingTableAssignments: context.existingTableAssignments,
+    seasonAssignmentCountByLicencieId: context.seasonAssignmentCountByLicencieId,
+    todayAssignmentCountByLicencieId: context.todayAssignmentCountByLicencieId,
+  });
+
+  return {
+    recommended: result.recommended.map((r) => mapRankedCandidateToDto(r, context)),
+    available: result.available.map((r) => mapRankedCandidateToDto(r, context)),
+    unavailable: result.unavailable.map((u) => mapUnavailableCandidateToDto(u, context)),
+  };
+}
+
+/**
+ * « Pas besoin d'arbitre » (retour du club, 2026-09-28) — absence de ligne
+ * = un arbitre du club est nécessaire, jamais une ligne à `false`.
+ * `createdByUserId` null depuis l'espace public (pas de compte).
+ */
+export async function setRefereeNotNeeded(clubId: string, matchId: string, noRefereeNeeded: boolean, createdByUserId: string | null): Promise<void> {
+  const serviceSupabase = createServiceSupabaseClient();
+  if (noRefereeNeeded) {
+    const { error } = await serviceSupabase
+      .from("match_referee_overrides")
+      .upsert({ club_id: clubId, match_id: matchId, no_referee_needed: true, created_by: createdByUserId, updated_at: new Date().toISOString() }, { onConflict: "club_id,match_id" });
+    if (error) throw new Error(`Enregistrement du statut arbitre échoué : ${error.message}`);
+  } else {
+    const { error } = await serviceSupabase.from("match_referee_overrides").delete().eq("club_id", clubId).eq("match_id", matchId);
+    if (error) throw new Error(`Suppression du statut arbitre échouée : ${error.message}`);
+  }
 }
