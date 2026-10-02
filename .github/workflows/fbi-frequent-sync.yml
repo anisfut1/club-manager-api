@@ -61,16 +61,21 @@ jobs:
 
       # Traite les jobs de la file (dérogation, calendrier ou téléchargement
       # e-Marque, le plus ancien en premier) UN PAR UN, chacun suivi du
-      # parsing de ce qu'il a téléchargé, tant que la file n'est pas vide et
-      # dans un budget de temps borné. Retour du club, 2026-10-02 : à un seul
-      # job par passage (4/heure), un weekend de 10+ matchs — plus les
-      # vérifications de dérogations — mettait des heures à se vider. Un
-      # statut 200 avec "claimed": 0 signifie juste que la file est vide.
+      # parsing de ce qu'il a téléchargé. Retour du club, 2026-10-02 : à un
+      # seul job par passage (4/heure), un weekend chargé mettait des heures
+      # à se vider. On n'enchaîne cependant le job suivant QUE si le
+      # précédent a réussi, avec une pause : constaté le même jour que des
+      # connexions FBI enchaînées sans pause rendaient FBI injoignable
+      # pendant plusieurs minutes. Un échec ou "claimed": 0 (file vide)
+      # termine le passage ; le suivant reprend 15 minutes plus tard.
       - name: Traiter les jobs FBI en attente et parser les e-Marque
         run: |
           start=$(date +%s)
-          for i in 1 2 3 4 5 6; do
-            if [ $(( $(date +%s) - start )) -gt 480 ]; then echo "Budget de temps atteint, la suite au prochain passage."; break; fi
+          for i in 1 2 3 4; do
+            if [ "$i" -gt 1 ]; then
+              if [ $(( $(date +%s) - start )) -gt 420 ]; then echo "Budget de temps atteint, la suite au prochain passage."; break; fi
+              sleep 30
+            fi
             out=$(curl --fail --silent --show-error --max-time 300 \
               -X GET "https://club-manager-api-two.vercel.app/internal/cron/fbi-jobs" \
               -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}") || { echo "fbi-jobs en échec"; exit 1; }
@@ -79,5 +84,5 @@ jobs:
               -X GET "https://club-manager-api-two.vercel.app/internal/cron/emarque-parse" \
               -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" || echo "emarque-parse en échec (repris au prochain passage)"
             echo
-            case "$out" in *'"claimed":0'*) break ;; esac
+            case "$out" in *'"succeeded":1'*) ;; *) break ;; esac
           done

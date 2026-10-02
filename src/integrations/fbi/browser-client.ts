@@ -532,24 +532,42 @@ export class BrowserFbiClient {
       const searchUrl = `${this.baseUrl}/rechercherRencontreSaisieResultat.fbi`;
       const headers = { "X-Requested-With": "XMLHttpRequest", Referer: searchUrl };
 
-      // Une seule nouvelle tentative sur erreur réseau (constaté en
-      // production le 2026-10-02 : "connect ETIMEDOUT" ponctuel sur la
-      // rencontre n°6, alors que le navigateur venait de charger la page).
-      const withRetry = async <T>(call: () => Promise<T>): Promise<T> => {
-        try {
-          return await call();
-        } catch {
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-          return call();
-        }
-      };
+      // Requêtes envoyées DEPUIS LA PAGE (fetch du navigateur, exactement
+      // comme le JavaScript du site) : constaté en production le 2026-10-02
+      // (rencontres n°5 et n°6) que la même requête via `context.request`
+      // (pile réseau Node) échouait en "connect ETIMEDOUT" alors que le
+      // navigateur, au même instant, chargeait les pages FBI sans souci.
+      // `context.request` reste le repli si l'évaluation dans la page échoue.
+      const form = searchFormFields(criteria);
+      const query = executeSearchQuery(criteria);
+      let body: string;
+      const inPage = await page
+        .evaluate(
+          async ({ searchUrl, form, query }) => {
+            const controlResponse = await fetch(`${searchUrl}?action=controleRecherche`, {
+              method: "POST",
+              headers: { "X-Requested-With": "XMLHttpRequest", "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
+              body: new URLSearchParams(form).toString(),
+              credentials: "include",
+            });
+            if (!controlResponse.ok) return { error: `controleRecherche HTTP ${controlResponse.status}` };
+            const executeResponse = await fetch(`${searchUrl}?${query}`, { headers: { "X-Requested-With": "XMLHttpRequest" }, credentials: "include" });
+            if (!executeResponse.ok) return { error: `executeRecherche HTTP ${executeResponse.status}` };
+            return { body: await executeResponse.text() };
+          },
+          { searchUrl, form, query },
+        )
+        .catch((error: unknown) => ({ error: `fetch navigateur impossible (${error instanceof Error ? error.message.split("\n")[0] : String(error)})` }));
 
-      const control = await withRetry(() => context.request.post(`${searchUrl}?action=controleRecherche`, { form: searchFormFields(criteria), headers, timeout: 30000 }));
-      if (!control.ok()) return { kind: "unavailable", note: `controleRecherche HTTP ${control.status()}` };
-
-      const execute = await withRetry(() => context.request.get(`${searchUrl}?${executeSearchQuery(criteria)}`, { headers, timeout: 30000 }));
-      if (!execute.ok()) return { kind: "unavailable", note: `executeRecherche HTTP ${execute.status()}` };
-      const body = await execute.text();
+      if ("body" in inPage && typeof inPage.body === "string") {
+        body = inPage.body;
+      } else {
+        const control = await context.request.post(`${searchUrl}?action=controleRecherche`, { form, headers, timeout: 30000 });
+        if (!control.ok()) return { kind: "unavailable", note: `${inPage.error} ; controleRecherche HTTP ${control.status()}` };
+        const execute = await context.request.get(`${searchUrl}?${query}`, { headers, timeout: 30000 });
+        if (!execute.ok()) return { kind: "unavailable", note: `${inPage.error} ; executeRecherche HTTP ${execute.status()}` };
+        body = await execute.text();
+      }
 
       let rows;
       try {

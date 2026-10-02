@@ -373,6 +373,24 @@ describe("BrowserFbiClient.findEmarqueDocuments — recherche directe (retour du
     await client.closeSession(session);
   });
 
+  it("passe par le fetch du navigateur : fonctionne même quand la pile réseau Node (context.request) est injoignable (ETIMEDOUT constaté en production)", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 100 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+    const realRequest = session.context.request;
+    const brokenRequest = () => Promise.reject(new Error("apiRequestContext.post: connect ETIMEDOUT (test)"));
+    Object.defineProperty(session.context, "request", { value: { post: brokenRequest, get: brokenRequest }, configurable: true });
+
+    try {
+      const { documents, diagnostic } = await client.findEmarqueDocuments(session, "6", "2026-2027", "BU15MN1");
+
+      expect(diagnostic).toBeNull();
+      expect(documents).toEqual([{ url: `${server.baseUrl}/telechargerFeuilleMatchEmarque.fbi?action=emV2&plugin=true&idRenc=BBB%2F%3D`, fileName: "emarque_BU15MN1_6_2.zip" }]);
+    } finally {
+      Object.defineProperty(session.context, "request", { value: realRequest, configurable: true });
+      await client.closeSession(session);
+    }
+  });
+
   it("ligne trouvée sans lien EM : liste vide et diagnostic « pas une erreur » (nouvelle tentative plus tard)", async () => {
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 100 });
     const session = await client.login({ username: "club1234", password: "secret" });
