@@ -483,12 +483,40 @@ registry.registerPath({
 registry.registerPath({
   method: "get",
   path: "/v1/public/clubs/{clubSlug}/derogations",
-  // Lecture seule, réservée aux licenciés rattachés à un compte club_admin actif — retour du club, 2026-10-01.
+  // Admin du club ou coordinateur (retour du club, 2026-10-01 / 2026-10-02).
   request: { params: clubSlugParam, query: PublicTokenQueryDtoSchema },
   responses: {
-    200: jsonResponse("Dérogations connues du club (lecture seule)", z.object({ derogations: z.array(DerogationListItemDtoSchema) })),
+    200: jsonResponse("Dérogations connues du club", z.object({ derogations: z.array(DerogationListItemDtoSchema) })),
     401: jsonResponse("Jeton invalide ou révoqué", ErrorEnvelopeSchema),
-    403: jsonResponse("Licencié non administrateur du club (CLUB_ADMIN_REQUIRED)", ErrorEnvelopeSchema),
+    403: jsonResponse("Ni administrateur ni coordinateur du club (CLUB_ADMIN_REQUIRED)", ErrorEnvelopeSchema),
+    404: jsonResponse("Introuvable", ErrorEnvelopeSchema),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/public/clubs/{clubSlug}/derogations/{derogationId}/respond",
+  // ÉCRIT sur FBI (accepter / refuser) — admin du club ou coordinateur (2026-10-02).
+  request: { params: clubSlugParam.extend({ derogationId: z.string() }), query: PublicTokenQueryDtoSchema, body: { content: { "application/json": { schema: RespondToDerogationDtoSchema } } } },
+  responses: {
+    200: jsonResponse("Résultat de l'envoi à FBI", RespondToDerogationResultDtoSchema),
+    400: jsonResponse("Requête invalide", ErrorEnvelopeSchema),
+    401: jsonResponse("Jeton invalide ou révoqué", ErrorEnvelopeSchema),
+    403: jsonResponse("Ni administrateur ni coordinateur du club (CLUB_ADMIN_REQUIRED)", ErrorEnvelopeSchema),
+    404: jsonResponse("Introuvable", ErrorEnvelopeSchema),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/public/clubs/{clubSlug}/matches/{matchId}/derogation/create",
+  // ÉCRIT sur FBI : nouvelle dérogation officielle — admin du club ou coordinateur (2026-10-02).
+  request: { params: clubSlugAndMatchIdParams, query: PublicTokenQueryDtoSchema, body: { content: { "application/json": { schema: CreateDerogationDtoSchema } } } },
+  responses: {
+    200: jsonResponse("Résultat de l'envoi à FBI", CreateDerogationResultDtoSchema),
+    400: jsonResponse("Requête invalide", ErrorEnvelopeSchema),
+    401: jsonResponse("Jeton invalide ou révoqué", ErrorEnvelopeSchema),
+    403: jsonResponse("Ni administrateur ni coordinateur du club (CLUB_ADMIN_REQUIRED)", ErrorEnvelopeSchema),
     404: jsonResponse("Introuvable", ErrorEnvelopeSchema),
   },
 });

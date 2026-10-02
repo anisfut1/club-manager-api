@@ -3,6 +3,14 @@ import { buildFakeClubSupabase, makeFakeClubSupabaseState, type FakeClubSupabase
 
 let state: FakeClubSupabaseState;
 
+// Écritures FBI réelles jamais exécutées en test : seuls les droits d'accès sont vérifiés ici.
+const fbiWrites = vi.hoisted(() => ({
+  create: vi.fn(async () => ({ outcome: "success" as const, message: null })),
+  respond: vi.fn(async () => ({ outcome: "success" as const, message: null })),
+}));
+vi.mock("../derogations/create-derogation.js", () => ({ createDerogationForClub: fbiWrites.create }));
+vi.mock("../derogations/respond-derogation.js", () => ({ respondToDerogationForClub: fbiWrites.respond }));
+
 vi.mock("../../db/client.js", () => ({
   createServiceSupabaseClient: () => buildFakeClubSupabase(state),
   createUserSupabaseClient: () => buildFakeClubSupabase(state),
@@ -496,5 +504,53 @@ describe("Coach / admin du club depuis l'espace public — retour du club, 2026-
     const res = await request(`/matches/${TARGET_MATCH.id}/referee-status?token=${coachToken}`, body);
     expect(res.status).toBe(200);
     expect(state.refereeOverrides).toEqual([expect.objectContaining({ match_id: TARGET_MATCH.id, no_referee_needed: true, created_by: null })]);
+  });
+});
+
+describe("Coordinateur — retour du club, 2026-10-02 : mêmes droits qu'un admin sur les Tables et les dérogations officielles", () => {
+  const asCoordinator = () => {
+    state.licencies = state.licencies.map((l) => (l.id === THOMAS.id ? { ...l, public_coordinator: true } : l));
+  };
+  const createBody = { motif: "Gymnase indisponible", modifierDate: false, dateDerogation: null, modifierHoraire: true, horaire: "18:00", inverserRencontre: false, inverserEquipe: false };
+  const post = (path: string, body: unknown) => request(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+  it("tables.canManage et désignation d'un autre licencié", async () => {
+    asCoordinator();
+    const token = await claim(THOMAS.id);
+    expect(((await (await request(`/me?token=${token}`)).json()) as { tables: { canManage: boolean } }).tables.canManage).toBe(true);
+    const res = await request(`/matches/${TARGET_MATCH.id}/table-assignments/SCORER?token=${token}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ licencieId: LEA.id }),
+    });
+    expect(res.status).toBe(200);
+    expect(state.tableAssignments[0]?.licencie_id).toBe(LEA.id);
+  });
+
+  it("liste des dérogations FBI, création et réponse : 200 pour le coordinateur", async () => {
+    asCoordinator();
+    const token = await claim(THOMAS.id);
+    expect((await request(`/derogations?token=${token}`)).status).toBe(200);
+
+    const created = await post(`/matches/${TARGET_MATCH.id}/derogation/create?token=${token}`, createBody);
+    expect(created.status).toBe(200);
+    expect(fbiWrites.create).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ clubId: CLUB_A.id, matchId: TARGET_MATCH.id, horaire: "18:00", submittedBy: null }));
+
+    const responded = await post(`/derogations/derog-1/respond?token=${token}`, { decision: "accepted" });
+    expect(responded.status).toBe(200);
+    expect(fbiWrites.respond).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ clubId: CLUB_A.id, derogationCheckId: "derog-1", decision: "accepted" }));
+  });
+
+  it("403 pour un licencié sans rôle (et pour un simple coach) — aucune écriture FBI", async () => {
+    fbiWrites.create.mockClear();
+    fbiWrites.respond.mockClear();
+    state.licencies = state.licencies.map((l) => (l.id === LEA.id ? { ...l, public_coach: true } : l));
+    for (const id of [THOMAS.id, LEA.id]) {
+      const token = await claim(id);
+      expect((await post(`/matches/${TARGET_MATCH.id}/derogation/create?token=${token}`, createBody)).status).toBe(403);
+      expect((await post(`/derogations/derog-1/respond?token=${token}`, { decision: "accepted" })).status).toBe(403);
+    }
+    expect(fbiWrites.create).not.toHaveBeenCalled();
+    expect(fbiWrites.respond).not.toHaveBeenCalled();
   });
 });

@@ -17,6 +17,9 @@ import { getEnv } from "../../config/env.js";
 import { isEmailConfigured, sendEmail } from "../../email/resend.js";
 import { buildPersonalLinkEmail, maskEmail } from "../../email/personal-link-email.js";
 import { loadClubDerogations } from "../derogations/list.js";
+import { createDerogationForClub } from "../derogations/create-derogation.js";
+import { respondToDerogationForClub } from "../derogations/respond-derogation.js";
+import { CreateDerogationDtoSchema, RespondToDerogationDtoSchema } from "../../contracts/derogations.js";
 import { loadLicencieActor } from "../derogation-requests/service.js";
 import { canCreateAny, canManageRequests } from "../derogation-requests/policy.js";
 
@@ -234,7 +237,27 @@ export async function isLicencieClubAdmin(supabase: DbClient, clubId: string, li
  */
 export async function canManagePublicTables(supabase: DbClient, clubId: string, licencieId: string): Promise<boolean> {
   if (await isLicencieClubAdmin(supabase, clubId, licencieId)) return true;
-  return canCreateAny(await loadLicencieActor(supabase, clubId, licencieId));
+  const actor = await loadLicencieActor(supabase, clubId, licencieId);
+  // Coordinateur inclus (retour du club, 2026-10-02 : « le coordinateur doit l'avoir aussi »).
+  return canCreateAny(actor) || canManageRequests(actor);
+}
+
+/**
+ * Dérogations OFFICIELLES (FBI) depuis l'espace public : admin du club OU
+ * coordinateur — retour du club, 2026-10-02 : « le coordinateur doit avoir
+ * les mêmes droits qu'un admin général sur les dérogations, pour créer une
+ * dérogation officielle ». Lecture de la liste, création, réponse
+ * (accepter / refuser). Revérifié à chaque appel.
+ */
+export async function canManagePublicDerogations(supabase: DbClient, clubId: string, licencieId: string): Promise<boolean> {
+  if (await isLicencieClubAdmin(supabase, clubId, licencieId)) return true;
+  return canManageRequests(await loadLicencieActor(supabase, clubId, licencieId));
+}
+
+async function requireDerogationsManager(supabase: DbClient, clubId: string, licencieId: string): Promise<void> {
+  if (!(await canManagePublicDerogations(supabase, clubId, licencieId))) {
+    throw forbidden("Accès réservé au coordinateur et aux administrateurs du club.", "CLUB_ADMIN_REQUIRED");
+  }
 }
 
 async function requireTablesManager(supabase: DbClient, clubId: string, licencieId: string): Promise<void> {
@@ -256,7 +279,7 @@ publicTablesRouter.get("/me", async (c) => {
   // Demandes de dérogation internes : rôles posés depuis /joueurs (coach, coordinateur) ou compte rattaché.
   const derogationRequests = { canCreate: canCreateAny(actor), canManage: canManageRequests(actor) };
   // Même règle que `canManagePublicTables`, sans relire la base.
-  const tables = { canManage: isClubAdmin || canCreateAny(actor) };
+  const tables = { canManage: isClubAdmin || canCreateAny(actor) || canManageRequests(actor) };
   return c.json({ licencie: { id: licencie.id, firstName: licencie.firstName, lastName: licencie.lastName }, isClubAdmin, derogationRequests, tables });
 });
 
@@ -277,10 +300,71 @@ publicTablesRouter.get("/derogations", async (c) => {
   const club = c.get("publicClub");
   const me = c.get("publicLicencie");
 
-  if (!(await isLicencieClubAdmin(supabase, club.id, me.id))) throw forbidden("Accès réservé aux administrateurs du club.", "CLUB_ADMIN_REQUIRED");
+  await requireDerogationsManager(supabase, club.id, me.id);
 
   const derogations = await loadClubDerogations(supabase, club.id);
   return c.json({ derogations });
+});
+
+/**
+ * POST .../derogations/:derogationId/respond?token= — ÉCRIT réellement sur
+ * FBI (accepter / refuser), comme `POST /v1/clubs/:clubId/derogations/:id/respond`.
+ * Coordinateur / admin du club (retour du club, 2026-10-02).
+ */
+publicTablesRouter.post("/derogations/:derogationId/respond", async (c) => {
+  const derogationId = c.req.param("derogationId");
+  if (!derogationId) throw badRequest("Paramètre de route :derogationId manquant.");
+  const query = PublicTokenQueryDtoSchema.safeParse(c.req.query());
+  if (!query.success) throw badRequest(query.error.issues.map((i) => i.message).join(" "));
+  const body = RespondToDerogationDtoSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!body.success) throw badRequest(body.error.issues[0]?.message ?? "Corps de requête invalide.");
+
+  await resolvePublicLicencie(c, query.data.token);
+  const supabase = c.get("supabase");
+  const club = c.get("publicClub");
+  await requireDerogationsManager(supabase, club.id, c.get("publicLicencie").id);
+
+  const result = await respondToDerogationForClub(supabase, {
+    clubId: club.id,
+    derogationCheckId: derogationId,
+    decision: body.data.decision,
+    motifRefus: body.data.motifRefus ?? null,
+    submittedBy: null, // pas de compte : la trace reste dans fbi_* avec submitted_by vide
+  });
+  return c.json(result);
+});
+
+/**
+ * POST .../matches/:matchId/derogation/create?token= — ÉCRIT réellement sur
+ * FBI : nouvelle demande de dérogation officielle pour ce match, comme le
+ * bouton « Créer une dérogation » de l'admin. Coordinateur / admin du club.
+ */
+publicTablesRouter.post("/matches/:matchId/derogation/create", async (c) => {
+  const matchId = c.req.param("matchId");
+  if (!matchId) throw badRequest("Paramètre de route :matchId manquant.");
+  const query = PublicTokenQueryDtoSchema.safeParse(c.req.query());
+  if (!query.success) throw badRequest(query.error.issues.map((i) => i.message).join(" "));
+  const body = CreateDerogationDtoSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!body.success) throw badRequest(body.error.issues[0]?.message ?? "Corps de requête invalide.");
+
+  await resolvePublicLicencie(c, query.data.token);
+  const supabase = c.get("supabase");
+  const club = c.get("publicClub");
+  await requireDerogationsManager(supabase, club.id, c.get("publicLicencie").id);
+
+  const result = await createDerogationForClub(supabase, {
+    clubId: club.id,
+    matchId,
+    motif: body.data.motif,
+    modifierDate: body.data.modifierDate,
+    dateDerogation: body.data.dateDerogation ?? null,
+    modifierHoraire: body.data.modifierHoraire,
+    horaire: body.data.horaire ?? null,
+    inverserRencontre: body.data.inverserRencontre,
+    inverserEquipe: body.data.inverserEquipe,
+    submittedBy: null,
+  });
+  return c.json(result);
 });
 
 /** GET /v1/public/clubs/:clubSlug/table-assignments?token=&from=&to= — même contenu que la vue admin, `me` en plus. */
