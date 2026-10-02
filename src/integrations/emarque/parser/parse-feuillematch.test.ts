@@ -7,6 +7,25 @@ import { parseFeuillematch } from "./parse-feuillematch.js";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixturePath = path.join(dirname, "..", "__fixtures__", "feuillematch-1481.pdf");
+const narrowTeamAFixturePath = path.join(dirname, "..", "__fixtures__", "feuillematch-1481-equipe-a-colonnes-etroites.pdf");
+
+const EXPECTED_LICENSES_1481 = {
+  "home:1": "VT010167",
+  "home:4": "VT040638",
+  "home:8": "BC100650",
+  "home:12": "VT043095",
+  "home:13": "OH954244",
+  "home:18": "VT850821",
+  "home:19": "VT064501",
+  "home:26": "VT920235",
+  "away:4": "VT000970",
+  "away:5": "VT071373",
+  "away:6": "JH072207",
+  "away:8": "VT840539",
+  "away:9": "VT026860",
+  "away:11": "JN870663",
+  "away:12": "VT030013",
+};
 
 /**
  * Test contre un VRAI document "feuillematch" de production (rencontre
@@ -91,6 +110,37 @@ describe("parseFeuillematch (document réel, rencontre n°1481)", () => {
         const awayCoaches = result.coaches.filter((c) => c.teamSide === "away");
         expect(awayCoaches).toHaveLength(1);
         expect(awayCoaches[0]).toMatchObject({ role: "principal", licenseNumber: "VT832541", lastName: "BARBIER" });
+      } finally {
+        await extractor.dispose();
+      }
+    },
+    60_000,
+  );
+});
+
+/**
+ * Même document n°1481, page 1 retouchée : l'encadré "Équipe A" redessiné
+ * avec les colonnes de l'encadré "Équipe B" (licence ~[185,460], nom
+ * ~[460,1039]) — gabarit constaté sur TOUS les documents de la saison
+ * 2026-2027 (retour du club, 2026-10-02 : licences de l'équipe locale
+ * jamais lues, OCR de la colonne calibrée = "32673 | BEI", reproduit ici à
+ * l'identique : "0167 | GEO"). Seules les données réelles du n°1481 sont
+ * utilisées, jamais inventées.
+ */
+describe("parseFeuillematch (équipe A au gabarit de colonnes de l'équipe B)", () => {
+  it(
+    "lit les licences de l'équipe locale avec le gabarit de repli, sans changer la lecture de l'équipe visiteuse",
+    async () => {
+      const extractor = new PdfRasterOcrExtractor(fs.readFileSync(narrowTeamAFixturePath));
+
+      try {
+        const result = await parseFeuillematch(extractor);
+        const licensesByJersey = Object.fromEntries(result.players.map((p) => [`${p.teamSide}:${p.jerseyNumber}`, p.licenseNumber]));
+        expect(licensesByJersey).toEqual(EXPECTED_LICENSES_1481);
+        expect(result.players.find((p) => p.teamSide === "home" && p.jerseyNumber === "26")?.isCaptain).toBe(true);
+
+        const homeCoaches = result.coaches.filter((c) => c.teamSide === "home");
+        expect(homeCoaches.map((c) => c.licenseNumber).sort()).toEqual(["JH962758", "VT955805"]);
       } finally {
         await extractor.dispose();
       }

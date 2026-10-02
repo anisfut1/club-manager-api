@@ -31,7 +31,7 @@ function buildData(overrides: Partial<EMarqueMatchData> = {}): EMarqueMatchData 
 }
 
 interface FakeSupabaseOptions {
-  existingImport?: { id: string; status: string } | null;
+  existingImport?: { id: string; status: string; parser_version: string } | null;
   licenciesByLicense?: Record<string, string[]>;
   failOnTable?: string;
   /** `matches.is_home` pour BASE_PARAMS.matchId — `undefined`/absent = non renseigné (jamais une supposition, voir persist-emarque-match.ts). */
@@ -98,6 +98,7 @@ function makeFakeSupabase(options: FakeSupabaseOptions = {}) {
                 return Promise.resolve({ error: null });
               },
             }),
+            delete: () => deletable(table),
           };
         case "licencies":
           return {
@@ -185,7 +186,7 @@ const BASE_PARAMS = {
 
 describe("persistEmarqueMatchData", () => {
   it("ne retraite rien quand un import avec le même hash existe déjà (idempotence)", async () => {
-    const supabase = makeFakeSupabase({ existingImport: { id: "import-existing", status: "imported" } });
+    const supabase = makeFakeSupabase({ existingImport: { id: "import-existing", status: "imported", parser_version: "test-version" } });
 
     const result = await persistEmarqueMatchData(supabase, { ...BASE_PARAMS, data: buildData() });
 
@@ -198,6 +199,26 @@ describe("persistEmarqueMatchData", () => {
     });
     expect(supabase._inserted.match_participants).toBeUndefined();
     expect(supabase._inserted.emarque_imports).toBeUndefined();
+  });
+
+  it("remplace la lecture d'un même fichier faite par une version plus ancienne du parseur", async () => {
+    const supabase = makeFakeSupabase({ existingImport: { id: "import-old", status: "imported", parser_version: "old-version" }, licenciesByLicense: { OC123456: ["licencie-1"] } });
+    const data = buildData({
+      players: [{ teamSide: "home", jerseyNumber: "6", lastName: "DUPONT", firstName: "J.", licenseNumber: "OC123456", isCaptain: false, isStarter: null, confidence: 0.9 }],
+    });
+
+    const result = await persistEmarqueMatchData(supabase, { ...BASE_PARAMS, data });
+
+    expect(result.alreadyImported).toBe(false);
+    expect(result.participantsLinked).toBe(1);
+    expect(supabase._deleted.emarque_imports).toEqual([[{ col: "id", value: "import-old" }]]);
+    for (const table of ["match_participants", "match_coaches", "match_officials", "match_table_officials", "player_match_stats"]) {
+      expect(supabase._deleted[table]?.[0]).toEqual([
+        { col: "match_id", value: "match-1" },
+        { col: "club_id", value: "club-1" },
+      ]);
+    }
+    expect(supabase._inserted.emarque_imports).toHaveLength(1);
   });
 
   it("lie automatiquement un participant dont la licence correspond exactement à un licencié existant", async () => {

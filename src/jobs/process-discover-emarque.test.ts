@@ -57,6 +57,7 @@ interface Recorders {
   jobUpdates: Array<{ id: string; patch: unknown }>;
   documentInserts: Array<Record<string, unknown>>;
   statusUpserts: unknown[];
+  documentResets?: Array<{ patch: Record<string, unknown>; filters: Record<string, unknown> }>;
 }
 
 function makeFakeSupabase(options: { match: { id: string; club_id: string; numero: string | null; match_datetime: string | null } | null; recorders: Recorders; documentInsertConflict?: boolean }) {
@@ -105,6 +106,20 @@ function makeFakeSupabase(options: { match: { id: string; club_id: string; numer
             }
             recorders.documentInserts.push(row);
             return Promise.resolve({ error: null });
+          },
+          update: (patch: Record<string, unknown>) => {
+            const filters: Record<string, unknown> = {};
+            const chain = {
+              eq: (col: string, value: unknown) => {
+                filters[col] = value;
+                return chain;
+              },
+              then: (onFulfilled: (v: { error: null }) => unknown) => {
+                recorders.documentResets?.push({ patch, filters });
+                return Promise.resolve({ error: null }).then(onFulfilled);
+              },
+            };
+            return chain;
           },
         };
       }
@@ -226,12 +241,19 @@ describe("processDiscoverEmarqueJob", () => {
     findEmarqueDocumentsMock.mockResolvedValue({ documents: [{ url: "https://fbi.test/export/2813.zip", fileName: "2813.zip" }], diagnostic: null });
     downloadDocumentMock.mockResolvedValue(Buffer.from("PK\x03\x04contenu-zip-synthetique", "latin1"));
 
-    const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [] };
+    const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [], documentResets: [] };
     const supabase = makeFakeSupabase({ match: { id: "match-1", club_id: "club-1", numero: "2813", match_datetime: null }, recorders, documentInsertConflict: true });
 
     await processDiscoverEmarqueJob(supabase, baseJob());
 
     expect(recorders.jobUpdates.at(-1)).toMatchObject({ patch: expect.objectContaining({ status: "succeeded" }) });
+    expect(recorders.documentInserts).toHaveLength(0);
+    // La ligne existante (souvent déjà parsée puis purgée) est remise en file de parsing.
+    expect(recorders.documentResets).toHaveLength(1);
+    expect(recorders.documentResets?.[0]).toMatchObject({
+      patch: expect.objectContaining({ status: "downloaded", purged_at: null }),
+      filters: expect.objectContaining({ club_id: "club-1", match_id: "match-1", type: "emarque_zip" }),
+    });
   });
 
   it("échoue proprement (jamais de crash) quand le job n'a pas de match_id", async () => {

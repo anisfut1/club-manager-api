@@ -79,6 +79,10 @@ export function extractIsolatedLicenseNumber(rawText: string): string | null {
     .split("")
     .map((char, index) => {
       if (index < 2) return char === "0" ? "O" : char;
+      // Même logique positionnelle pour "I"/"L" lus à la place d'un "1"
+      // (constaté le 2026-10-02 sur la colonne licence de l'équipe locale :
+      // "VTOI0167" pour VT010167) — jamais appliquée au préfixe lettres.
+      if (char === "I" || char === "L") return "1";
       return char === "O" ? "0" : char;
     })
     .join("");

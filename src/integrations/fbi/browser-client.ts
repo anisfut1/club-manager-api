@@ -532,10 +532,22 @@ export class BrowserFbiClient {
       const searchUrl = `${this.baseUrl}/rechercherRencontreSaisieResultat.fbi`;
       const headers = { "X-Requested-With": "XMLHttpRequest", Referer: searchUrl };
 
-      const control = await context.request.post(`${searchUrl}?action=controleRecherche`, { form: searchFormFields(criteria), headers, timeout: 30000 });
+      // Une seule nouvelle tentative sur erreur réseau (constaté en
+      // production le 2026-10-02 : "connect ETIMEDOUT" ponctuel sur la
+      // rencontre n°6, alors que le navigateur venait de charger la page).
+      const withRetry = async <T>(call: () => Promise<T>): Promise<T> => {
+        try {
+          return await call();
+        } catch {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          return call();
+        }
+      };
+
+      const control = await withRetry(() => context.request.post(`${searchUrl}?action=controleRecherche`, { form: searchFormFields(criteria), headers, timeout: 30000 }));
       if (!control.ok()) return { kind: "unavailable", note: `controleRecherche HTTP ${control.status()}` };
 
-      const execute = await context.request.get(`${searchUrl}?${executeSearchQuery(criteria)}`, { headers, timeout: 30000 });
+      const execute = await withRetry(() => context.request.get(`${searchUrl}?${executeSearchQuery(criteria)}`, { headers, timeout: 30000 }));
       if (!execute.ok()) return { kind: "unavailable", note: `executeRecherche HTTP ${execute.status()}` };
       const body = await execute.text();
 

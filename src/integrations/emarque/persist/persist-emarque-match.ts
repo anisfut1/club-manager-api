@@ -7,6 +7,8 @@ type Client = SupabaseClient<Database>;
 
 const UNIQUE_VIOLATION = "23505";
 
+const EMARQUE_PERSISTED_TABLES = ["match_participants", "match_coaches", "match_officials", "match_table_officials", "player_match_stats"] as const;
+
 export interface PersistEmarqueMatchParams {
   matchId: string;
   clubId: string;
@@ -307,7 +309,7 @@ export async function persistEmarqueMatchData(supabase: Client, params: PersistE
 
   const { data: existingImport, error: existingImportError } = await supabase
     .from("emarque_imports")
-    .select("id, status")
+    .select("id, status, parser_version")
     .eq("club_id", clubId)
     .eq("file_hash", fileHash)
     .maybeSingle();
@@ -316,9 +318,21 @@ export async function persistEmarqueMatchData(supabase: Client, params: PersistE
     throw new Error(`Recherche d'import e-Marque existant échouée : ${existingImportError.message}`);
   }
 
-  if (existingImport) {
+  if (existingImport && existingImport.parser_version === parserVersion) {
     logInfo("Import e-Marque déjà traité (hash identique), aucune ré-écriture", { importId: existingImport.id, fileHash });
     return { importId: existingImport.id, status: existingImport.status, alreadyImported: true, participantsLinked: 0, participantsUnlinked: 0 };
+  }
+
+  if (existingImport) {
+    // Même fichier, lu par une version PLUS ANCIENNE du parseur (retour du
+    // club, 2026-10-02 : licences de l'équipe locale jamais lues avant
+    // 2026.10.1) — on remplace l'ancienne lecture plutôt que de la garder
+    // à vie. Les anciennes lignes ne disparaissent qu'au moment où la
+    // nouvelle lecture est prête à être écrite, jamais avant.
+    await Promise.all(EMARQUE_PERSISTED_TABLES.map((table) => supabase.from(table).delete().eq("match_id", matchId).eq("club_id", clubId)));
+    const { error: deleteImportError } = await supabase.from("emarque_imports").delete().eq("id", existingImport.id);
+    if (deleteImportError) throw new Error(`Remplacement de l'import e-Marque existant échoué : ${deleteImportError.message}`);
+    logInfo("Import e-Marque relu avec un parseur plus récent, ancienne lecture remplacée", { previousImportId: existingImport.id, previousParserVersion: existingImport.parser_version, parserVersion });
   }
 
   const { data: importRow, error: importInsertError } = await supabase

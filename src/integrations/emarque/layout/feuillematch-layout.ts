@@ -119,13 +119,21 @@ function columnZone(team: RosterTeamColumns, rowTopFrac: number, rowBottomFrac: 
 const ROSTER_TEAM_A: RosterTeamColumns = { columns: ROSTER_COLUMNS_TEAM_A, licenseWideColumn: ROSTER_LICENSE_WIDE_TEAM_A };
 const ROSTER_TEAM_B: RosterTeamColumns = { columns: ROSTER_COLUMNS_TEAM_B, licenseWideColumn: ROSTER_LICENSE_WIDE_TEAM_B };
 
-function buildTeamRoster(team: RosterTeamColumns) {
+export interface RosterLayout {
+  cellZone: (rowTopFrac: number, rowBottomFrac: number, column: RosterColumn) => ZoneFraction;
+  licenseNumberWideZone: (rowTopFrac: number, rowBottomFrac: number) => ZoneFraction;
+}
+
+function buildTeamRoster(team: RosterTeamColumns): RosterLayout {
   return {
     cellZone: (rowTopFrac: number, rowBottomFrac: number, column: RosterColumn) => columnZone(team, rowTopFrac, rowBottomFrac, team.columns[column]),
     /** Repli pour une ligne entraîneur — voir `ROSTER_LICENSE_WIDE_TEAM_A`. */
     licenseNumberWideZone: (rowTopFrac: number, rowBottomFrac: number) => columnZone(team, rowTopFrac, rowBottomFrac, team.licenseWideColumn),
   };
 }
+
+const LAYOUT_TEAM_A = buildTeamRoster(ROSTER_TEAM_A);
+const LAYOUT_TEAM_B = buildTeamRoster(ROSTER_TEAM_B);
 
 /**
  * Écart (fraction de PAGE) entre deux lignes de grille consécutives
@@ -146,9 +154,21 @@ export const ROSTER_TABLE_SCAN_ZONE: ZoneFraction = {
   heightFrac: 1,
 };
 
+/**
+ * Gabarits de colonnes CANDIDATS par équipe, dans l'ordre d'essai : le
+ * premier qui donne une licence valide est retenu pour tout le tableau
+ * (voir `readTeamRosterAndCoaches`). Constaté en production le 2026-10-02
+ * (les 8 imports de la saison 2026-2027, retour du club "les stats sont
+ * pas rattachées au licencié") : sur les documents actuels, l'encadré
+ * "Équipe A" utilise les MÊMES colonnes que l'encadré "Équipe B" — la
+ * colonne calibrée sur la rencontre n°1481 n'y lisait plus que la fin de
+ * la licence suivie du début du nom (ex : "32673 | BEI" / "LIURE J."),
+ * donc aucune licence pour l'équipe locale. Jamais un seul gabarit
+ * supposé universel.
+ */
 export const FEUILLEMATCH_ROSTER = {
-  teamA: buildTeamRoster(ROSTER_TEAM_A),
-  teamB: buildTeamRoster(ROSTER_TEAM_B),
+  teamA: [LAYOUT_TEAM_A, LAYOUT_TEAM_B] as readonly RosterLayout[],
+  teamB: [LAYOUT_TEAM_B, LAYOUT_TEAM_A] as readonly RosterLayout[],
   /**
    * Nombre maximal de lignes à lire par équipe — filet de sécurité contre
    * une détection de lignes de grille aberrante (jamais atteint sur un

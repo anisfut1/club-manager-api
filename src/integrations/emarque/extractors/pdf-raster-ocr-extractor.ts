@@ -78,27 +78,6 @@ export class PdfRasterOcrExtractor implements DocumentExtractor {
     return canvas;
   }
 
-  /**
-   * TEMPORAIRE (diagnostic licence domicile feuillematch, 2026-09-30) —
-   * exporte un recadrage PNG brut d'une zone, pour inspection visuelle
-   * directe (le document original est purgé juste après parsing — voir
-   * parse-downloaded-documents.ts — impossible sinon de vérifier où tombent
-   * RÉELLEMENT les colonnes sur un document de production). À supprimer une
-   * fois le diagnostic terminé. N'appartient PAS à `DocumentExtractor`
-   * (méthode propre à cette classe, jamais utilisée par le pipeline normal).
-   */
-  async debugExportZonePng(pageNumber: number, zone: ZoneFraction): Promise<Buffer> {
-    const pageCanvas = await this.getPageCanvas(pageNumber);
-    const x = Math.round(zone.xFrac * pageCanvas.width);
-    const y = Math.round(zone.yFrac * pageCanvas.height);
-    const width = Math.max(Math.round(zone.widthFrac * pageCanvas.width), 1);
-    const height = Math.max(Math.round(zone.heightFrac * pageCanvas.height), 1);
-
-    const cropped = createCanvas(width, height);
-    cropped.getContext("2d").drawImage(pageCanvas, x, y, width, height, 0, 0, width, height);
-    return cropped.toBuffer("image/png");
-  }
-
   async extractZone(pageNumber: number, zone: ZoneFraction, options?: ExtractZoneOptions): Promise<ExtractedText> {
     const pageCanvas = await this.getPageCanvas(pageNumber);
 

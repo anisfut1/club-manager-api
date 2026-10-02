@@ -54,6 +54,18 @@ describe("extractIsolatedLicenseNumber", () => {
     expect(extractIsolatedLicenseNumber("0H954244")).toBe("OH954244");
   });
 
+  it("corrige I/L lus à la place d'un 1, uniquement dans la partie chiffres", () => {
+    expect(extractIsolatedLicenseNumber("VTOI0167 |")).toBe("VT010167");
+    expect(extractIsolatedLicenseNumber("JHL62758")).toBe("JH162758");
+    expect(extractIsolatedLicenseNumber("IL123456")).toBe("IL123456");
+  });
+
+  it("ne lit jamais une licence dans une cellule décalée (fin de licence + début du nom)", () => {
+    expect(extractIsolatedLicenseNumber("32673 | BEI")).toBeNull();
+    expect(extractIsolatedLicenseNumber("0167 | GEO")).toBeNull();
+    expect(extractIsolatedLicenseNumber("4473 | TA:")).toBeNull();
+  });
+
   it("refuse toujours une longueur différente de 8 après nettoyage (jamais un décalage de colonne deviné)", () => {
     expect(extractIsolatedLicenseNumber("VT01340")).toBeNull();
     expect(extractIsolatedLicenseNumber("VT0134055")).toBeNull();

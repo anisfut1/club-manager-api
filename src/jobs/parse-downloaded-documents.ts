@@ -1,57 +1,8 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
 import type { DbClient } from "../db/client.js";
 import { deleteEmarqueFile, downloadEmarqueFile } from "../storage/emarque-storage.js";
 import { parseEmarqueZip, PARSER_VERSION } from "../integrations/emarque/parser/parse-emarque-zip.js";
 import { persistEmarqueMatchData } from "../integrations/emarque/persist/persist-emarque-match.js";
 import { logError, logInfo } from "../logger.js";
-
-/**
- * TEMPORAIRE (diagnostic licence domicile feuillematch, 2026-09-30) —
- * capture une image PNG de la zone roster (en-tête + colonnes licence/nom)
- * du document feuillematch dans `debug_image_captures` (table temporaire,
- * jamais exposée par RLS à `authenticated`), pour inspection visuelle
- * directe — le document original est purgé juste après (voir
- * `purgeDocument` ci-dessous). Best-effort STRICT : toute erreur ici est
- * avalée, ne doit JAMAIS faire échouer le vrai pipeline de parsing. À
- * supprimer (avec la table) une fois le diagnostic terminé.
- */
-async function debugCaptureFeuillematchRosterImage(supabase: DbClient, matchId: string, zipBuffer: Buffer): Promise<void> {
-  try {
-    const [{ default: JSZip }, { selectExtractor }, { PdfRasterOcrExtractor }] = await Promise.all([
-      import("jszip"),
-      import("../integrations/emarque/parser/select-extractor.js"),
-      import("../integrations/emarque/extractors/pdf-raster-ocr-extractor.js"),
-    ]);
-
-    const zip = await JSZip.loadAsync(zipBuffer);
-    const feuillematchEntry = Object.values(zip.files).find((f) => !f.dir && f.name.toLowerCase().includes("feuillematch_"));
-    if (!feuillematchEntry) return;
-
-    const buffer = Buffer.from(await feuillematchEntry.async("nodebuffer"));
-    const extractor = await selectExtractor(buffer);
-    try {
-      if (!(extractor instanceof PdfRasterOcrExtractor)) return;
-
-      const REF_WIDTH = 2479;
-      const REF_HEIGHT = 3508;
-      const png = await extractor.debugExportZonePng(1, {
-        xFrac: 100 / REF_WIDTH,
-        yFrac: 0,
-        widthFrac: (1200 - 100) / REF_WIDTH,
-        heightFrac: 1200 / REF_HEIGHT,
-      });
-
-      // `debug_image_captures` est une table TEMPORAIRE, absente du schéma
-      // généré (db/types.ts) — cast local plutôt que de polluer les types
-      // générés pour une table à supprimer sous peu.
-      await (supabase as unknown as SupabaseClient).from("debug_image_captures").insert({ match_id: matchId, png_base64: png.toString("base64") });
-    } finally {
-      await extractor.dispose();
-    }
-  } catch (error) {
-    logError("Capture debug image roster feuillematch échouée (non bloquant)", error, { matchId });
-  }
-}
 
 /**
  * Purge le fichier original une fois le PARSING RÉUSSI — retour du club,
@@ -144,8 +95,6 @@ export async function parseDownloadedEmarqueDocuments(supabase: DbClient, option
       }
 
       const zipBuffer = await downloadEmarqueFile(supabase, doc.storage_path);
-
-      await debugCaptureFeuillematchRosterImage(supabase, doc.match_id, zipBuffer);
 
       const parsed = await parseEmarqueZip(zipBuffer, {
         ffbbMatchNumero: match.numero,

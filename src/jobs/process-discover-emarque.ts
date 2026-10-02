@@ -190,6 +190,23 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
         throw new Error(`Insertion match_documents échouée : ${insertError.message}`);
       }
 
+      if (insertError) {
+        // Même fichier déjà connu (souvent déjà parsé puis purgé) : il vient
+        // d'être re-déposé en Storage, on le remet en file de parsing — sans
+        // quoi une nouvelle découverte volontaire (ex : relecture avec un
+        // parseur corrigé) ne serait jamais reparsée. Le parsing reste
+        // idempotent (voir `persistEmarqueMatchData`).
+        const now = new Date().toISOString();
+        const { error: resetError } = await supabase
+          .from("match_documents")
+          .update({ status: "downloaded", storage_path: storagePath, purged_at: null, last_error: null, downloaded_at: now, updated_at: now })
+          .eq("club_id", job.club_id)
+          .eq("match_id", job.match_id)
+          .eq("type", type)
+          .eq("sha256", sha256);
+        if (resetError) throw new Error(`Remise en file du document e-Marque existant échouée : ${resetError.message}`);
+      }
+
       downloadedCount += 1;
     }
 

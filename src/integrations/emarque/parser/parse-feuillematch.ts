@@ -1,5 +1,5 @@
-import type { DocumentExtractor, ZoneFraction } from "../extractors/types.js";
-import { FEUILLEMATCH_PAGE1, FEUILLEMATCH_ROSTER, OFFICIALS_TABLE_PAGE2, ROSTER_HEADER_GAP_FRACTION_RANGE, ROSTER_TABLE_SCAN_ZONE, type RosterColumn } from "../layout/feuillematch-layout.js";
+import type { DocumentExtractor } from "../extractors/types.js";
+import { FEUILLEMATCH_PAGE1, FEUILLEMATCH_ROSTER, OFFICIALS_TABLE_PAGE2, ROSTER_HEADER_GAP_FRACTION_RANGE, ROSTER_TABLE_SCAN_ZONE, type RosterLayout } from "../layout/feuillematch-layout.js";
 import { locateTeamTables } from "../layout/table-structure.js";
 import { parseFinalResultLine, parsePouleLabel, parseRencontreHeaderLine } from "../normalizers/header-fields.js";
 import { extractIsolatedLicenseNumber, extractJerseyNumber, extractLicenseNumber, findLicenseMatch, splitUppercaseAbbreviatedName } from "../normalizers/text-fields.js";
@@ -24,16 +24,6 @@ export interface FeuillematchResult {
   coaches: EMarqueCoach[];
   officials: EMarqueOfficial[];
   tableOfficials: EMarqueTableOfficial[];
-  /**
-   * TEMPORAIRE (retour du club, 2026-09-30 : "les stats sont pas rattachées
-   * au licencié") — capture les lignes de rosterTables abandonnées faute de
-   * licence lisible (voir `if (!licenseNumber) continue` ci-dessous), pour
-   * diagnostiquer en production POURQUOI l'équipe locale perd
-   * systématiquement sa licence sur certains documents réels alors que
-   * l'équipe visiteuse la lit correctement. À supprimer une fois le
-   * diagnostic terminé (voir parse-emarque-zip.ts).
-   */
-  debugSkippedRoster: Array<{ teamSide: TeamSide; row: number; licenseText: string; nameText: string }>;
 }
 
 function cleanNameFragment(text: string): string {
@@ -72,21 +62,34 @@ function stripCoachRolePrefix(text: string): string {
 async function readTeamRosterAndCoaches(
   extractor: DocumentExtractor,
   teamSide: TeamSide,
-  team: { cellZone: (rowTop: number, rowBottom: number, column: RosterColumn) => ZoneFraction; licenseNumberWideZone: (rowTop: number, rowBottom: number) => ZoneFraction },
+  layouts: readonly RosterLayout[],
   rowBoundaries: number[],
-): Promise<{ players: EMarquePlayer[]; coaches: EMarqueCoach[]; skipped: Array<{ row: number; licenseText: string; nameText: string }> }> {
+): Promise<{ players: EMarquePlayer[]; coaches: EMarqueCoach[] }> {
   const players: EMarquePlayer[] = [];
   const coaches: EMarqueCoach[] = [];
-  const skipped: Array<{ row: number; licenseText: string; nameText: string }> = [];
+  // Gabarit de colonnes retenu pour CE tableau (voir `FEUILLEMATCH_ROSTER`) :
+  // fixé à la première ligne dont la licence se lit avec l'un des
+  // candidats, puis seul utilisé — une ligne vide du gabarit ne coûte donc
+  // pas un OCR par candidat.
+  let layout: RosterLayout | null = null;
 
   for (let row = 0; row < rowBoundaries.length - 1 && row < FEUILLEMATCH_ROSTER.maxRows; row++) {
     const rowTop = rowBoundaries[row]!;
     const rowBottom = rowBoundaries[row + 1]!;
 
-    const licenseText = (await extractor.extractZone(1, team.cellZone(rowTop, rowBottom, "licenseNumber"))).text;
-    let licenseNumber = extractIsolatedLicenseNumber(licenseText);
+    let licenseNumber: string | null = null;
+    let rowLayout = layout ?? layouts[0]!;
+    for (const candidate of layout ? [layout] : layouts) {
+      const licenseText = (await extractor.extractZone(1, candidate.cellZone(rowTop, rowBottom, "licenseNumber"))).text;
+      licenseNumber = extractIsolatedLicenseNumber(licenseText);
+      if (licenseNumber) {
+        rowLayout = candidate;
+        layout = candidate;
+        break;
+      }
+    }
 
-    const { text: nameText, confidence } = await extractor.extractZone(1, team.cellZone(rowTop, rowBottom, "name"));
+    const { text: nameText, confidence } = await extractor.extractZone(1, rowLayout.cellZone(rowTop, rowBottom, "name"));
     const coachRoleMatch = nameText.match(/entra[iî]neur\s*(principal|adjoint)?/i);
 
     // Repli UNIQUEMENT pour une ligne entraîneur (voir
@@ -96,14 +99,11 @@ async function readTeamRosterAndCoaches(
     // numéro de licence — jamais utilisé pour un joueur (où cette colonne
     // contient un vrai marqueur, contaminerait la lecture).
     if (!licenseNumber && coachRoleMatch) {
-      const wideLicenseText = (await extractor.extractZone(1, team.licenseNumberWideZone(rowTop, rowBottom))).text;
+      const wideLicenseText = (await extractor.extractZone(1, rowLayout.licenseNumberWideZone(rowTop, rowBottom))).text;
       licenseNumber = extractLicenseNumber(wideLicenseText);
     }
 
-    if (!licenseNumber) {
-      skipped.push({ row, licenseText, nameText });
-      continue;
-    }
+    if (!licenseNumber) continue;
 
     if (coachRoleMatch) {
       const role: CoachRole = /adjoint/i.test(coachRoleMatch[0]) ? "adjoint" : "principal";
@@ -112,7 +112,7 @@ async function readTeamRosterAndCoaches(
       continue;
     }
 
-    const jerseyText = (await extractor.extractZone(1, team.cellZone(rowTop, rowBottom, "jerseyNumber"), { expectDigitsOnly: true })).text;
+    const jerseyText = (await extractor.extractZone(1, rowLayout.cellZone(rowTop, rowBottom, "jerseyNumber"), { expectDigitsOnly: true })).text;
     const { lastName, firstName } = splitUppercaseAbbreviatedName(cleanNameFragment(nameText));
 
     players.push({
@@ -130,7 +130,7 @@ async function readTeamRosterAndCoaches(
     });
   }
 
-  return { players, coaches, skipped };
+  return { players, coaches };
 }
 
 async function readOfficialsTable(extractor: DocumentExtractor): Promise<{ officials: EMarqueOfficial[]; tableOfficials: EMarqueTableOfficial[] }> {
@@ -203,28 +203,13 @@ export async function parseFeuillematch(extractor: DocumentExtractor): Promise<F
   const rosterLines = await extractor.detectHorizontalLines(1, ROSTER_TABLE_SCAN_ZONE);
   const rosterTables = locateTeamTables(rosterLines, ROSTER_HEADER_GAP_FRACTION_RANGE);
 
-  const { players: homeRoster, coaches: homeCoaches, skipped: homeSkipped } = rosterTables[0]
+  const { players: homeRoster, coaches: homeCoaches } = rosterTables[0]
     ? await readTeamRosterAndCoaches(extractor, "home", FEUILLEMATCH_ROSTER.teamA, rosterTables[0].rowBoundaries)
-    : { players: [], coaches: [], skipped: [] };
-  const { players: awayRoster, coaches: awayCoaches, skipped: awaySkipped } = rosterTables[1]
+    : { players: [], coaches: [] };
+  const { players: awayRoster, coaches: awayCoaches } = rosterTables[1]
     ? await readTeamRosterAndCoaches(extractor, "away", FEUILLEMATCH_ROSTER.teamB, rosterTables[1].rowBoundaries)
-    : { players: [], coaches: [], skipped: [] };
+    : { players: [], coaches: [] };
   const officialsResult = await readOfficialsTable(extractor);
-
-  // TEMPORAIRE (voir la note sur `debugSkippedRoster` ci-dessus) : combine
-  // les deux camps pour diagnostic, avec le nombre de lignes/tables
-  // détectées — distingue "table non détectée du tout" (rosterTables[0]
-  // undefined) de "table détectée mais licence illisible sur chaque ligne".
-  const debugSkippedRoster = [
-    {
-      teamSide: "home" as TeamSide,
-      row: -1,
-      licenseText: `lines=${rosterLines.length} tables=${rosterTables.length}`,
-      nameText: `homeRows=${rosterTables[0]?.rowBoundaries.length ?? "none"} awayRows=${rosterTables[1]?.rowBoundaries.length ?? "none"}`,
-    },
-    ...homeSkipped.map((s) => ({ teamSide: "home" as TeamSide, ...s })),
-    ...awaySkipped.map((s) => ({ teamSide: "away" as TeamSide, ...s })),
-  ];
 
   return {
     matchInfo: {
@@ -244,6 +229,5 @@ export async function parseFeuillematch(extractor: DocumentExtractor): Promise<F
     coaches: [...homeCoaches, ...awayCoaches],
     officials: officialsResult.officials,
     tableOfficials: officialsResult.tableOfficials,
-    debugSkippedRoster,
   };
 }
