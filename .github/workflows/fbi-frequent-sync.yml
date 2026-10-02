@@ -24,10 +24,17 @@ on:
     - cron: "*/15 * * * *"
   workflow_dispatch: {}
 
+# Une seule exécution à la fois (même compte FBI) : une exécution longue
+# (plusieurs jobs, voir plus bas) met la suivante en attente, jamais en
+# parallèle.
+concurrency:
+  group: fbi-frequent-sync
+  cancel-in-progress: false
+
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 14
+    timeout-minutes: 25
     steps:
       # Synchro FFBB (scores, matchs passés en « joué », calendrier) — retour
       # du club, 2026-10-02 : elle n'était appelée QUE par le cron Vercel
@@ -52,21 +59,25 @@ jobs:
             -X GET "https://club-manager-api-two.vercel.app/internal/cron/fbi-enqueue" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
 
-      # Traite UN job de la file (dérogation, calendrier ou téléchargement
-      # e-Marque — quel qu'il soit, le plus ancien en premier). Un statut 200
-      # avec "claimed": 0 signifie juste qu'il n'y avait rien à traiter, ce
-      # n'est jamais une erreur.
-      - name: Traiter un job FBI en attente
+      # Traite les jobs de la file (dérogation, calendrier ou téléchargement
+      # e-Marque, le plus ancien en premier) UN PAR UN, chacun suivi du
+      # parsing de ce qu'il a téléchargé, tant que la file n'est pas vide et
+      # dans un budget de temps borné. Retour du club, 2026-10-02 : à un seul
+      # job par passage (4/heure), un weekend de 10+ matchs — plus les
+      # vérifications de dérogations — mettait des heures à se vider. Un
+      # statut 200 avec "claimed": 0 signifie juste que la file est vide.
+      - name: Traiter les jobs FBI en attente et parser les e-Marque
         run: |
-          curl --fail --silent --show-error --max-time 300 \
-            -X GET "https://club-manager-api-two.vercel.app/internal/cron/fbi-jobs" \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
-
-      # Parse tout document e-Marque téléchargé mais pas encore importé en
-      # statistiques — un statut 200 avec "imported": 0 signifie juste qu'il
-      # n'y avait rien à parser, ce n'est jamais une erreur.
-      - name: Parser les documents e-Marque téléchargés
-        run: |
-          curl --fail --silent --show-error --max-time 60 \
-            -X GET "https://club-manager-api-two.vercel.app/internal/cron/emarque-parse" \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+          start=$(date +%s)
+          for i in 1 2 3 4 5 6; do
+            if [ $(( $(date +%s) - start )) -gt 480 ]; then echo "Budget de temps atteint, la suite au prochain passage."; break; fi
+            out=$(curl --fail --silent --show-error --max-time 300 \
+              -X GET "https://club-manager-api-two.vercel.app/internal/cron/fbi-jobs" \
+              -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}") || { echo "fbi-jobs en échec"; exit 1; }
+            echo "fbi-jobs #$i : $out"
+            curl --fail --silent --show-error --max-time 280 \
+              -X GET "https://club-manager-api-two.vercel.app/internal/cron/emarque-parse" \
+              -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" || echo "emarque-parse en échec (repris au prochain passage)"
+            echo
+            case "$out" in *'"claimed":0'*) break ;; esac
+          done
