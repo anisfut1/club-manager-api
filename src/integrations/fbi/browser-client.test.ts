@@ -39,6 +39,12 @@ beforeEach(() => {
   server.setRoute({ path: "/afficherDerogation.fbi", contentType: "text/html", body: fixture("afficher-derogation.html") });
   server.setRoute({ path: "/detail.fbi", contentType: "text/html", body: fixture("detail.html") });
   server.setRoute({ path: "/export/2813.zip", contentType: "application/zip", body: Buffer.from("contenu-zip-synthetique") });
+  server.setRoute({
+    path: "/export/piece-jointe.zip",
+    contentType: "application/zip",
+    headers: { "content-disposition": 'attachment; filename="emarque.zip"' },
+    body: Buffer.from("contenu-zip-piece-jointe"),
+  });
   // Beacon fetch() déclenché par la fixture rechercher-rencontre.html au
   // clic sur "Rechercher" — reproduit une vraie requête XHR/fetch pour
   // vérifier que la capture réseau (§ "Vingt-septième déclenchement",
@@ -836,6 +842,25 @@ describe("BrowserFbiClient.downloadDocument", () => {
     try {
       const buffer = await client.downloadDocument(session, `${server.baseUrl}/export/2813.zip`);
       expect(buffer.toString("utf8")).toBe("contenu-zip-synthetique");
+    } finally {
+      Object.defineProperty(session.context, "request", { value: realRequest, configurable: true });
+      await client.closeSession(session);
+    }
+  });
+
+  it("retombe sur un vrai téléchargement par navigation quand le fetch de la page ET la pile réseau Node échouent", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+    await session.page.evaluate(() => {
+      window.fetch = () => Promise.reject(new TypeError("Failed to fetch (test)"));
+    });
+    const realRequest = session.context.request;
+    const brokenRequest = () => Promise.reject(new Error("apiRequestContext.get: connect ETIMEDOUT (test)"));
+    Object.defineProperty(session.context, "request", { value: { post: brokenRequest, get: brokenRequest }, configurable: true });
+
+    try {
+      const buffer = await client.downloadDocument(session, `${server.baseUrl}/export/piece-jointe.zip`);
+      expect(buffer.toString("utf8")).toBe("contenu-zip-piece-jointe");
     } finally {
       Object.defineProperty(session.context, "request", { value: realRequest, configurable: true });
       await client.closeSession(session);

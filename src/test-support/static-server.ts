@@ -14,6 +14,8 @@ export interface StaticRoute {
   action?: string;
   contentType: string;
   body: string | Buffer;
+  /** En-têtes de réponse supplémentaires (ex : `content-disposition: attachment` pour simuler un téléchargement). */
+  headers?: Record<string, string>;
 }
 
 export class TestServer {
@@ -38,7 +40,7 @@ export class TestServer {
       }
 
       const contentType = /^text\//.test(route.contentType) && !/charset=/i.test(route.contentType) ? `${route.contentType}; charset=utf-8` : route.contentType;
-      res.writeHead(200, { "content-type": contentType });
+      res.writeHead(200, { "content-type": contentType, ...route.headers });
       res.end(route.body);
     });
 

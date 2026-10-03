@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import type { Browser, BrowserContext, Locator, Page } from "playwright-core";
 import { FbiError } from "./errors.js";
@@ -544,29 +545,39 @@ export class BrowserFbiClient {
       const inPage = await page
         .evaluate(
           async ({ searchUrl, form, query }) => {
-            const controlResponse = await fetch(`${searchUrl}?action=controleRecherche`, {
-              method: "POST",
-              headers: { "X-Requested-With": "XMLHttpRequest", "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
-              body: new URLSearchParams(form).toString(),
-              credentials: "include",
-            });
-            if (!controlResponse.ok) return { error: `controleRecherche HTTP ${controlResponse.status}` };
-            const executeResponse = await fetch(`${searchUrl}?${query}`, { headers: { "X-Requested-With": "XMLHttpRequest" }, credentials: "include" });
-            if (!executeResponse.ok) return { error: `executeRecherche HTTP ${executeResponse.status}` };
-            return { body: await executeResponse.text() };
+            const describe = async (step: string, response: Response) => `${step} HTTP ${response.status} (${(await response.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 160)})`;
+            try {
+              const controlResponse = await fetch(`${searchUrl}?action=controleRecherche`, {
+                method: "POST",
+                headers: { "X-Requested-With": "XMLHttpRequest", "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
+                body: new URLSearchParams(form).toString(),
+                credentials: "include",
+              });
+              if (!controlResponse.ok) return { error: await describe("controleRecherche", controlResponse) };
+              const executeResponse = await fetch(`${searchUrl}?${query}`, { headers: { "X-Requested-With": "XMLHttpRequest" }, credentials: "include" });
+              if (!executeResponse.ok) return { error: await describe("executeRecherche", executeResponse) };
+              return { body: await executeResponse.text() };
+            } catch (error) {
+              return { error: `fetch : ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}` };
+            }
           },
           { searchUrl, form, query },
         )
-        .catch((error: unknown) => ({ error: `fetch navigateur impossible (${error instanceof Error ? error.message.split("\n")[0] : String(error)})` }));
+        .catch((error: unknown) => ({ error: `évaluation dans la page impossible (${error instanceof Error ? error.message.split("\n")[0] : String(error)})` }));
 
       if ("body" in inPage && typeof inPage.body === "string") {
         body = inPage.body;
       } else {
-        const control = await context.request.post(`${searchUrl}?action=controleRecherche`, { form, headers, timeout: 30000 });
-        if (!control.ok()) return { kind: "unavailable", note: `${inPage.error} ; controleRecherche HTTP ${control.status()}` };
-        const execute = await context.request.get(`${searchUrl}?${query}`, { headers, timeout: 30000 });
-        if (!execute.ok()) return { kind: "unavailable", note: `${inPage.error} ; executeRecherche HTTP ${execute.status()}` };
-        body = await execute.text();
+        const browserError = `navigateur : ${inPage.error}`;
+        try {
+          const control = await context.request.post(`${searchUrl}?action=controleRecherche`, { form, headers, timeout: 30000 });
+          if (!control.ok()) return { kind: "unavailable", note: `${browserError} ; Node : controleRecherche HTTP ${control.status()}` };
+          const execute = await context.request.get(`${searchUrl}?${query}`, { headers, timeout: 30000 });
+          if (!execute.ok()) return { kind: "unavailable", note: `${browserError} ; Node : executeRecherche HTTP ${execute.status()}` };
+          body = await execute.text();
+        } catch (error) {
+          return { kind: "unavailable", note: `${browserError} ; Node : ${error instanceof Error ? error.message.split("\n")[0] : String(error)}` };
+        }
       }
 
       let rows;
@@ -2203,19 +2214,31 @@ export class BrowserFbiClient {
     // réseau du navigateur fait retomber sur `context.request` ci-dessous.
     const inPage = await session.page
       .evaluate(async (documentUrl) => {
-        const response = await fetch(documentUrl, { credentials: "include" });
-        if (!response.ok) return { status: response.status, base64: null };
-        const bytes = new Uint8Array(await response.arrayBuffer());
-        let binary = "";
-        for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-          binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+        try {
+          const response = await fetch(documentUrl, { credentials: "include" });
+          if (!response.ok) return { status: response.status, base64: null, error: null };
+          const bytes = new Uint8Array(await response.arrayBuffer());
+          let binary = "";
+          for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+            binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+          }
+          return { status: response.status, base64: btoa(binary), error: null };
+        } catch (error) {
+          return { status: null, base64: null, error: error instanceof Error ? `${error.name}: ${error.message}` : String(error) };
         }
-        return { status: response.status, base64: btoa(binary) };
       }, url)
-      .catch(() => null);
+      .catch((error: unknown) => ({ status: null, base64: null, error: `évaluation dans la page impossible (${error instanceof Error ? error.message.split("\n")[0] : String(error)})` }));
 
-    if (inPage?.base64 != null) return Buffer.from(inPage.base64, "base64");
-    if (inPage) throw new FbiError(`Téléchargement FBI : réponse HTTP ${inPage.status} (${url})`, "REQUEST_FAILED");
+    if (inPage.base64 != null) return Buffer.from(inPage.base64, "base64");
+    if (inPage.status != null) throw new FbiError(`Téléchargement FBI : réponse HTTP ${inPage.status} (${url})`, "REQUEST_FAILED");
+
+    // Deuxième essai, toujours côté navigateur : un VRAI téléchargement par
+    // navigation (comme un clic humain), dans un onglet séparé — suit aussi
+    // une éventuelle redirection vers un autre domaine, qu'un `fetch` de la
+    // page refuserait (CORS).
+    const viaNavigation = await this.downloadViaNavigation(session, url).catch((error: unknown) => (error instanceof Error ? error.message.split("\n")[0] : String(error)));
+    if (Buffer.isBuffer(viaNavigation)) return viaNavigation;
+    const browserError = `navigateur : fetch ${inPage.error} / navigation ${viaNavigation}`;
 
     const maxAttempts = 3;
     let lastNetworkError: unknown;
@@ -2231,7 +2254,7 @@ export class BrowserFbiClient {
           continue;
         }
         throw new FbiError(
-          `Téléchargement FBI : échec réseau après ${maxAttempts} tentatives (${url}) : ${error instanceof Error ? error.message : String(error)}`,
+          `Téléchargement FBI : échec réseau (${browserError} ; Node après ${maxAttempts} tentatives : ${error instanceof Error ? error.message.split("\n")[0] : String(error)}) (${url})`,
           "REQUEST_FAILED",
           error,
         );
@@ -2246,6 +2269,26 @@ export class BrowserFbiClient {
 
     // Jamais atteint (la dernière itération lève toujours) — TypeScript ne le sait pas.
     throw new FbiError(`Téléchargement FBI : échec réseau après ${maxAttempts} tentatives (${url})`, "REQUEST_FAILED", lastNetworkError);
+  }
+
+  private async downloadViaNavigation(session: BrowserFbiSession, url: string): Promise<Buffer> {
+    const tab = await session.context.newPage();
+    try {
+      const downloadPromise = tab.waitForEvent("download", { timeout: 60000 }).catch(() => null);
+      const response = await tab.goto(url, { timeout: 60000 }).catch(() => null);
+      if (response) {
+        if (!response.ok()) throw new Error(`HTTP ${response.status()}`);
+        return await response.body();
+      }
+      const download = await downloadPromise;
+      if (!download) throw new Error("aucun téléchargement déclenché");
+      const failure = await download.failure();
+      if (failure) throw new Error(`téléchargement interrompu (${failure})`);
+      const filePath = await download.path();
+      return await readFile(filePath);
+    } finally {
+      await tab.close().catch(() => {});
+    }
   }
 
   /**
