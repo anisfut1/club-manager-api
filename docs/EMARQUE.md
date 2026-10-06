@@ -375,6 +375,8 @@ Retour du club : « je veux un process clair, où je suis sûr que les matchs se
 | Calendrier des essais | Fenêtre ouverte à la fin du match (début + 2 h) : un essai toutes les 15 min pendant 6 h, puis toutes les heures jusqu'à 48 h, puis toutes les 6 h jusqu'à 7 jours (`nextEmarqueCheckAt`, `src/jobs/backoff.ts`). Jamais dépendant du nombre d'essais. |
 | Panne FBI | Jamais d'abandon : essai suivant au prochain créneau. Seuls des identifiants FBI refusés arrêtent (à corriger dans Intégrations). |
 | Ordre | Les feuilles e-Marque passent avant les autres vérifications FBI, du match le plus ancien au plus récent (`claim_next_fbi_job`). |
+| Connexion FBI | UNE connexion par passage et par club : après le premier match, les autres matchs dus du club sont traités dans la même session (`claim_next_discover_job_in_session`), 2 min max pour démarrer un nouveau match, 3 s entre deux matchs. Une erreur FBI en cours de session arrête l'enchaînement : les matchs restants gardent leur créneau. |
+| Proxy à IP fixe (optionnel) | `FBI_PROXY_URL` (Vercel) : tout le trafic navigateur vers FBI sort par cette adresse fixe au lieu des IP Vercel, partagées et changeantes. Jamais un proxy « rotatif ». |
 | Lecture | Téléchargement puis lecture dans le même passage du planificateur. |
 | Contrôles avant publication | Score de la feuille = score FFBB ; somme des points des joueurs de chaque équipe = score de l'équipe ; maillots uniques (`computeStatsConsistencyWarnings`). Échec → « à vérifier » (`needs_review`) : rien n'est publié au public, la raison est visible par l'admin. |
 | Fin de fenêtre | 7 jours sans feuille → « pas de feuille e-Marque » (`not_available`), état final. |

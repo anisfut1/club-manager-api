@@ -9,7 +9,7 @@ import { attemptBrowserFbiLogin } from "../../integrations/fbi/browser-login-att
 import { FbiError, type FbiErrorCode } from "../../integrations/fbi/errors.js";
 import { FfbbPublicProvider } from "../../integrations/ffbb/public-provider.js";
 import { syncFfbb } from "../../integrations/ffbb/sync.js";
-import { claimNextJobForClub } from "../../jobs/claim.js";
+import { claimNextDiscoverJobInSession, claimNextJobForClub } from "../../jobs/claim.js";
 import { processJobBatch } from "../../jobs/process-batch.js";
 import { checkAllDerogationsForClubSync } from "../derogations/check-all-derogations-sync.js";
 import { reclaimStaleReconcileScheduleJob } from "../derogations/fbi-session-lock.js";
@@ -326,7 +326,9 @@ integrationsRouter.post("/fbi/process-jobs", requireClubRole("club_admin"), asyn
   const serviceSupabase = createServiceSupabaseClient();
   const workerId = `admin-app#${club.id}#${Date.now()}`;
 
-  const result = await processJobBatch(serviceSupabase, CLUB_JOB_BATCH_SIZE, () => claimNextJobForClub(serviceSupabase, club.id, workerId));
+  const result = await processJobBatch(serviceSupabase, CLUB_JOB_BATCH_SIZE, () => claimNextJobForClub(serviceSupabase, club.id, workerId), {
+    claimNextDiscoverInSession: () => claimNextDiscoverJobInSession(serviceSupabase, club.id, workerId),
+  });
 
   return c.json(result);
 });

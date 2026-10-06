@@ -22,6 +22,10 @@ const envSchema = z.object({
     .optional()
     .transform((value) => value === "true"),
   FBI_BASE_URL: z.string().url().optional().default("https://extranet.ffbb.com/fbi"),
+  // Proxy à adresse IP FIXE pour tout le trafic navigateur vers FBI
+  // (http://utilisateur:motdepasse@hote:port). Optionnel : sans lui, sortie
+  // directe depuis les IP Vercel. Voir docs/FBI.md « Proxy à IP fixe ».
+  FBI_PROXY_URL: z.string().url().optional(),
   // Envoi des liens personnels par email (voir src/email/resend.ts). Optionnels :
   // sans clé, la demande de lien répond 503 explicitement, le reste de l'API
   // fonctionne normalement.

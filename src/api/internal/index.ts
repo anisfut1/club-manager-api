@@ -7,7 +7,7 @@ import { syncAllDueClubs } from "../../integrations/ffbb/scheduler.js";
 import { FfbbPublicProvider } from "../../integrations/ffbb/public-provider.js";
 import { enqueueEmarqueDiscoveryJobsForAllClubs } from "../../jobs/enqueue-emarque.js";
 import { enqueueFbiVerificationJobsForAllClubs } from "../../jobs/enqueue-fbi-verifications.js";
-import { claimNextJob } from "../../jobs/claim.js";
+import { claimNextDiscoverJobInSession, claimNextJob } from "../../jobs/claim.js";
 import { processJobBatch } from "../../jobs/process-batch.js";
 import { logError } from "../../logger.js";
 
@@ -104,7 +104,9 @@ const JOB_BATCH_SIZE = 1;
 internalRouter.get("/cron/fbi-jobs", async (c) => {
   const supabase = createServiceSupabaseClient();
   const workerId = `vercel-cron#${Date.now()}`;
-  const result = await processJobBatch(supabase, JOB_BATCH_SIZE, () => claimNextJob(supabase, workerId));
+  const result = await processJobBatch(supabase, JOB_BATCH_SIZE, () => claimNextJob(supabase, workerId), {
+    claimNextDiscoverInSession: (clubId) => claimNextDiscoverJobInSession(supabase, clubId, workerId),
+  });
   return c.json(result);
 });
 

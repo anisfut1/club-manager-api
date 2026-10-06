@@ -15,7 +15,21 @@ export interface ProcessBatchResult {
  * (réclamation scopée à un club, `claim_next_fbi_job_for_club`), voir
  * docs/FBI.md "Neuvième déclenchement".
  */
-export async function processJobBatch(supabase: DbClient, batchSize: number, claimJob: () => Promise<FbiJobRow | null>): Promise<ProcessBatchResult> {
+export interface ProcessBatchOptions {
+  /**
+   * Réclame le prochain job `discover_emarque` dû d'un club DANS la session
+   * FBI déjà ouverte (`claim_next_discover_job_in_session`) — une seule
+   * connexion FBI pour tous les matchs en attente du club.
+   */
+  claimNextDiscoverInSession?: (clubId: string) => Promise<FbiJobRow | null>;
+}
+
+export async function processJobBatch(
+  supabase: DbClient,
+  batchSize: number,
+  claimJob: () => Promise<FbiJobRow | null>,
+  options: ProcessBatchOptions = {},
+): Promise<ProcessBatchResult> {
   let claimed = 0;
   let succeeded = 0;
   let failed = 0;
@@ -43,7 +57,23 @@ export async function processJobBatch(supabase: DbClient, batchSize: number, cla
         jobSucceeded = await processCheckAllDerogationsJob(supabase, job);
       } else {
         const { processDiscoverEmarqueJob } = await import("./process-discover-emarque.js");
-        jobSucceeded = await processDiscoverEmarqueJob(supabase, job);
+        const claimInSession = options.claimNextDiscoverInSession;
+        jobSucceeded = await processDiscoverEmarqueJob(supabase, job, {
+          claimNextInSession: claimInSession
+            ? async () => {
+                const next = await claimInSession(job.club_id);
+                if (next) {
+                  claimed += 1;
+                  logInfo("Job FBI réclamé dans la session ouverte", { jobId: next.id, clubId: next.club_id, type: next.type });
+                }
+                return next;
+              }
+            : undefined,
+          onSessionJobDone: (ok) => {
+            if (ok) succeeded += 1;
+            else failed += 1;
+          },
+        });
       }
       // Les deux fonctions ci-dessus gèrent LEURS PROPRES échecs en
       // interne (reschedule/fail, jamais de `throw` vers cette boucle) —

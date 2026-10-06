@@ -46,6 +46,22 @@ beforeEach(() => {
 });
 
 describe("processJobBatch", () => {
+  it("compte les matchs traités dans la même session FBI (réclamés pour le club du job)", async () => {
+    const claimJob = vi.fn().mockResolvedValueOnce(makeJob({ id: "job-1", club_id: "club-7" })).mockResolvedValue(null);
+    const sessionQueue = [makeJob({ id: "job-2", club_id: "club-7" }), makeJob({ id: "job-3", club_id: "club-7" })];
+    const claimNextDiscoverInSession = vi.fn(async (_clubId: string) => sessionQueue.shift() ?? null);
+    mockProcessDiscoverEmarqueJob.mockImplementation(async (_supabase, _job, options) => {
+      while (await options.claimNextInSession()) options.onSessionJobDone(sessionQueue.length === 0 ? false : true);
+      return true;
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await processJobBatch(makeFakeSupabase() as any, 1, claimJob, { claimNextDiscoverInSession });
+
+    expect(result).toEqual({ claimed: 3, succeeded: 2, failed: 1 });
+    expect(claimNextDiscoverInSession).toHaveBeenCalledWith("club-7");
+  });
+
   it("réclame jusqu'à batchSize jobs et s'arrête dès que la file est vide", async () => {
     const jobs = [makeJob({ id: "job-1" }), makeJob({ id: "job-2" })];
     const claimJob = vi.fn(() => Promise.resolve(jobs.shift() ?? null));

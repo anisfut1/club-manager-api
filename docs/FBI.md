@@ -3856,3 +3856,10 @@ touchant `claim_next_fbi_job`/`claim_next_fbi_job_for_club`** : repartir
 de la dernière version en base (`pg_get_functiondef`), jamais d'un fichier
 de migration antérieur pris isolément — un `create or replace function`
 écrase silencieusement tout correctif qui n'est pas explicitement repris.
+
+## Une connexion par passage + proxy à IP fixe — retour du club, 2026-10-06
+
+Constaté le 2026-10-06 : la plupart des essais de l'heure échouaient sur « Page de connexion FBI injoignable » ou « Failed to fetch », alors que la connexion manuelle du club fonctionnait au même moment. Deux causes cumulées : une connexion complète (identifiant + mot de passe) par match, et des IP de sortie Vercel partagées et changeantes.
+
+1. **Une connexion par passage** : `processDiscoverEmarqueJob` ouvre la session FBI une fois, puis réclame les autres jobs `discover_emarque` dus du même club via `claim_next_discover_job_in_session` (migration `20261006140000`) et les traite dans cette session. Pas de garde « un job actif par club » dans cette fonction : l'appelant détient déjà le job actif du club. Bornes : aucun nouveau match après 2 min, 3 s entre deux matchs, arrêt de l'enchaînement à la première erreur FBI.
+2. **Proxy à IP fixe** : `FBI_PROXY_URL` (format `http://utilisateur:motdepasse@hote:port`, ou `socks5://hote:port`) est passé à Chromium au lancement et à chaque contexte navigateur, ce qui couvre aussi `context.request`. Sans la variable, rien ne change. Utiliser une adresse FIXE dédiée (petit VPS avec un proxy type Squid/tinyproxy, ou un service « static IP »). Ne jamais utiliser un proxy rotatif : le compte du club apparaîtrait depuis des dizaines d'adresses. Les identifiants du proxy ne sont jamais journalisés. `HttpFbiClient` (test de connexion HTTP) n'utilise pas ce proxy.

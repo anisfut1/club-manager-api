@@ -58,3 +58,18 @@ export async function claimNextJobForClub(supabase: DbClient, clubId: string, wo
 
   return isPhantomRow(data) ? null : data;
 }
+
+/**
+ * Prochain job `discover_emarque` dû d'un club, à traiter dans la session
+ * FBI DÉJÀ ouverte par l'appelant (qui détient le job actif du club) — voir
+ * supabase/migrations/20261006140000_fbi_discover_session_claim.sql.
+ */
+export async function claimNextDiscoverJobInSession(supabase: DbClient, clubId: string, workerId: string): Promise<FbiJobRow | null> {
+  const { data, error } = await supabase.rpc("claim_next_discover_job_in_session", { p_club_id: clubId, p_worker_id: workerId });
+
+  if (error) {
+    throw new Error(`Réclamation d'un job e-Marque dans la session FBI échouée : ${error.message}`);
+  }
+
+  return isPhantomRow(data) ? null : data;
+}

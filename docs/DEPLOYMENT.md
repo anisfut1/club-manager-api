@@ -97,6 +97,7 @@ présents) mais échouera silencieusement en production avec `ENOENT`.
 | `FRONTEND_ORIGINS` | Liste d'origines autorisées en CORS, séparées par des virgules |
 | `BROWSER_FBI_ENABLED` | `true`/`false` (défaut `false`) — active `BrowserFbiClient` (voir `docs/FBI.md`) |
 | `FBI_BASE_URL` | URL de base FBI (a une valeur par défaut, surchargeable) |
+| `FBI_PROXY_URL` | Optionnel — proxy à IP fixe pour le trafic navigateur vers FBI (`http://utilisateur:motdepasse@hote:port`). Voir docs/FBI.md « Proxy à IP fixe ». |
 
 Validées au démarrage par `src/config/env.ts` (zod) — une variable
 manquante ou invalide fait échouer le démarrage immédiatement plutôt

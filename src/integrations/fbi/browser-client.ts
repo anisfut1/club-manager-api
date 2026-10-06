@@ -8,6 +8,7 @@ import { normalizeDerogationRow, compareDerogationDateDepot } from "./derogation
 import type { DerogationCreationRequest, DerogationResponseDecision, DerogationResponseOutcome, FbiDerogationDetailFields, FbiDerogationRow, FbiScheduleRow } from "./types.js";
 import { logInfo } from "../../logger.js";
 import { emarqueDownloadUrl, executeSearchQuery, parseSearchResponse, pickRow, searchFormFields } from "./emarque-search.js";
+import { fbiProxySettings } from "./browser-launcher.js";
 
 /**
  * BrowserFbiClient — automatisation Playwright de FBI, utilisée UNIQUEMENT
@@ -218,7 +219,10 @@ export class BrowserFbiClient {
   async login(credentials: { username: string; password: string }): Promise<BrowserFbiSession> {
     // Contexte isolé PAR APPEL : jamais de cookie/session partagée entre deux
     // clubs, même s'ils réutilisent ce même Browser.
-    const context = await this.browser.newContext();
+    // Proxy à IP fixe (`FBI_PROXY_URL`) aussi au niveau du contexte : couvre
+    // `context.request` (requêtes hors page) en plus des pages.
+    const proxy = fbiProxySettings();
+    const context = await this.browser.newContext(proxy ? { proxy } : {});
     const page = await context.newPage();
 
     try {

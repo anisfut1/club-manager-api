@@ -29,6 +29,30 @@ export class BrowserFbiUnavailableError extends Error {
   }
 }
 
+export interface FbiProxySettings {
+  server: string;
+  username?: string;
+  password?: string;
+}
+
+/**
+ * Proxy de sortie vers FBI (`FBI_PROXY_URL`), au format Playwright. Les IP
+ * de Vercel changent à chaque invocation et sont partagées avec d'autres
+ * clients : FBI en coupe régulièrement l'accès (constaté 2026-10-05/06).
+ * Une IP FIXE dédiée — jamais un proxy "rotatif", qui ferait apparaître le
+ * compte du club depuis des dizaines d'adresses — rend l'accès stable.
+ */
+// Lu directement (pas `getEnv()`) : utilisable aussi depuis `BrowserFbiClient` dans les tests sans configuration complète.
+export function fbiProxySettings(proxyUrl: string | undefined = process.env.FBI_PROXY_URL || undefined): FbiProxySettings | undefined {
+  if (!proxyUrl) return undefined;
+  const url = new URL(proxyUrl);
+  return {
+    server: `${url.protocol}//${url.host}`,
+    ...(url.username ? { username: decodeURIComponent(url.username) } : {}),
+    ...(url.password ? { password: decodeURIComponent(url.password) } : {}),
+  };
+}
+
 export async function launchServerlessBrowser(): Promise<Browser> {
   if (!getEnv().BROWSER_FBI_ENABLED) {
     throw new BrowserFbiUnavailableError(
@@ -44,11 +68,14 @@ export async function launchServerlessBrowser(): Promise<Browser> {
   ]);
 
   const executablePath = await chromium.executablePath();
-  logInfo("Lancement de Chromium serverless pour BrowserFbiClient", { executablePath });
+  const proxy = fbiProxySettings();
+  // Jamais l'identifiant/mot de passe du proxy dans les logs : uniquement s'il est actif.
+  logInfo("Lancement de Chromium serverless pour BrowserFbiClient", { executablePath, proxy: proxy ? "actif" : "aucun" });
 
   return playwrightChromium.launch({
     args: chromium.args,
     executablePath,
     headless: true,
+    ...(proxy ? { proxy } : {}),
   });
 }

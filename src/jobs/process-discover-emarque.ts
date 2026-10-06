@@ -64,6 +64,65 @@ async function recordLoginOutcome(supabase: DbClient, clubId: string, success: b
   );
 }
 
+interface DiscoverTarget {
+  match: { id: string; numero: string; match_datetime: string | null };
+  division: string | null;
+}
+
+/** Charge le match du job (et sa division FBI) ; job en échec définitif si le match est inutilisable. */
+async function loadDiscoverTarget(supabase: DbClient, job: FbiJobRow): Promise<DiscoverTarget | null> {
+  if (!job.match_id) {
+    await failJob(supabase, job, "Job discover_emarque sans match_id (ne devrait jamais arriver, voir la contrainte NOT NULL applicative).");
+    return null;
+  }
+
+  const { data: match, error: matchError } = await supabase
+    .from("matches")
+    .select("id, club_id, numero, match_datetime, competition_id")
+    .eq("id", job.match_id)
+    .single();
+
+  if (matchError || !match || !match.numero) {
+    await failJob(supabase, job, `Match introuvable ou sans numéro de rencontre : ${matchError?.message ?? "numero manquant"}`);
+    return null;
+  }
+
+  // `division` (§ "82 vs 51", docs/FBI.md, 2026-09-27 ; retour du club,
+  // 2026-09-30 : "tu confonds les matchs") désambiguïse un numéro de
+  // rencontre qui n'est PAS unique au club — même dérivation que
+  // `process-check-derogation.ts`. `null` (compétition inconnue) reste un
+  // repli best-effort, jamais un échec du job.
+  let division: string | null = null;
+  if (match.competition_id) {
+    const { data: competition } = await supabase.from("competitions").select("code").eq("id", match.competition_id).maybeSingle();
+    division = competition?.code ?? null;
+  }
+
+  return { match: { id: match.id, numero: match.numero, match_datetime: match.match_datetime }, division };
+}
+
+/**
+ * Une connexion FBI pour PLUSIEURS matchs (2026-10-06 : une connexion par
+ * match — identifiant + mot de passe à chaque fois — était précisément ce
+ * que FBI coupait quand plusieurs matchs attendaient). Après le premier
+ * job, les jobs `discover_emarque` dus du MÊME club sont réclamés et
+ * traités dans la même session, tant qu'il reste du temps sur l'invocation
+ * Vercel (`maxDuration` 300 s) — jamais un nouveau match démarré après
+ * `SESSION_NEW_JOB_BUDGET_MS`, une courte pause entre deux matchs.
+ */
+const SESSION_NEW_JOB_BUDGET_MS = 120_000;
+const PAUSE_BETWEEN_MATCHES_MS = 3_000;
+
+export interface DiscoverSessionOptions {
+  /** Réclame le prochain job `discover_emarque` dû du même club, à traiter dans la session déjà ouverte. */
+  claimNextInSession?: () => Promise<FbiJobRow | null>;
+  /** Issue de chaque job SUPPLÉMENTAIRE traité dans la session (le premier est la valeur de retour). */
+  onSessionJobDone?: (succeeded: boolean) => void;
+  /** Surcharge de test. */
+  newJobBudgetMs?: number;
+  pauseBetweenMatchesMs?: number;
+}
+
 /**
  * Traite un job `discover_emarque` : login FBI (navigateur — voir
  * browser-client.ts, l'endpoint HTTP direct n'existe pas pour cette étape),
@@ -83,33 +142,9 @@ async function recordLoginOutcome(supabase: DbClient, clubId: string, success: b
  * admin cliquant "Traiter les jobs FBI en attente" voyait "3 réussis"
  * alors qu'un seul job avait réellement abouti.
  */
-export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobRow): Promise<boolean> {
-  if (!job.match_id) {
-    await failJob(supabase, job, "Job discover_emarque sans match_id (ne devrait jamais arriver, voir la contrainte NOT NULL applicative).");
-    return false;
-  }
-
-  const { data: match, error: matchError } = await supabase
-    .from("matches")
-    .select("id, club_id, numero, match_datetime, competition_id")
-    .eq("id", job.match_id)
-    .single();
-
-  if (matchError || !match || !match.numero) {
-    await failJob(supabase, job, `Match introuvable ou sans numéro de rencontre : ${matchError?.message ?? "numero manquant"}`);
-    return false;
-  }
-
-  // `division` (§ "82 vs 51", docs/FBI.md, 2026-09-27 ; retour du club,
-  // 2026-09-30 : "tu confonds les matchs") désambiguïse un numéro de
-  // rencontre qui n'est PAS unique au club — même dérivation que
-  // `process-check-derogation.ts`. `null` (compétition inconnue) reste un
-  // repli best-effort, jamais un échec du job.
-  let division: string | null = null;
-  if (match.competition_id) {
-    const { data: competition } = await supabase.from("competitions").select("code").eq("id", match.competition_id).maybeSingle();
-    division = competition?.code ?? null;
-  }
+export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobRow, options: DiscoverSessionOptions = {}): Promise<boolean> {
+  const target = await loadDiscoverTarget(supabase, job);
+  if (!target) return false;
 
   const credentials = await getFbiCredentials(supabase, job.club_id);
   if (!credentials) {
@@ -135,7 +170,7 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
       await failJob(supabase, job, message);
     } else {
       // FBI injoignable : jamais d'abandon, créneau suivant du calendrier.
-      await scheduleNextCheck(supabase, job, match.match_datetime, message);
+      await scheduleNextCheck(supabase, job, target.match.match_datetime, message);
     }
 
     logError("Job discover_emarque : connexion FBI échouée", error, { clubId: job.club_id, jobId: job.id, loginStatus: status });
@@ -143,6 +178,47 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
     return false;
   }
 
+  const startedAt = Date.now();
+  const budgetMs = options.newJobBudgetMs ?? SESSION_NEW_JOB_BUDGET_MS;
+  let firstSucceeded = false;
+  let current: { job: FbiJobRow; target: DiscoverTarget } | null = { job, target };
+
+  try {
+    while (current) {
+      const outcome = await discoverWithSession(supabase, client, session, current.job, current.target);
+      if (current.job.id === job.id) firstSucceeded = outcome === "succeeded";
+      else options.onSessionJobDone?.(outcome === "succeeded");
+
+      current = null;
+      // Erreur FBI (coupure, délai dépassé) : on n'insiste pas sur les
+      // matchs suivants dans cette session — ils gardent leur créneau et
+      // seront repris au prochain passage.
+      while (outcome !== "error" && options.claimNextInSession && Date.now() - startedAt < budgetMs) {
+        const nextJob = await options.claimNextInSession();
+        if (!nextJob) break;
+        const nextTarget = await loadDiscoverTarget(supabase, nextJob);
+        if (!nextTarget) {
+          options.onSessionJobDone?.(false);
+          continue;
+        }
+        await new Promise((resolve) => setTimeout(resolve, options.pauseBetweenMatchesMs ?? PAUSE_BETWEEN_MATCHES_MS));
+        current = { job: nextJob, target: nextTarget };
+        break;
+      }
+    }
+  } finally {
+    await client.closeSession(session);
+    await browser.close();
+  }
+
+  return firstSucceeded;
+}
+
+type DiscoverOutcome = "succeeded" | "not_yet" | "error";
+
+/** Recherche + téléchargement d'UN match dans une session FBI déjà ouverte — gère lui-même son issue (succès, créneau suivant). */
+async function discoverWithSession(supabase: DbClient, client: BrowserFbiClient, session: BrowserFbiSession, job: FbiJobRow, target: DiscoverTarget): Promise<DiscoverOutcome> {
+  const { match, division } = target;
   try {
     const season = resolveSeasonLabel(match.match_datetime);
     const { documents, diagnostic } = await client.findEmarqueDocuments(session, match.numero, season, division);
@@ -158,10 +234,10 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
        */
       await scheduleNextCheck(supabase, job, match.match_datetime, diagnostic);
       logInfo("Job discover_emarque : aucun document trouvé pour l'instant, nouvelle tentative planifiée", { clubId: job.club_id, jobId: job.id, matchId: job.match_id });
-      return false;
+      return "not_yet";
     }
 
-    await supabase.from("matches").update({ emarque_status: "downloading" }).eq("id", job.match_id);
+    await supabase.from("matches").update({ emarque_status: "downloading" }).eq("id", match.id);
 
     // Priorité absolue au ZIP complet s'il existe : les documents séparés
     // ne sont téléchargés que si aucun ZIP n'est disponible.
@@ -185,17 +261,17 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
           `[info, pas une erreur] FBI n'a pas renvoyé de ZIP e-Marque pour la rencontre ${match.numero} (${buffer.length} octets, début : ${preview})`,
         );
         logInfo("Job discover_emarque : fichier e-Marque pas encore disponible (réponse non-ZIP)", { clubId: job.club_id, jobId: job.id, matchId: job.match_id });
-        return false;
+        return "not_yet";
       }
       const sha256 = createHash("sha256").update(buffer).digest("hex");
       const type = inferMatchDocumentType(doc.fileName);
-      const storagePath = emarqueStoragePath(job.club_id, season, job.match_id, doc.fileName);
+      const storagePath = emarqueStoragePath(job.club_id, season, match.id, doc.fileName);
 
       await uploadEmarqueFile(supabase, storagePath, buffer, mimeTypeForFileName(doc.fileName));
 
       const { error: insertError } = await supabase.from("match_documents").insert({
         club_id: job.club_id,
-        match_id: job.match_id,
+        match_id: match.id,
         type,
         filename: doc.fileName,
         mime_type: mimeTypeForFileName(doc.fileName),
@@ -220,7 +296,7 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
           .from("match_documents")
           .update({ status: "downloaded", storage_path: storagePath, purged_at: null, last_error: null, downloaded_at: now, updated_at: now })
           .eq("club_id", job.club_id)
-          .eq("match_id", job.match_id)
+          .eq("match_id", match.id)
           .eq("type", type)
           .eq("sha256", sha256);
         if (resetError) throw new Error(`Remise en file du document e-Marque existant échouée : ${resetError.message}`);
@@ -229,14 +305,14 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
       downloadedCount += 1;
     }
 
-    await supabase.from("matches").update({ emarque_status: "downloaded" }).eq("id", job.match_id);
+    await supabase.from("matches").update({ emarque_status: "downloaded" }).eq("id", match.id);
     await supabase
       .from("fbi_jobs")
       .update({ status: "succeeded", finished_at: new Date().toISOString(), result: { documentsFound: documents.length, documentsDownloaded: downloadedCount } })
       .eq("id", job.id);
 
     logInfo("Job discover_emarque réussi", { clubId: job.club_id, jobId: job.id, matchId: job.match_id, documentsDownloaded: downloadedCount });
-    return true;
+    return "succeeded";
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
 
@@ -244,9 +320,6 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
     // match laissé "en erreur" — créneau suivant du calendrier fixe.
     await scheduleNextCheck(supabase, job, match.match_datetime, message);
     logError("Job discover_emarque en erreur", error, { clubId: job.club_id, jobId: job.id, matchId: job.match_id });
-    return false;
-  } finally {
-    await client.closeSession(session);
-    await browser.close();
+    return "error";
   }
 }

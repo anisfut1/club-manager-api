@@ -314,4 +314,67 @@ describe("processDiscoverEmarqueJob", () => {
     expect(recorders.jobUpdates.at(-1)).toMatchObject({ patch: expect.objectContaining({ status: "failed" }) });
     expect(getFbiCredentialsMock).not.toHaveBeenCalled();
   });
+  describe("une seule connexion FBI pour plusieurs matchs du club (2026-10-06)", () => {
+    const zipBytes = Buffer.from("PK\x03\x04contenu-zip-synthetique", "latin1");
+
+    it("se connecte UNE fois et traite les jobs suivants du club dans la même session", async () => {
+      getFbiCredentialsMock.mockResolvedValue({ username: "clubxxxx", password: "correct" });
+      loginMock.mockResolvedValue({ context: {}, page: {} });
+      findEmarqueDocumentsMock.mockResolvedValue({ documents: [{ url: "https://fbi.test/export/2813.zip", fileName: "2813.zip" }], diagnostic: null });
+      downloadDocumentMock.mockResolvedValue(zipBytes);
+
+      const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [] };
+      const supabase = makeFakeSupabase({ match: { id: "match-1", club_id: "club-1", numero: "2813", match_datetime: null }, recorders });
+      const queue = [baseJob({ id: "job-2" }), baseJob({ id: "job-3" })];
+      const claimNextInSession = vi.fn(async () => queue.shift() ?? null);
+      const sessionOutcomes: boolean[] = [];
+
+      const firstSucceeded = await processDiscoverEmarqueJob(supabase, baseJob(), {
+        claimNextInSession,
+        onSessionJobDone: (ok) => sessionOutcomes.push(ok),
+        pauseBetweenMatchesMs: 0,
+      });
+
+      expect(firstSucceeded).toBe(true);
+      expect(sessionOutcomes).toEqual([true, true]);
+      expect(loginMock).toHaveBeenCalledTimes(1);
+      expect(launchServerlessBrowserMock).toHaveBeenCalledTimes(1);
+      expect(findEmarqueDocumentsMock).toHaveBeenCalledTimes(3);
+      expect(claimNextInSession).toHaveBeenCalledTimes(3);
+      const succeededJobs = recorders.jobUpdates.filter((u) => (u.patch as { status: string }).status === "succeeded").map((u) => u.id);
+      expect(succeededJobs).toEqual(["job-1", "job-2", "job-3"]);
+      expect(closeSessionMock).toHaveBeenCalledOnce();
+      expect(closeBrowserMock).toHaveBeenCalledOnce();
+    });
+
+    it("erreur FBI en cours de session : n'enchaîne pas d'autre match (repris au prochain passage)", async () => {
+      getFbiCredentialsMock.mockResolvedValue({ username: "clubxxxx", password: "correct" });
+      loginMock.mockResolvedValue({ context: {}, page: {} });
+      findEmarqueDocumentsMock.mockRejectedValue(new Error("Failed to fetch"));
+
+      const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [] };
+      const supabase = makeFakeSupabase({ match: { id: "match-1", club_id: "club-1", numero: "2813", match_datetime: null }, recorders });
+      const claimNextInSession = vi.fn(async () => baseJob({ id: "job-2" }));
+
+      await processDiscoverEmarqueJob(supabase, baseJob(), { claimNextInSession, pauseBetweenMatchesMs: 0 });
+
+      expect(claimNextInSession).not.toHaveBeenCalled();
+      expect(recorders.jobUpdates.at(-1)).toMatchObject({ id: "job-1", patch: expect.objectContaining({ status: "pending" }) });
+    });
+
+    it("temps de session écoulé : aucun nouveau match démarré", async () => {
+      getFbiCredentialsMock.mockResolvedValue({ username: "clubxxxx", password: "correct" });
+      loginMock.mockResolvedValue({ context: {}, page: {} });
+      findEmarqueDocumentsMock.mockResolvedValue({ documents: [], diagnostic: null });
+
+      const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [] };
+      const supabase = makeFakeSupabase({ match: { id: "match-1", club_id: "club-1", numero: "2813", match_datetime: null }, recorders });
+      const claimNextInSession = vi.fn(async () => baseJob({ id: "job-2" }));
+
+      await processDiscoverEmarqueJob(supabase, baseJob(), { claimNextInSession, newJobBudgetMs: 0, pauseBetweenMatchesMs: 0 });
+
+      expect(claimNextInSession).not.toHaveBeenCalled();
+      expect(findEmarqueDocumentsMock).toHaveBeenCalledTimes(1);
+    });
+  });
 });
