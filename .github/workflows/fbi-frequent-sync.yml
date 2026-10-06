@@ -55,10 +55,15 @@ jobs:
       # (journal public : jamais de contenu de page ni d'identifiant).
       - name: Diagnostic — FBI joignable depuis GitHub
         continue-on-error: true
+        # Résultat remonté en annotation (::notice::), lisible sans les journaux.
         run: |
-          curl --silent --output /dev/null --max-time 45 \
-            --write-out "FBI connexion.fbi depuis GitHub : HTTP %{http_code} en %{time_total}s\n" \
-            "https://extranet.ffbb.com/fbi/connexion.fbi" || echo "FBI injoignable depuis GitHub aussi"
+          for i in 1 2 3; do
+            r=$(curl --silent --output /dev/null --max-time 30 \
+              --write-out "HTTP %{http_code} en %{time_total}s" \
+              "https://extranet.ffbb.com/fbi/connexion.fbi" 2>&1) || r="injoignable ($r)"
+            echo "::notice title=Sonde FBI depuis GitHub $i::$r"
+            sleep 5
+          done
 
       # Empile les jobs récurrents (discover_emarque, reconcile_schedule,
       # check_all_derogations) — idempotent : ne duplique jamais un job déjà
@@ -91,6 +96,7 @@ jobs:
               -X GET "https://club-manager-api-two.vercel.app/internal/cron/fbi-jobs" \
               -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}") || { echo "fbi-jobs en échec (repris au prochain passage)"; break; }
             echo "fbi-jobs #$i : $out"
+            echo "::notice title=fbi-jobs $i::$out"
             curl --fail --silent --show-error --max-time 280 \
               -X GET "https://club-manager-api-two.vercel.app/internal/cron/emarque-parse" \
               -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" || echo "emarque-parse en échec (repris au prochain passage)"
