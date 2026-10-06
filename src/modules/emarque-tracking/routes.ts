@@ -113,7 +113,8 @@ emarqueTrackingRouter.get("/", async (c) => {
 
 /**
  * POST /v1/clubs/:clubId/emarque-tracking/:matchId/relaunch — relance
- * manuelle : essai immédiat au prochain passage du planificateur, puis
+ * manuelle : relecture de la feuille conservée si elle existe encore (30
+ * jours), sinon essai FBI au prochain passage du planificateur puis
  * nouvelle fenêtre de 7 jours au calendrier fixe (`fbi_jobs.window_start`).
  */
 emarqueTrackingRouter.post("/:matchId/relaunch", async (c) => {
@@ -127,6 +128,24 @@ emarqueTrackingRouter.post("/:matchId/relaunch", async (c) => {
   if (match.status !== "played") throw badRequest("Seul un match joué a une feuille e-Marque à récupérer.");
 
   const now = new Date().toISOString();
+
+  // Feuille encore conservée (30 jours) : relecture directe, sans FBI.
+  const { data: storedDoc } = await service
+    .from("match_documents")
+    .select("id")
+    .eq("club_id", club.id)
+    .eq("match_id", matchId)
+    .eq("type", "emarque_zip")
+    .is("purged_at", null)
+    .order("downloaded_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (storedDoc) {
+    await service.from("match_documents").update({ status: "downloaded", updated_at: now }).eq("id", storedDoc.id);
+    await service.from("matches").update({ emarque_status: "downloaded" }).eq("id", matchId);
+    return c.json({ matchId, nextCheckAt: now } satisfies EmarqueTrackingRelaunchDto, 202);
+  }
+
   const { data: pending } = await service
     .from("fbi_jobs")
     .select("id")

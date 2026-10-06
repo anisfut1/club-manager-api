@@ -3,30 +3,75 @@ import { deleteEmarqueFile, downloadEmarqueFile } from "../storage/emarque-stora
 import { parseEmarqueZip, PARSER_VERSION } from "../integrations/emarque/parser/parse-emarque-zip.js";
 import { persistEmarqueMatchData } from "../integrations/emarque/persist/persist-emarque-match.js";
 import { logError, logInfo } from "../logger.js";
+import { currentSeasonStart } from "../season.js";
 
 /**
- * Purge le fichier original une fois le PARSING RÉUSSI — retour du club,
- * 2026-09-29 : "je veux juste l'interpréter, récupérer les stats et
- * ensuite pas la stocker". Jamais appelée sur un échec (voir le `catch`
- * ci-dessous) depuis le retour du club, même jour : "faut corriger les
- * imports des stats... sur tous les matchs, sans bug, sans interruption" —
- * purger un document en erreur supprimait la SEULE preuve exploitable pour
- * diagnostiquer un bug de parsing (constaté sur la rencontre n°3, saison
- * 2026-2027 : impossible de ré-examiner le fichier original une fois
- * purgé), et bloquait toute nouvelle tentative une fois le parseur corrigé
- * (voir `retryFailedEmarqueImports`, modules/platform/maintenance.ts, qui
- * réutilise ce même fichier plutôt que de forcer un nouveau téléchargement
- * FBI). Best-effort et jamais fatal — une suppression Storage en échec ne
- * doit jamais annuler l'import déjà persisté (les stats en base sont ce
- * qui compte, pas le fichier).
+ * Conservation des feuilles e-Marque : 30 jours après leur téléchargement,
+ * puis suppression automatique (retour du club, 2026-10-06 : "oui on peut,
+ * mais faut pas que ça surcharge le serveur" — une feuille pèse 1 à 2 Mo).
+ * Les garder permet de relire un match (parseur corrigé, relance) SANS
+ * retourner sur FBI. Remplace la purge immédiate après lecture.
  */
-async function purgeDocument(supabase: DbClient, documentId: string, storagePath: string): Promise<void> {
-  try {
-    await deleteEmarqueFile(supabase, storagePath);
-    await supabase.from("match_documents").update({ purged_at: new Date().toISOString() }).eq("id", documentId);
-  } catch (error) {
-    logError("Purge Storage d'un document e-Marque après parsing échouée (non bloquant, stats déjà persistées)", error, { documentId, storagePath });
+export const EMARQUE_DOCUMENT_RETENTION_DAYS = 30;
+
+/** Supprime (Storage + `purged_at`) les feuilles lues depuis plus de 30 jours — par petits lots, jamais en masse. */
+export async function purgeExpiredEmarqueDocuments(supabase: DbClient, now: Date = new Date(), limit = 20): Promise<number> {
+  const cutoff = new Date(now.getTime() - EMARQUE_DOCUMENT_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const { data: expired, error } = await supabase
+    .from("match_documents")
+    .select("id, storage_path")
+    .is("purged_at", null)
+    .in("status", ["imported", "error"])
+    .lt("downloaded_at", cutoff)
+    .limit(limit);
+  if (error) throw new Error(`Recherche des feuilles e-Marque expirées échouée : ${error.message}`);
+
+  let purged = 0;
+  for (const doc of expired ?? []) {
+    try {
+      await deleteEmarqueFile(supabase, doc.storage_path);
+      await supabase.from("match_documents").update({ purged_at: now.toISOString() }).eq("id", doc.id);
+      purged += 1;
+    } catch (purgeError) {
+      logError("Suppression d'une feuille e-Marque expirée échouée (réessayée au prochain passage)", purgeError, { documentId: doc.id });
+    }
   }
+  return purged;
+}
+
+/**
+ * Relit automatiquement, depuis la feuille CONSERVÉE (jamais FBI), les
+ * matchs de la saison en cours lus par une version plus ancienne du
+ * parseur — au plus `limit` par passage pour ne jamais surcharger.
+ */
+export async function requeueOutdatedEmarqueParses(supabase: DbClient, limit = 2): Promise<number> {
+  const { data: docs, error } = await supabase
+    .from("match_documents")
+    .select("id, match_id")
+    .eq("type", "emarque_zip")
+    .eq("status", "imported")
+    .is("purged_at", null);
+  if (error) throw new Error(`Recherche des feuilles e-Marque conservées échouée : ${error.message}`);
+  if (!docs || docs.length === 0) return 0;
+
+  const matchIds = [...new Set(docs.map((d) => d.match_id))];
+  const [{ data: seasonMatches }, { data: imports }] = await Promise.all([
+    supabase.from("matches").select("id").in("id", matchIds).gte("match_datetime", currentSeasonStart().toISOString()),
+    supabase.from("emarque_imports").select("match_id, parser_version, created_at").in("match_id", matchIds),
+  ]);
+  const inSeason = new Set((seasonMatches ?? []).map((m) => m.id));
+  const latestVersion = new Map<string, { version: string | null; createdAt: string }>();
+  for (const row of imports ?? []) {
+    const current = latestVersion.get(row.match_id);
+    if (!current || current.createdAt < row.created_at) latestVersion.set(row.match_id, { version: row.parser_version, createdAt: row.created_at });
+  }
+
+  const outdated = docs.filter((d) => inSeason.has(d.match_id) && latestVersion.get(d.match_id)?.version !== PARSER_VERSION).slice(0, limit);
+  for (const doc of outdated) {
+    await supabase.from("match_documents").update({ status: "downloaded", updated_at: new Date().toISOString() }).eq("id", doc.id);
+  }
+  if (outdated.length > 0) logInfo("Relecture automatique de feuilles e-Marque conservées (parseur plus récent)", { count: outdated.length, parserVersion: PARSER_VERSION });
+  return outdated.length;
 }
 
 export interface ParseDownloadedDocumentsResult {
@@ -65,6 +110,8 @@ export async function parseDownloadedEmarqueDocuments(supabase: DbClient, option
     .eq("status", "downloaded");
 
   if (options.clubId) builder = builder.eq("club_id", options.clubId);
+  // Feuilles fraîchement téléchargées (matchs récents) avant les relectures.
+  builder = builder.order("downloaded_at", { ascending: false });
   if (options.limit) builder = builder.limit(options.limit);
 
   const { data: pendingDocs, error: pendingError } = await builder;
@@ -120,7 +167,6 @@ export async function parseDownloadedEmarqueDocuments(supabase: DbClient, option
 
       await supabase.from("match_documents").update({ status: "imported", updated_at: new Date().toISOString() }).eq("id", doc.id);
       result.imported += 1;
-      await purgeDocument(supabase, doc.id, doc.storage_path);
     } catch (error) {
       result.errors += 1;
       const message = error instanceof Error ? error.message : String(error);
@@ -132,9 +178,8 @@ export async function parseDownloadedEmarqueDocuments(supabase: DbClient, option
 
       logError("Parsing d'un document e-Marque téléchargé en erreur", error, { documentId: doc.id, matchId: doc.match_id, clubId: doc.club_id });
 
-      // Le fichier n'est JAMAIS purgé ici — voir la doc de `purgeDocument`
-      // ci-dessus : conservé pour diagnostic ET pour une nouvelle tentative
-      // (`retryFailedEmarqueImports`) une fois le parseur corrigé.
+      // Fichier conservé (30 jours, voir `purgeExpiredEmarqueDocuments`) :
+      // diagnostic et nouvelle tentative possibles sans retourner sur FBI.
     }
   }
 

@@ -378,6 +378,8 @@ Retour du club : « je veux un process clair, où je suis sûr que les matchs se
 | Lecture | Téléchargement puis lecture dans le même passage du planificateur. |
 | Contrôles avant publication | Score de la feuille = score FFBB ; somme des points des joueurs de chaque équipe = score de l'équipe ; maillots uniques (`computeStatsConsistencyWarnings`). Échec → « à vérifier » (`needs_review`) : rien n'est publié au public, la raison est visible par l'admin. |
 | Fin de fenêtre | 7 jours sans feuille → « pas de feuille e-Marque » (`not_available`), état final. |
-| Relance manuelle | Admin → Suivi des stats → Relancer : essai au prochain passage, puis nouvelle fenêtre de 7 jours (`fbi_jobs.window_start`). |
+| Relance manuelle | Admin → Suivi des stats → Relancer : relecture de la feuille conservée si elle existe, sinon essai FBI au prochain passage puis nouvelle fenêtre de 7 jours (`fbi_jobs.window_start`). |
+| Conservation | Feuille gardée 30 jours après téléchargement, puis supprimée automatiquement (20 max par passage). Saison en cours uniquement. |
+| Parseur amélioré | Les feuilles conservées de la saison lues par une version plus ancienne sont relues automatiquement, 2 par passage, sans FBI. Lecture : 3 feuilles max par appel, matchs les plus récents d'abord. |
 
 Suivi : `GET /v1/clubs/:clubId/emarque-tracking` (état clair par match joué, prochain essai, résultat du dernier essai, problèmes), `POST .../:matchId/relaunch`.

@@ -112,9 +112,13 @@ internalRouter.get("/cron/fbi-jobs", async (c) => {
 internalRouter.get("/cron/emarque-parse", async (c) => {
   const supabase = createServiceSupabaseClient();
   try {
-    const { parseDownloadedEmarqueDocuments } = await import("../../jobs/parse-downloaded-documents.js");
-    const result = await parseDownloadedEmarqueDocuments(supabase);
-    return c.json(result);
+    const { parseDownloadedEmarqueDocuments, purgeExpiredEmarqueDocuments, requeueOutdatedEmarqueParses } = await import("../../jobs/parse-downloaded-documents.js");
+    // Charge bornée à chaque appel : au plus 3 lectures OCR (les matchs les
+    // plus récents d'abord), 2 relectures remises en file, 20 suppressions.
+    const purged = await purgeExpiredEmarqueDocuments(supabase);
+    const requeued = await requeueOutdatedEmarqueParses(supabase);
+    const result = await parseDownloadedEmarqueDocuments(supabase, { limit: 3 });
+    return c.json({ ...result, purged, requeued });
   } catch (error) {
     logError("Cron de parsing e-Marque en erreur", error);
     return c.json({ error: "emarque_parse_failed" }, 500);
