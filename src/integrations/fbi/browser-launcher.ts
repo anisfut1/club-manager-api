@@ -42,8 +42,14 @@ export interface FbiProxySettings {
  * Une IP FIXE dédiée — jamais un proxy "rotatif", qui ferait apparaître le
  * compte du club depuis des dizaines d'adresses — rend l'accès stable.
  */
-// Lu directement (pas `getEnv()`) : utilisable aussi depuis `BrowserFbiClient` dans les tests sans configuration complète.
-export function fbiProxySettings(proxyUrl: string | undefined = process.env.FBI_PROXY_URL || undefined): FbiProxySettings | undefined {
+/**
+ * Adresse du proxy lue en base (`platform_settings.fbi_proxy_url`) au
+ * lancement du navigateur — modifiable sans redéploiement Vercel. La
+ * variable d'environnement `FBI_PROXY_URL`, si elle existe, reste prioritaire.
+ */
+let proxyUrlFromDatabase: string | undefined;
+
+export function fbiProxySettings(proxyUrl: string | undefined = process.env.FBI_PROXY_URL || proxyUrlFromDatabase): FbiProxySettings | undefined {
   if (!proxyUrl) return undefined;
   const url = new URL(proxyUrl);
   return {
@@ -68,6 +74,7 @@ export async function launchServerlessBrowser(): Promise<Browser> {
   ]);
 
   const executablePath = await chromium.executablePath();
+  proxyUrlFromDatabase = await readProxyUrlFromDatabase();
   const proxy = fbiProxySettings();
   // Jamais l'identifiant/mot de passe du proxy dans les logs : uniquement s'il est actif.
   logInfo("Lancement de Chromium serverless pour BrowserFbiClient", { executablePath, proxy: proxy ? "actif" : "aucun" });
@@ -78,4 +85,18 @@ export async function launchServerlessBrowser(): Promise<Browser> {
     headless: true,
     ...(proxy ? { proxy } : {}),
   });
+}
+
+async function readProxyUrlFromDatabase(): Promise<string | undefined> {
+  if (process.env.FBI_PROXY_URL) return undefined;
+  try {
+    const { createServiceSupabaseClient } = await import("../../db/client.js");
+    const { data } = await createServiceSupabaseClient().from("platform_settings").select("value").eq("key", "fbi_proxy_url").maybeSingle();
+    if (!data?.value) return undefined;
+    new URL(data.value); // valeur invalide → sortie directe plutôt qu'un échec au lancement
+    return data.value;
+  } catch {
+    // Réglage illisible : sortie directe, jamais un échec du job pour ça.
+    return undefined;
+  }
 }

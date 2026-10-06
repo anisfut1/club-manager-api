@@ -3879,3 +3879,5 @@ Le script `ops/fbi-proxy/install.sh` :
 - teste FBI à travers le proxy et affiche la valeur `FBI_PROXY_URL` à ajouter dans Vercel (projet club-manager-api, Production), puis redéployer.
 
 Les identifiants FBI des clubs ne transitent jamais en clair par le VPS : Chrome ouvre un tunnel HTTPS de bout en bout jusqu'à FBI à travers le proxy.
+
+**Sans passer par Vercel** : l'adresse du proxy peut aussi être enregistrée en base, `platform_settings` (clé `fbi_proxy_url`, migration `20261006170000`, service_role uniquement). Elle est lue à chaque lancement du navigateur : active au passage suivant, sans redéploiement. La variable `FBI_PROXY_URL`, si elle existe dans Vercel, reste prioritaire. Valeur invalide ou illisible : sortie directe, jamais un échec du job.

@@ -638,6 +638,10 @@ export interface Database {
         }
       >;
 
+      platform_settings: Table<
+        { key: string; value: string; updated_at: string },
+        { key: string; value: string; updated_at?: string }
+      >;
       fbi_integration_status: Table<
         {
           id: string;
