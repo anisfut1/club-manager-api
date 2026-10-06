@@ -3909,3 +3909,14 @@ Mesures :
 Avec le rythme humain, la coupure tombe environ 9 s après `POST /fbi/identification.fbi`, avant toute recherche et tout téléchargement. Signature serveur : `server: Apache`, seul cookie `JSESSIONID`. Il n'y a donc pas de pare-feu anti-robots commercial, mais une règle réseau côté FFBB. Toutes les coupures de la journée suivent une connexion avec identifiants, et l'app en faisait jusqu'à plusieurs centaines par jour.
 
 Correctif : plafond d'**une connexion identifiant/mot de passe toutes les 3 h par club** (`fbi_integration_status.last_credential_login_at`, migration `20261006200000`, enregistré juste avant l'envoi des identifiants). Entre deux connexions, seule la session conservée est reprise, et une coupure réseau ne la supprime plus. Sans session à reprendre et avec le plafond atteint, aucun accès à FBI : les jobs du club sont repoussés à l'heure autorisée. Si la session conservée est refusée par FBI alors que le plafond est atteint, elle est supprimée et les jobs sont repoussés de la même façon.
+
+### 2026-10-06 soir : retour au fonctionnement « un match par passage, adresse Vercel, déconnexion »
+
+Constats :
+- 17:12 : le VPS est débloqué, environ 4 h après sa coupure de 13:03.
+- 17:48 : à travers le VPS, première connexion avec identifiants depuis 3 h. La connexion réussit, puis l'adresse est coupée environ 8 s plus tard.
+- 18:38 : la session de 17:49 est reprise depuis une adresse Vercel et FBI la refuse (page de connexion). Elle est liée à l'adresse d'origine, ou a expiré.
+
+Les coupures existaient déjà fin septembre (`connect ETIMEDOUT` notés les 30/09 et 02/10). L'ancien fonctionnement, un match par invocation, chacune depuis une adresse Vercel souvent différente, les rendait invisibles. Le 06/10, trois changements les ont rendues bloquantes : la relecture de 19 matchs d'un coup, l'enchaînement de plusieurs matchs par session, et une adresse fixe (VPS, coupée environ 4 h).
+
+Retenu : un match par passage (`MAX_MATCHES_PER_SESSION = 1`), en direct depuis Vercel, avec connexion puis déconnexion à chaque fois. On abandonne le plafond de 3 h et la reprise de session (la table `fbi_saved_sessions` reste, inutilisée). La vérification préalable de joignabilité, les délais maximum, le rythme humain et les traces restent en place. Le proxy (`platform_settings.fbi_proxy_url`) est retiré de la configuration. Le code reste prêt si la FFBB autorise un jour une adresse fixe.
