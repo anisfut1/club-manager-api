@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildFakeClubSupabase, makeFakeClubSupabaseState, type FakeClubSupabaseState } from "../../test-support/fake-club-supabase.js";
 
 let state: FakeClubSupabaseState;
@@ -41,6 +41,17 @@ beforeEach(() => {
     memberships: [{ id: "membership-a1", club_id: CLUB_A.id, user_id: "user-a", status: "active" }],
     roles: [{ membership_id: "membership-a1", role: "club_admin" }],
   });
+});
+
+
+// Horloge figée (seul `Date` est simulé) — correction automatique du 27/09/2026 : "récente" uniquement si l'horloge est figée juste après ; sans ça ces tests
+// échouent dès que la date réelle dépasse celle des fixtures.
+beforeAll(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-09-28T08:00:00Z"));
+});
+afterAll(() => {
+  vi.useRealTimers();
 });
 
 describe("GET /:clubId/issues", () => {

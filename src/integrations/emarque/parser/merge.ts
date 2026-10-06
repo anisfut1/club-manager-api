@@ -1,164 +1,160 @@
-import type { EMarquePlayer, EMarquePlayerStat, TeamSide } from "../types.js";
+import type { EMarquePlayer, EMarquePlayerStat } from "../types.js";
 import type { ResumeRowResult } from "./parse-resume.js";
 
-function statKey(teamSide: string, jerseyNumber: string | null): string {
-  return `${teamSide}:${jerseyNumber ?? ""}`;
+/** Nom réduit à ses lettres (sans accents, casse, espaces ni ponctuation) — uniquement pour comparer deux graphies, jamais affiché ni persisté. */
+function letters(value: string | null | undefined): string {
+  return (value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "");
 }
 
 /**
- * Normalise un nom pour une comparaison approximative (voir
- * `matchByLastName` ci-dessous) : jamais utilisé pour l'affichage ou la
- * persistance, uniquement pour décider si deux graphies désignent
- * probablement la même personne.
+ * Deux graphies du même nom de famille ? L'une contient l'autre une fois
+ * réduites à leurs lettres : absorbe l'initiale collée par l'OCR de
+ * "feuillematch" ("MEHENNIS." pour MEHENNI S., "JACQUETE." pour JACQUET E.)
+ * et la troncature ("CHAUSSINAND MOHAMM..." pour CHAUSSINAND MOHAMMED).
  */
-function normalizeLastName(lastName: string | null): string | null {
-  if (!lastName) return null;
-  const normalized = lastName.trim().toUpperCase().replace(/\s+/g, " ");
-  return normalized || null;
+function sameLastName(a: string | null, b: string | null): boolean {
+  const x = letters(a);
+  const y = letters(b);
+  return Boolean(x && y) && (x.includes(y) || y.includes(x));
+}
+
+/** Initiales de prénom compatibles — inconnue d'un côté = pas de contradiction. */
+function sameFirstInitial(a: string | null, b: string | null): boolean {
+  const x = letters(a)[0];
+  const y = letters(b)[0];
+  return !x || !y || x === y;
 }
 
 /**
- * Complète l'effectif (identité + licence, extrait de feuillematch) avec le
- * statut "titulaire" et les statistiques (extraits de resume), en les
- * rapprochant par numéro de maillot + équipe (les deux documents partagent
- * cette numérotation, contrairement au numéro de licence qui n'apparaît pas
- * dans "resume").
+ * Maillot retenu quand les deux documents en ont lu un différent. "resume"
+ * (tableau simple, une donnée par cellule) se lit mieux que "feuillematch"
+ * (retour du club, 2026-10-06, rencontre n°2645 : "feuillematch" a lu 1
+ * pour 9, 2 pour 22, 5 pour 15, 10 pour 8) — SAUF quand le maillot de
+ * "resume" est contenu dans celui de "feuillematch" : chiffre perdu côté
+ * "resume" (rencontre n°1481 : "1" lu pour 11).
+ */
+function resolveJerseyNumber(fromSheet: string | null, fromResume: string | null): string | null {
+  if (!fromSheet) return fromResume;
+  if (!fromResume || fromSheet === fromResume) return fromSheet;
+  return fromSheet.length > fromResume.length && fromSheet.includes(fromResume) ? fromSheet : fromResume;
+}
+
+/**
+ * Complète l'effectif "feuillematch" (licence, capitanat) avec les lignes
+ * "resume" (identité complète, titulaire, statistiques).
  *
- * Constaté en production (rencontre n°1481, § "Trente-deuxième
- * déclenchement", docs/FBI.md) : une ligne de statistiques SANS joueur
- * correspondant dans l'effectif (ex : numéro de maillot mal lu côté
- * "feuillematch", document à la calibration OCR moins fiable, voir
- * `feuillematch-layout.ts`) était conservée dans `playerStats` mais
- * `persist-emarque-match.ts#insertPlayerStats` l'ignore silencieusement
- * faute de `participant_id` à quoi la rattacher — le joueur disparaissait
- * ENTIÈREMENT de l'affichage malgré des statistiques parfaitement lues.
- * Corrigé une première fois en synthétisant un joueur minimal à partir de
- * la ligne "resume" quand aucun joueur "feuillematch" ne correspond par
- * maillot exact.
+ * Retour du club, 2026-10-06 (rencontre n°2645, Seniors 1 M) : le
+ * rapprochement se faisait d'abord par numéro de maillot, avec le maillot
+ * de "feuillematch" jugé prioritaire. Or l'OCR de "feuillematch" lit
+ * parfois un mauvais maillot : les statistiques de SALEM Sanaa (10)
+ * s'affichaient sous "Sanaa SCHNEIDER" (maillot lu 10 pour SCHNEIDER Theo,
+ * en réalité 8), avec la licence du mauvais joueur.
  *
- * Constaté ENSUITE en production (même rencontre, § "Trente-troisième
- * déclenchement", docs/FBI.md) : ce premier correctif créait un DOUBLON
- * quand "feuillematch" avait bien trouvé le joueur (nom, licence, statut
- * capitaine — des données que "resume" n'a jamais) mais avait échoué à en
- * lire SEULEMENT le numéro de maillot — la comparaison stricte par maillot
- * ne pouvait jamais les rapprocher, donc chacun des deux documents
- * produisait sa propre ligne pour la même personne. Corrigé : avant de
- * synthétiser un nouveau joueur, on tente un rapprochement par NOM DE
- * FAMILLE avec un joueur "feuillematch" — mais SEULEMENT quand ce
- * rapprochement est SANS AMBIGUÏTÉ (exactement un candidat), jamais une
- * supposition risquée entre plusieurs possibles.
- *
- * Constaté ENCORE ENSUITE en production (même rencontre n°1481, §
- * "Trente-cinquième déclenchement", docs/FBI.md) : le rapprochement par nom
- * ci-dessus ne se déclenchait QUE quand le maillot "feuillematch" était
- * `null` — pas quand "feuillematch" avait bien lu un maillot mais que
- * "resume" avait mal lu LE SIEN (ex : "11" lu "1", confusion connue sur un
- * chiffre répété, voir `parse-resume.ts`). Dans ce cas la comparaison
- * exacte de la passe 1 échouait des deux côtés (aucune ligne "resume" n'a
- * le maillot "11"), et la ligne "resume" au maillot erroné ("1") restait
- * non réclamée puis synthétisée en un DEUXIÈME participant fantôme (sans
- * licence) — les vraies statistiques de la joueuse s'attachaient à ce
- * fantôme, jamais à son participant licencié. Corrigé : la passe 2
- * s'applique désormais à tout joueur "feuillematch" non rapproché par la
- * passe 1, maillot lu ou non — mais ne réattribue JAMAIS un maillot déjà
- * lu par "feuillematch" (plus fiable que celui, potentiellement erroné, de
- * "resume") : seul un maillot `null` est comblé depuis "resume".
- *
- * Profite de ce rapprochement par nom pour ramener aussi le PRÉNOM COMPLET
- * de "resume" ("NOM, Prénom", jamais abrégé) par-dessus celui, abrégé à une
- * lettre, de "feuillematch" ("NOM P." — c'est le document lui-même qui
- * l'imprime ainsi, voir `splitUppercaseAbbreviatedName`) — demande du club
- * (§ "Trente-cinquième déclenchement") en vue d'une future fiche joueur
- * lisible. Le reste de l'identité (nom de famille, licence, capitanat)
- * reste TOUJOURS celui de "feuillematch", jamais écrasé par "resume".
+ * Désormais :
+ * 1. rapprochement par NOM DE FAMILLE (+ initiale du prénom) d'abord, sans
+ *    ambiguïté uniquement — une ligne et un joueur qui ne se désignent
+ *    l'un l'autre que mutuellement ;
+ * 2. puis par maillot, seulement si les noms ne se contredisent pas ;
+ * 3. identité affichée = celle de "resume" (NOM, Prénom complets et
+ *    propres) quand elle est lue, licence et capitanat = "feuillematch" ;
+ * 4. maillot : voir `resolveJerseyNumber`.
+ * Une ligne "resume" sans joueur correspondant devient un joueur à part
+ * entière (sans licence — jamais inventée) ; un joueur "feuillematch" sans
+ * ligne correspondante est conservé, sans statistiques.
  */
 export function mergePlayersWithStats(
   players: EMarquePlayer[],
   statsRows: ResumeRowResult[],
 ): { players: EMarquePlayer[]; playerStats: EMarquePlayerStat[] } {
-  const claimedStatKeys = new Set<string>();
-  const matchedPlayerIndices = new Set<number>();
-  // Statistiques résolues, réindexées sous l'IDENTITÉ FINALE du joueur
-  // (jamais celle, potentiellement erronée, lue par "resume") — sans quoi
-  // `persist-emarque-match.ts#insertPlayerStats` (qui recherche le
-  // participant par `${teamSide}:${jerseyNumber}`) ne retrouverait plus la
-  // ligne quand la passe 2 corrige un maillot "resume" faux : exactement le
-  // bug du "Trente-deuxième déclenchement" réapparaissant sous une autre
-  // forme si on avait laissé `playerStats` dérivé naïvement de `statsRows`.
-  const resolvedStats: Array<{ teamSide: TeamSide; jerseyNumber: string | null; row: ResumeRowResult }> = [];
+  const pairs = new Map<number, number>(); // index ligne "resume" -> index joueur "feuillematch"
+  const pairedPlayers = new Set<number>();
 
-  // Passe 1 : rapprochement exact par maillot (fiable, prioritaire) — sur
-  // TOUS les joueurs d'abord, pour que la passe 2 (approximative) ne
-  // considère que les lignes "resume" restées sans propriétaire après ça.
-  const exactMatchedPlayers = players.map((player, index) => {
-    if (player.jerseyNumber === null) return player;
-    const match = statsRows.find((row) => row.teamSide === player.teamSide && row.jerseyNumber === player.jerseyNumber);
-    if (!match) return player;
-    claimedStatKeys.add(statKey(match.teamSide, match.jerseyNumber));
-    matchedPlayerIndices.add(index);
-    resolvedStats.push({ teamSide: player.teamSide, jerseyNumber: player.jerseyNumber, row: match });
-    return { ...player, isStarter: match.isStarter, firstName: match.firstName ?? player.firstName };
+  // 1. Par nom : candidats compatibles de chaque ligne, puis appariement
+  //    mutuellement unique (un joueur revendiqué par deux lignes = ambigu).
+  const candidatesByRow = statsRows.map((row) =>
+    players
+      .map((player, index) => ({ player, index }))
+      .filter(({ player }) => player.teamSide === row.teamSide && sameLastName(player.lastName, row.lastName) && sameFirstInitial(player.firstName, row.firstName))
+      .map(({ index }) => index),
+  );
+  const claimsByPlayer = new Map<number, number>();
+  for (const candidates of candidatesByRow) for (const index of candidates) claimsByPlayer.set(index, (claimsByPlayer.get(index) ?? 0) + 1);
+
+  statsRows.forEach((row, rowIndex) => {
+    let candidates = candidatesByRow[rowIndex]!;
+    if (candidates.length > 1) candidates = candidates.filter((index) => players[index]!.jerseyNumber === row.jerseyNumber);
+    if (candidates.length !== 1) return;
+    const playerIndex = candidates[0]!;
+    if (pairedPlayers.has(playerIndex) || (claimsByPlayer.get(playerIndex) ?? 0) > 1) return;
+    pairs.set(rowIndex, playerIndex);
+    pairedPlayers.add(playerIndex);
   });
 
-  // Passe 2 : pour un joueur "feuillematch" non rapproché par la passe 1
-  // (maillot manquant OU maillot lu mais sans ligne "resume" correspondante,
-  // voir la note ci-dessus), tente un rapprochement par nom de famille avec
-  // une ligne "resume" encore non réclamée, sur la même équipe.
-  const updatedPlayers = exactMatchedPlayers.map((player, index) => {
-    if (matchedPlayerIndices.has(index)) return player;
-
-    const normalizedPlayerLastName = normalizeLastName(player.lastName);
-    if (!normalizedPlayerLastName) return player;
-
-    const candidates = statsRows.filter((row) => {
-      if (row.teamSide !== player.teamSide || claimedStatKeys.has(statKey(row.teamSide, row.jerseyNumber))) return false;
-      const normalizedRowLastName = normalizeLastName(row.lastName);
-      if (!normalizedRowLastName) return false;
-      return normalizedPlayerLastName.includes(normalizedRowLastName) || normalizedRowLastName.includes(normalizedPlayerLastName);
-    });
-
-    if (candidates.length !== 1) return player;
-
-    const match = candidates[0]!;
-    claimedStatKeys.add(statKey(match.teamSide, match.jerseyNumber));
-    // Ne comble le maillot depuis "resume" que s'il manquait : un maillot
-    // déjà lu par "feuillematch" est toujours conservé tel quel, jamais
-    // remplacé par celui, potentiellement erroné, de "resume".
-    const resolvedJerseyNumber = player.jerseyNumber ?? match.jerseyNumber;
-    resolvedStats.push({ teamSide: player.teamSide, jerseyNumber: resolvedJerseyNumber, row: match });
-    return { ...player, jerseyNumber: resolvedJerseyNumber, isStarter: match.isStarter, firstName: match.firstName ?? player.firstName };
+  // 2. Par maillot, pour le reste — jamais quand les deux noms sont lus et
+  //    se contredisent.
+  statsRows.forEach((row, rowIndex) => {
+    if (pairs.has(rowIndex) || row.jerseyNumber === null) return;
+    const playerIndex = players.findIndex(
+      (player, index) =>
+        !pairedPlayers.has(index) &&
+        player.teamSide === row.teamSide &&
+        player.jerseyNumber === row.jerseyNumber &&
+        (!letters(player.lastName) || !letters(row.lastName) || sameLastName(player.lastName, row.lastName)),
+    );
+    if (playerIndex === -1) return;
+    pairs.set(rowIndex, playerIndex);
+    pairedPlayers.add(playerIndex);
   });
 
-  const synthesizedPlayers: EMarquePlayer[] = statsRows
-    .filter((row) => !claimedStatKeys.has(statKey(row.teamSide, row.jerseyNumber)))
-    .map((row) => {
-      resolvedStats.push({ teamSide: row.teamSide, jerseyNumber: row.jerseyNumber, row });
-      return {
-        teamSide: row.teamSide,
-        jerseyNumber: row.jerseyNumber,
-        lastName: row.lastName,
-        firstName: row.firstName,
-        licenseNumber: null,
-        isCaptain: false,
-        isStarter: row.isStarter,
-        confidence: null,
-      };
+  const merged: EMarquePlayer[] = [];
+  const playerStats: EMarquePlayerStat[] = [];
+
+  statsRows.forEach((row, rowIndex) => {
+    const playerIndex = pairs.get(rowIndex);
+    const sheetPlayer = playerIndex === undefined ? null : players[playerIndex]!;
+    const jerseyNumber = resolveJerseyNumber(sheetPlayer?.jerseyNumber ?? null, row.jerseyNumber);
+
+    merged.push({
+      teamSide: row.teamSide,
+      jerseyNumber,
+      lastName: row.lastName ?? sheetPlayer?.lastName ?? null,
+      firstName: row.firstName ?? sheetPlayer?.firstName ?? null,
+      licenseNumber: sheetPlayer?.licenseNumber ?? null,
+      isCaptain: sheetPlayer?.isCaptain ?? false,
+      isStarter: row.isStarter,
+      confidence: sheetPlayer?.confidence ?? null,
     });
+    playerStats.push({
+      teamSide: row.teamSide,
+      jerseyNumber,
+      lastName: row.lastName,
+      firstName: row.firstName,
+      secondsPlayed: row.secondsPlayed,
+      points: row.points,
+      shotsMade: row.shotsMade,
+      threePointsMade: row.threePointsMade,
+      twoPointsInteriorMade: row.twoPointsInteriorMade,
+      twoPointsExteriorMade: row.twoPointsExteriorMade,
+      freeThrowsMade: row.freeThrowsMade,
+      foulsCommitted: row.foulsCommitted,
+    });
+  });
 
-  const playerStats: EMarquePlayerStat[] = resolvedStats.map(({ teamSide, jerseyNumber, row }) => ({
-    teamSide,
-    jerseyNumber,
-    lastName: row.lastName,
-    firstName: row.firstName,
-    secondsPlayed: row.secondsPlayed,
-    points: row.points,
-    shotsMade: row.shotsMade,
-    threePointsMade: row.threePointsMade,
-    twoPointsInteriorMade: row.twoPointsInteriorMade,
-    twoPointsExteriorMade: row.twoPointsExteriorMade,
-    freeThrowsMade: row.freeThrowsMade,
-    foulsCommitted: row.foulsCommitted,
-  }));
+  // Joueurs "feuillematch" sans ligne "resume" : conservés, sans maillot
+  // s'il est déjà porté par un autre joueur de la même équipe (maillot mal
+  // lu) — sans quoi les statistiques de l'autre pourraient s'y rattacher.
+  const takenJerseys = new Set(merged.map((player) => `${player.teamSide}:${player.jerseyNumber ?? ""}`));
+  players.forEach((player, index) => {
+    if (pairedPlayers.has(index)) return;
+    const key = `${player.teamSide}:${player.jerseyNumber ?? ""}`;
+    const jerseyNumber = player.jerseyNumber !== null && takenJerseys.has(key) ? null : player.jerseyNumber;
+    if (jerseyNumber !== null) takenJerseys.add(key);
+    merged.push({ ...player, jerseyNumber });
+  });
 
-  return { players: [...updatedPlayers, ...synthesizedPlayers], playerStats };
+  return { players: merged, playerStats };
 }

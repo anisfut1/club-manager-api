@@ -1,5 +1,5 @@
 import { hashPublicToken } from "../public-tables/token.js";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildFakeClubSupabase, makeFakeClubSupabaseState, type FakeClubSupabaseState, type FakeLicencieRow, type FakeMatchRow, type FakeTeamRow } from "../../test-support/fake-club-supabase.js";
 
 let state: FakeClubSupabaseState;
@@ -109,6 +109,17 @@ beforeEach(() => {
     teams: [TEAM_U13M, TEAM_U13F],
     matches: [TARGET_MATCH],
   });
+});
+
+
+// Horloge figée (seul `Date` est simulé) — matchs de test le 03/10/2026 : "à venir" uniquement si l'horloge est figée avant ; sans ça ces tests
+// échouent dès que la date réelle dépasse celle des fixtures.
+beforeAll(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-10-01T08:00:00Z"));
+});
+afterAll(() => {
+  vi.useRealTimers();
 });
 
 describe("GET /v1/clubs/:clubId/matches/:matchId/table-suggestions — permissions", () => {

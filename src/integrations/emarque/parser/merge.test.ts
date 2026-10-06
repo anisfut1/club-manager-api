@@ -83,7 +83,7 @@ describe("mergePlayersWithStats", () => {
 
     const { players: merged } = mergePlayersWithStats(players, stats);
 
-    expect(merged[0]?.isStarter).toBeNull();
+    expect(merged.find((p) => p.jerseyNumber === "99")?.isStarter).toBeNull();
   });
 
   it("synthétise un joueur minimal à partir de la ligne 'resume' quand l'effectif 'feuillematch' n'a pas ce maillot (régression production n°1481, § 'Trente-deuxième déclenchement', docs/FBI.md : sans ce joueur synthétisé, persist-emarque-match.ts#insertPlayerStats n'a aucun participant à quoi rattacher la statistique et l'ignore silencieusement — le joueur disparaît entièrement de l'affichage malgré des statistiques lues correctement)", () => {
@@ -129,8 +129,9 @@ describe("mergePlayersWithStats", () => {
     expect(merged[0]).toMatchObject({
       jerseyNumber: "8", // comblé depuis "resume", seule donnée que "feuillematch" n'avait pas lue
       isStarter: true, // idem
-      // Le nom de famille, la licence et le capitanat restent ceux de "feuillematch", jamais écrasés.
-      lastName: "COUIX L. Ô",
+      // Identité lue proprement sur "resume" (retour du club, 2026-10-06) ;
+      // la licence et le capitanat restent ceux de "feuillematch".
+      lastName: "COUIX",
       // Le prénom, lui, est ramené COMPLET depuis "resume" (§ "Trente-cinquième déclenchement").
       firstName: "Laetitia",
       licenseNumber: "VT640539",
@@ -190,5 +191,52 @@ describe("mergePlayersWithStats", () => {
     expect(playerStats[0]?.points).toBeNull();
     expect(playerStats[0]?.threePointsMade).toBeNull();
     expect(playerStats[0]?.secondsPlayed).toBeNull();
+  });
+
+  it("rapproche par NOM avant le maillot : les maillots mal lus par 'feuillematch' ne collent plus les statistiques au mauvais joueur — régression production n°2645 (retour du club, 2026-10-06 : stats de SALEM Sanaa affichées sous « Sanaa SCHNEIDER »)", () => {
+    const sheet = (jerseyNumber: string | null, lastName: string, firstName: string | null, licenseNumber: string, isCaptain = false) =>
+      buildPlayer({ teamSide: "away", jerseyNumber, lastName, firstName, licenseNumber, isCaptain });
+    const players = [
+      sheet(null, "HNAWIA", "S.", "VT830247"),
+      sheet(null, "SALEMS.", null, "VT073742"),
+      sheet("10", "SCHNEIDER", "T.", "VT024679"),
+      sheet("1", "MEHENNIS.", null, "VT041580"),
+      sheet("2", "HEDDOUCHE I.", null, "VT890617", true),
+      sheet("5", "CHAUSSINAND MOHAMM...", null, "VT026669"),
+    ];
+    const row = (jerseyNumber: string, lastName: string, firstName: string, points: number) => buildStatRow({ teamSide: "away", jerseyNumber, lastName, firstName, points });
+    const stats = [
+      row("5", "HNAWIA", "Sebastien", 6),
+      row("8", "SCHNEIDER", "Theo", 4),
+      row("9", "MEHENNI", "Selyan", 3),
+      row("10", "SALEM", "Sanaa", 0),
+      row("15", "CHAUSSINAND MOHAMMED", "Louis", 3),
+      row("22", "HEDDOUCHE", "Icheme", 8),
+    ];
+
+    const { players: merged, playerStats } = mergePlayersWithStats(players, stats);
+
+    expect(merged).toHaveLength(6);
+    const byJersey = Object.fromEntries(merged.map((p) => [p.jerseyNumber, `${p.lastName} ${p.firstName} ${p.licenseNumber}${p.isCaptain ? " (CAP)" : ""}`]));
+    expect(byJersey).toEqual({
+      "5": "HNAWIA Sebastien VT830247",
+      "8": "SCHNEIDER Theo VT024679",
+      "9": "MEHENNI Selyan VT041580",
+      "10": "SALEM Sanaa VT073742",
+      "15": "CHAUSSINAND MOHAMMED Louis VT026669",
+      "22": "HEDDOUCHE Icheme VT890617 (CAP)",
+    });
+    expect(Object.fromEntries(playerStats.map((s) => [s.jerseyNumber, s.points]))).toEqual({ "5": 6, "8": 4, "9": 3, "10": 0, "15": 3, "22": 8 });
+  });
+
+  it("ne rapproche jamais par maillot deux noms lus qui se contredisent", () => {
+    const players = [buildPlayer({ jerseyNumber: "10", lastName: "SCHNEIDER", licenseNumber: "VT024679" })];
+    const stats = [buildStatRow({ jerseyNumber: "10", lastName: "SALEM", firstName: "Sanaa" })];
+
+    const { players: merged } = mergePlayersWithStats(players, stats);
+
+    expect(merged.find((p) => p.lastName === "SALEM")).toMatchObject({ jerseyNumber: "10", licenseNumber: null });
+    // Le joueur de "feuillematch" est conservé, sans maillot (déjà porté par SALEM) pour ne jamais capter ses statistiques.
+    expect(merged.find((p) => p.lastName === "SCHNEIDER")).toMatchObject({ jerseyNumber: null, licenseNumber: "VT024679" });
   });
 });
