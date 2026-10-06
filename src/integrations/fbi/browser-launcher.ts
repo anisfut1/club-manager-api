@@ -50,7 +50,23 @@ export interface FbiProxySettings {
  */
 let proxyUrlFromDatabase: string | undefined;
 
-export function fbiProxySettings(proxyUrl: string | undefined = process.env.FBI_PROXY_URL || proxyUrlFromDatabase): FbiProxySettings | undefined {
+/**
+ * Bascule pour CE passage (2026-10-06) : FBI ne répond plus via le proxy
+ * (son adresse est coupée) mais répond en direct — le passage se fait sans
+ * proxy plutôt que d'attendre. Remis à zéro au début de chaque passage
+ * (`resetFbiProxyBypass`), une instance Vercel pouvant être réutilisée.
+ */
+let proxyBypassedForThisRun = false;
+
+export function resetFbiProxyBypass(): void {
+  proxyBypassedForThisRun = false;
+}
+
+export function bypassFbiProxyForThisRun(): void {
+  proxyBypassedForThisRun = true;
+}
+
+export function fbiProxySettings(proxyUrl: string | undefined = proxyBypassedForThisRun ? undefined : process.env.FBI_PROXY_URL || proxyUrlFromDatabase): FbiProxySettings | undefined {
   if (!proxyUrl) return undefined;
   const url = new URL(proxyUrl);
   return {

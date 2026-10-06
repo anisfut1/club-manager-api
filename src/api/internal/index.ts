@@ -113,10 +113,18 @@ internalRouter.get("/cron/fbi-jobs", async (c) => {
   // Une seule requête légère, sans identifiant ; injoignable = passage sauté,
   // les jobs gardent leur créneau — jamais de navigateur ni de connexion qui
   // prolongeraient la coupure. Historique : `fbi_reachability_checks`.
-  const { resolveFbiProxy } = await import("../../integrations/fbi/browser-launcher.js");
+  const { bypassFbiProxyForThisRun, resetFbiProxyBypass, resolveFbiProxy } = await import("../../integrations/fbi/browser-launcher.js");
   const { checkFbiReachability, recordFbiReachability } = await import("../../integrations/fbi/fbi-diagnostics.js");
-  const reachability = await checkFbiReachability(await resolveFbiProxy());
+  resetFbiProxyBypass();
+  const proxy = await resolveFbiProxy();
+  let reachability = await checkFbiReachability(proxy);
   await recordFbiReachability(supabase, reachability);
+  if (!reachability.ok && proxy) {
+    // Adresse du proxy coupée par FBI : essai en direct (adresse Vercel).
+    reachability = await checkFbiReachability(undefined);
+    await recordFbiReachability(supabase, reachability);
+    if (reachability.ok) bypassFbiProxyForThisRun();
+  }
   if (!reachability.ok) {
     return c.json({ claimed: 0, succeeded: 0, failed: 0, skipped: "fbi_injoignable", via: reachability.via, detail: reachability.error ?? `HTTP ${reachability.httpStatus}` });
   }
@@ -135,9 +143,12 @@ internalRouter.get("/cron/fbi-jobs", async (c) => {
 internalRouter.get("/cron/fbi-reachability", async (c) => {
   const { resolveFbiProxy } = await import("../../integrations/fbi/browser-launcher.js");
   const { checkFbiReachability, recordFbiReachability } = await import("../../integrations/fbi/fbi-diagnostics.js");
-  const reachability = await checkFbiReachability(await resolveFbiProxy());
-  await recordFbiReachability(createServiceSupabaseClient(), reachability);
-  return c.json({ via: reachability.via, ok: reachability.ok, httpStatus: reachability.httpStatus, elapsedMs: reachability.elapsedMs, error: reachability.error });
+  const supabase = createServiceSupabaseClient();
+  const proxy = await resolveFbiProxy();
+  const checks = [await checkFbiReachability(proxy)];
+  if (proxy) checks.push(await checkFbiReachability(undefined));
+  for (const check of checks) await recordFbiReachability(supabase, check);
+  return c.json(checks.map((check) => ({ via: check.via, ok: check.ok, httpStatus: check.httpStatus, elapsedMs: check.elapsedMs, error: check.error })));
 });
 
 /** GET /internal/cron/emarque-parse — étape parsing (OCR/PDF), jamais de Playwright ici. */
