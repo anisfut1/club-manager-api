@@ -3,7 +3,8 @@ import type { DbClient } from "../db/client.js";
 import type { FbiJobRow } from "../db/types.js";
 import { getFbiCredentials } from "../integrations/fbi/credentials-store.js";
 import { BrowserFbiClient, type BrowserFbiSession } from "../integrations/fbi/browser-client.js";
-import { launchServerlessBrowser } from "../integrations/fbi/browser-launcher.js";
+import { fbiProxySettings, launchServerlessBrowser } from "../integrations/fbi/browser-launcher.js";
+import { loadFbiSavedSession, saveFbiSavedSession, saveFbiSessionTrace } from "../integrations/fbi/fbi-diagnostics.js";
 import { classifyFbiLoginStatus, FbiError } from "../integrations/fbi/errors.js";
 import { inferMatchDocumentType, mimeTypeForFileName } from "../integrations/fbi/document-type.js";
 import { looksLikeZip } from "../integrations/fbi/emarque-search.js";
@@ -164,16 +165,19 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
   }
 
   const browser = await launchServerlessBrowser();
+  const via = fbiProxySettings() ? "proxy" : "direct";
   const client = new BrowserFbiClient({ baseUrl: getEnv().FBI_BASE_URL, browser });
   let session: BrowserFbiSession;
 
   try {
-    session = await client.login(credentials);
+    session = await client.login(credentials, { savedState: (await loadFbiSavedSession(supabase, job.club_id)) ?? undefined });
     await recordLoginOutcome(supabase, job.club_id, true, null);
   } catch (error) {
     const status = classifyFbiLoginStatus(error);
     const message = error instanceof FbiError ? error.message : "Connexion FBI impossible.";
     await recordLoginOutcome(supabase, job.club_id, false, message);
+    await saveFbiSessionTrace(supabase, { clubId: job.club_id, trace: client.lastTrace, via, outcome: `connexion échouée (${status}) : ${message}` });
+    await saveFbiSavedSession(supabase, job.club_id, null);
 
     if (status === "INVALID_CREDENTIALS" || status === "AUTH_FLOW_CHANGED") {
       // Ne se corrigera jamais tout seul en réessayant — surfacé via
@@ -197,6 +201,7 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
   const budgetMs = options.newJobBudgetMs ?? SESSION_NEW_JOB_BUDGET_MS;
   let firstSucceeded = false;
   let current: { job: FbiJobRow; target: DiscoverTarget } | null = { job, target };
+  const tally: Record<DiscoverOutcome, number> = { succeeded: 0, not_yet: 0, error: 0 };
 
   try {
     const matchTimeoutMs = options.matchTimeoutMs ?? MATCH_TIMEOUT_MS;
@@ -204,6 +209,7 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
 
     while (current) {
       const outcome = await discoverWithDeadline(supabase, client, session, current.job, current.target, Math.max(1_000, Math.min(matchTimeoutMs, remainingMs())));
+      tally[outcome] += 1;
       if (current.job.id === job.id) firstSucceeded = outcome === "succeeded";
       else options.onSessionJobDone?.(outcome === "succeeded");
 
@@ -228,8 +234,18 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
       }
     }
   } finally {
-    await client.closeSession(session);
+    // Session conservée (chiffrée) pour le passage suivant, sans déconnexion
+    // côté FBI — sauf si FBI a coupé pendant le passage : on repartira d'une
+    // connexion neuve.
+    await saveFbiSavedSession(supabase, job.club_id, tally.error > 0 ? null : await client.exportSessionState(session));
+    await client.detachSession(session);
     await browser.close();
+    await saveFbiSessionTrace(supabase, {
+      clubId: job.club_id,
+      trace: client.lastTrace,
+      via,
+      outcome: `${session.reused ? "session reprise" : "connexion"} ; ${tally.succeeded} récupéré(s), ${tally.not_yet} pas encore disponible(s), ${tally.error} erreur(s)`,
+    });
   }
 
   return firstSucceeded;

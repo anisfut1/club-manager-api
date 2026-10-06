@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import type { Browser, BrowserContext, Locator, Page } from "playwright-core";
+import type { Browser, BrowserContext, BrowserContextOptions, Locator, Page } from "playwright-core";
 import { FbiError } from "./errors.js";
 import * as selectors from "./selectors.js";
 import { normalizeScheduleRow } from "./schedule-row.js";
@@ -82,7 +82,30 @@ export function fbiBrowserIdentity(browserVersion: string) {
 export interface BrowserFbiSession {
   context: BrowserContext;
   page: Page;
+  /** `true` quand une session FBI conservée a été réutilisée (aucune connexion identifiant/mot de passe). */
+  reused?: boolean;
 }
+
+/** Une requête du navigateur vers FBI, sans paramètres d'URL, corps ni cookie. */
+export interface FbiTraceEvent {
+  /** Millisecondes depuis le début de la session. */
+  t: number;
+  m: string;
+  /** Hôte (si autre que FBI) + chemin, sans `;jsessionid` ni paramètres. */
+  u: string;
+  r: string;
+  /** Statut HTTP, ou erreur réseau, ou "ignoré" (image/police bloquée volontairement). */
+  s: number | string;
+  d: number | null;
+}
+
+export interface FbiSessionTrace {
+  startedAt: string;
+  events: FbiTraceEvent[];
+  dropped: number;
+}
+
+const MAX_TRACE_EVENTS = 400;
 
 /**
  * Passe(s) de recherche de dérogations — historique de la découverte
@@ -199,6 +222,13 @@ export class BrowserFbiClient {
    */
   private lastDerogationPassDiagnostics: DerogationPassDiagnostic[] = [];
 
+  /**
+   * Trace de la DERNIÈRE session ouverte par `login` (2026-10-06, diagnostic
+   * des coupures FBI) — chaque requête, sa durée et son issue. Lue par le job
+   * puis enregistrée dans `fbi_session_traces`.
+   */
+  lastTrace: FbiSessionTrace | null = null;
+
   constructor(options: BrowserFbiClientOptions) {
     this.baseUrl = options.baseUrl;
     this.browser = options.browser;
@@ -251,13 +281,79 @@ export class BrowserFbiClient {
     }
   }
 
-  async login(credentials: { username: string; password: string }): Promise<BrowserFbiSession> {
+  private attachTrace(context: BrowserContext): FbiSessionTrace {
+    const trace: FbiSessionTrace = { startedAt: new Date().toISOString(), events: [], dropped: 0 };
+    const origin = Date.now();
+    const started = new Map<object, number>();
+    const fbiHost = new URL(this.baseUrl).host;
+    const describe = (url: string) => {
+      try {
+        const parsed = new URL(url);
+        const path = parsed.pathname.replace(/;jsessionid=[^/?#]*/i, "");
+        return parsed.host === fbiHost ? path : `${parsed.host}${path}`;
+      } catch {
+        return "(url illisible)";
+      }
+    };
+    const push = (event: FbiTraceEvent) => {
+      if (trace.events.length < MAX_TRACE_EVENTS) trace.events.push(event);
+      else trace.dropped += 1;
+    };
+    context.on("request", (request) => started.set(request, Date.now()));
+    context.on("requestfinished", (request) => {
+      const begin = started.get(request);
+      void request
+        .response()
+        .then((response) => push({ t: (begin ?? Date.now()) - origin, m: request.method(), u: describe(request.url()), r: request.resourceType(), s: response?.status() ?? "sans réponse", d: begin ? Date.now() - begin : null }))
+        .catch(() => undefined);
+    });
+    context.on("requestfailed", (request) => {
+      const begin = started.get(request);
+      const skipped = SKIPPED_RESOURCE_TYPES.has(request.resourceType());
+      push({ t: (begin ?? Date.now()) - origin, m: request.method(), u: describe(request.url()), r: request.resourceType(), s: skipped ? "ignoré" : (request.failure()?.errorText ?? "échec"), d: begin ? Date.now() - begin : null });
+    });
+    return trace;
+  }
+
+  /**
+   * Connexion FBI. `savedState` (cookies d'une session précédente, voir
+   * `fbi_saved_sessions`) : si la session est encore valide côté FBI, elle est
+   * reprise sans renvoyer identifiant et mot de passe — une connexion par
+   * jour au lieu d'une par passage (2026-10-06 : coupures FBI).
+   */
+  async login(credentials: { username: string; password: string }, options: { savedState?: string } = {}): Promise<BrowserFbiSession> {
+    if (options.savedState) {
+      const proxy = fbiProxySettings();
+      let storageState: BrowserContextOptions["storageState"];
+      try {
+        storageState = JSON.parse(options.savedState) as BrowserContextOptions["storageState"];
+      } catch {
+        storageState = undefined;
+      }
+      if (storageState) {
+        const context = await this.browser.newContext({ ...fbiBrowserIdentity(this.browser.version()), ...(proxy ? { proxy } : {}), storageState });
+        this.lastTrace = this.attachTrace(context);
+        await context.route("**/*", (route) => (SKIPPED_RESOURCE_TYPES.has(route.request().resourceType()) ? route.abort() : route.continue()));
+        const page = await context.newPage();
+        const resumed = await page
+          .goto(`${this.baseUrl}/accueil.fbi`, { waitUntil: "domcontentloaded", timeout: 25_000 })
+          .then(async () => !(await selectors.looksLikeLoginPage(page)))
+          .catch(() => false);
+        if (resumed) return { context, page, reused: true };
+        await context.close();
+      }
+    }
+    return this.loginWithCredentials(credentials);
+  }
+
+  private async loginWithCredentials(credentials: { username: string; password: string }): Promise<BrowserFbiSession> {
     // Contexte isolé PAR APPEL : jamais de cookie/session partagée entre deux
     // clubs, même s'ils réutilisent ce même Browser.
     // Proxy à IP fixe (`FBI_PROXY_URL`) aussi au niveau du contexte : couvre
     // `context.request` (requêtes hors page) en plus des pages.
     const proxy = fbiProxySettings();
     const context = await this.browser.newContext({ ...fbiBrowserIdentity(this.browser.version()), ...(proxy ? { proxy } : {}) });
+    this.lastTrace = this.attachTrace(context);
     // Moins de connexions vers FBI (2026-10-06 : FBI coupe au-delà d'un
     // certain volume) : images, polices et médias ne servent à rien ici.
     // Les feuilles de style restent chargées (visibilité des éléments).
@@ -2407,6 +2503,19 @@ export class BrowserFbiClient {
    * lien "Déconnexion" à cliquer — best-effort strict : jamais bloquer la
    * fermeture du contexte local si la déconnexion serveur échoue.
    */
+  /** Cookies de la session, pour la reprendre au passage suivant (chiffrés avant stockage). */
+  async exportSessionState(session: BrowserFbiSession): Promise<string | null> {
+    return session.context
+      .storageState()
+      .then((state) => JSON.stringify({ cookies: state.cookies, origins: [] }))
+      .catch(() => null);
+  }
+
+  /** Ferme le navigateur local SANS déconnexion côté FBI : la session sera reprise au passage suivant. */
+  async detachSession(session: BrowserFbiSession): Promise<void> {
+    await session.context.close().catch(() => undefined);
+  }
+
   async closeSession(session: BrowserFbiSession): Promise<void> {
     try {
       await session.page.goto(`${this.baseUrl}/deconnexion.fbi`, { waitUntil: "domcontentloaded", timeout: 10000 });

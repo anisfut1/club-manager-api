@@ -13,12 +13,25 @@ vi.mock("../integrations/fbi/browser-client.js", () => ({
     findEmarqueDocuments = findEmarqueDocumentsMock;
     downloadDocument = downloadDocumentMock;
     closeSession = closeSessionMock;
+    // Fin de session sans déconnexion FBI (session conservée) — même mock pour les assertions existantes.
+    detachSession = closeSessionMock;
+    exportSessionState = exportSessionStateMock;
+    lastTrace = null;
   },
+}));
+
+const exportSessionStateMock = vi.fn(async () => "{\"cookies\":[]}");
+const saveFbiSavedSessionMock = vi.fn();
+const saveFbiSessionTraceMock = vi.fn();
+vi.mock("../integrations/fbi/fbi-diagnostics.js", () => ({
+  loadFbiSavedSession: vi.fn(async () => null),
+  saveFbiSavedSession: saveFbiSavedSessionMock,
+  saveFbiSessionTrace: saveFbiSessionTraceMock,
 }));
 
 const closeBrowserMock = vi.fn();
 const launchServerlessBrowserMock = vi.fn(async () => ({ close: closeBrowserMock }));
-vi.mock("../integrations/fbi/browser-launcher.js", () => ({ launchServerlessBrowser: launchServerlessBrowserMock }));
+vi.mock("../integrations/fbi/browser-launcher.js", () => ({ launchServerlessBrowser: launchServerlessBrowserMock, fbiProxySettings: () => undefined }));
 
 const getFbiCredentialsMock = vi.fn();
 vi.mock("../integrations/fbi/credentials-store.js", () => ({ getFbiCredentials: getFbiCredentialsMock }));
@@ -314,6 +327,22 @@ describe("processDiscoverEmarqueJob", () => {
     expect(recorders.jobUpdates.at(-1)).toMatchObject({ patch: expect.objectContaining({ status: "failed" }) });
     expect(getFbiCredentialsMock).not.toHaveBeenCalled();
   });
+  it("session conservée (chiffrée) pour le passage suivant et trace enregistrée ; supprimée si FBI a coupé", async () => {
+    getFbiCredentialsMock.mockResolvedValue({ username: "clubxxxx", password: "correct" });
+    loginMock.mockResolvedValue({ context: {}, page: {} });
+    findEmarqueDocumentsMock.mockResolvedValue({ documents: [], diagnostic: null });
+    const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [] };
+    const supabase = makeFakeSupabase({ match: { id: "match-1", club_id: "club-1", numero: "2813", match_datetime: null }, recorders });
+
+    await processDiscoverEmarqueJob(supabase, baseJob());
+    expect(saveFbiSavedSessionMock).toHaveBeenLastCalledWith(supabase, "club-1", '{"cookies":[]}');
+    expect(saveFbiSessionTraceMock).toHaveBeenLastCalledWith(supabase, expect.objectContaining({ clubId: "club-1", via: "direct", outcome: expect.stringContaining("1 pas encore disponible") }));
+
+    findEmarqueDocumentsMock.mockRejectedValue(new Error("net::ERR_TIMED_OUT"));
+    await processDiscoverEmarqueJob(supabase, baseJob());
+    expect(saveFbiSavedSessionMock).toHaveBeenLastCalledWith(supabase, "club-1", null);
+  });
+
   describe("une seule connexion FBI pour plusieurs matchs du club (2026-10-06)", () => {
     const zipBytes = Buffer.from("PK\x03\x04contenu-zip-synthetique", "latin1");
 

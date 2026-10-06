@@ -67,6 +67,34 @@ describe("BrowserFbiClient.login (contre un serveur HTML local synthétique, jam
     await client.closeSession(session);
   });
 
+  it("reprend une session conservée sans renvoyer identifiant et mot de passe, et trace chaque requête (2026-10-06)", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+    const first = await client.login({ username: "club1234", password: "secret" });
+    expect(first.reused).toBeFalsy();
+    expect(client.lastTrace?.events.some((event) => event.u === "/connexion.fbi" && event.s === 200)).toBe(true);
+    const saved = await client.exportSessionState(first);
+    await client.detachSession(first);
+
+    const second = await client.login({ username: "club1234", password: "secret" }, { savedState: saved ?? undefined });
+    expect(second.reused).toBe(true);
+    expect(client.lastTrace?.events.map((event) => event.u)).toEqual(expect.arrayContaining(["/accueil.fbi"]));
+    expect(client.lastTrace?.events.some((event) => event.u === "/connexion.fbi")).toBe(false);
+    await client.closeSession(second);
+  });
+
+  it("session conservée expirée côté FBI : reconnexion normale avec identifiant et mot de passe", async () => {
+    server.setRoute({ path: "/accueil.fbi", contentType: "text/html", body: fixture("login.html") });
+    try {
+      const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+      const session = await client.login({ username: "club1234", password: "secret" }, { savedState: '{"cookies":[],"origins":[]}' }).catch((error: unknown) => error);
+      // Reprise refusée (page de connexion) → parcours identifiant/mot de passe, qui passe par connexion.fbi.
+      expect(client.lastTrace?.events.some((event) => event.u === "/connexion.fbi")).toBe(true);
+      if (!(session instanceof Error)) await client.closeSession(session as Awaited<ReturnType<typeof client.login>>);
+    } finally {
+      server.setRoute({ path: "/accueil.fbi", contentType: "text/html", body: fixture("accueil.html") });
+    }
+  });
+
   it("lève LOGIN_FAILED quand la page d'atterrissage est encore une page de connexion (identifiants invalides)", async () => {
     server.setRoute({ path: "/j_security_check", method: "POST", contentType: "text/html", body: fixture("login.html") });
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });

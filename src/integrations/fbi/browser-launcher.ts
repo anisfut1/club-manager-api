@@ -75,8 +75,7 @@ export async function launchServerlessBrowser(): Promise<Browser> {
   ]);
 
   const executablePath = await chromium.executablePath();
-  proxyUrlFromDatabase = await readProxyUrlFromDatabase();
-  const proxy = fbiProxySettings();
+  const proxy = await resolveFbiProxy();
   // Jamais l'identifiant/mot de passe du proxy dans les logs : uniquement s'il est actif.
   logInfo("Lancement de Chromium serverless pour BrowserFbiClient", { executablePath, proxy: proxy ? "actif" : "aucun" });
 
@@ -129,4 +128,10 @@ export function probeFbiProxy(proxy: FbiProxySettings | undefined = fbiProxySett
     });
     socket.once("data", (chunk: Buffer) => done(`TCP OK en ${connectedAfter} ms, proxy : ${chunk.toString("latin1").split("\r\n")[0].slice(0, 80)}`));
   });
+}
+
+/** Proxy à utiliser maintenant (variable d'environnement, sinon réglage en base) — relu à chaque appel. */
+export async function resolveFbiProxy(): Promise<FbiProxySettings | undefined> {
+  proxyUrlFromDatabase = await readProxyUrlFromDatabase();
+  return fbiProxySettings();
 }

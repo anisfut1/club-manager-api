@@ -65,6 +65,16 @@ jobs:
             sleep 5
           done
 
+      # FBI répond-il via notre accès (proxy) ? Une requête, sans identifiant ;
+      # historique en base (fbi_reachability_checks). Résultat en annotation.
+      - name: Joignabilité de FBI depuis l'API
+        continue-on-error: true
+        run: |
+          r=$(curl --silent --show-error --max-time 60 \
+            -X GET "https://club-manager-api-two.vercel.app/internal/cron/fbi-reachability" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" 2>&1) || true
+          echo "::notice title=FBI depuis l'API::$r"
+
       # Empile les jobs récurrents (discover_emarque, reconcile_schedule,
       # check_all_derogations) — idempotent : ne duplique jamais un job déjà
       # en attente/en cours pour un club (contrainte unique côté DB).

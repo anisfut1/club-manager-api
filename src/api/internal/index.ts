@@ -104,10 +104,40 @@ const JOB_BATCH_SIZE = 1;
 internalRouter.get("/cron/fbi-jobs", async (c) => {
   const supabase = createServiceSupabaseClient();
   const workerId = `vercel-cron#${Date.now()}`;
+
+  // Rien de dû : aucun accès à FBI, même pas la vérification.
+  const { data: due } = await supabase.from("fbi_jobs").select("id").eq("status", "pending").lte("scheduled_at", new Date().toISOString()).limit(1);
+  if (!due || due.length === 0) return c.json({ claimed: 0, succeeded: 0, failed: 0 });
+
+  // FBI répond-il ? (2026-10-06 : FBI coupe par moments l'adresse utilisée.)
+  // Une seule requête légère, sans identifiant ; injoignable = passage sauté,
+  // les jobs gardent leur créneau — jamais de navigateur ni de connexion qui
+  // prolongeraient la coupure. Historique : `fbi_reachability_checks`.
+  const { resolveFbiProxy } = await import("../../integrations/fbi/browser-launcher.js");
+  const { checkFbiReachability, recordFbiReachability } = await import("../../integrations/fbi/fbi-diagnostics.js");
+  const reachability = await checkFbiReachability(await resolveFbiProxy());
+  await recordFbiReachability(supabase, reachability);
+  if (!reachability.ok) {
+    return c.json({ claimed: 0, succeeded: 0, failed: 0, skipped: "fbi_injoignable", via: reachability.via, detail: reachability.error ?? `HTTP ${reachability.httpStatus}` });
+  }
+
   const result = await processJobBatch(supabase, JOB_BATCH_SIZE, () => claimNextJob(supabase, workerId), {
     claimNextDiscoverInSession: (clubId) => claimNextDiscoverJobInSession(supabase, clubId, workerId),
   });
   return c.json(result);
+});
+
+/**
+ * GET /internal/cron/fbi-reachability — UNE requête légère vers la page de
+ * connexion FBI (sans identifiant), à chaque passage du planificateur, même
+ * sans travail dû : historique des coupures FBI (`fbi_reachability_checks`).
+ */
+internalRouter.get("/cron/fbi-reachability", async (c) => {
+  const { resolveFbiProxy } = await import("../../integrations/fbi/browser-launcher.js");
+  const { checkFbiReachability, recordFbiReachability } = await import("../../integrations/fbi/fbi-diagnostics.js");
+  const reachability = await checkFbiReachability(await resolveFbiProxy());
+  await recordFbiReachability(createServiceSupabaseClient(), reachability);
+  return c.json({ via: reachability.via, ok: reachability.ok, httpStatus: reachability.httpStatus, elapsedMs: reachability.elapsedMs, error: reachability.error });
 });
 
 /** GET /internal/cron/emarque-parse — étape parsing (OCR/PDF), jamais de Playwright ici. */
