@@ -272,8 +272,9 @@ export class BrowserFbiClient {
       // refusée…) : sans elle, impossible de distinguer une panne FBI d'un
       // blocage des adresses Vercel (2026-10-06). Jamais d'identifiant ici.
       const cause = error instanceof Error ? error.message.split("\n")[0].slice(0, 160) : String(error).slice(0, 160);
-      // Échec côté proxy : sonde depuis cette machine pour savoir où ça bloque.
-      const proxyProbe = cause.includes("ERR_PROXY") || cause.includes("ERR_TUNNEL") ? ` ; sonde du proxy : ${await probeFbiProxy().catch(() => "impossible")}` : "";
+      // Proxy configuré : sonde depuis cette machine pour savoir où ça bloque
+      // (proxy injoignable, ou proxy joignable mais FBI ne lui répond pas).
+      const proxyProbe = fbiProxySettings() ? ` ; sonde du proxy : ${await probeFbiProxy().catch(() => "impossible")}` : "";
       throw new FbiError(`Page de connexion FBI injoignable (${cause})${proxyProbe}`, "LOGIN_PAGE_UNREACHABLE", error);
     }
 
