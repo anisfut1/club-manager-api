@@ -3928,3 +3928,9 @@ Comparaison des traces :
 - **14:45, 17:48 et 19:07, avec le rythme humain** : coupure 7,7 à 9,3 s après la connexion, avant même la recherche.
 
 FBI laisse donc environ 8 s après chaque connexion avant de couper l'adresse. L'ancien parcours rapide finissait dans cette fenêtre, d'où le « ça marchait avant ». `humanPacing` est désactivé (option conservée dans `BrowserFbiClient`), et le parcours reste le plus court possible : connexion, recherche directe sans ouvrir l'écran, téléchargement.
+
+### 2026-10-06 19:18 : coupure 0,4 s après la connexion, puis pause générale
+
+Même sans pauses et depuis une adresse Vercel neuve (`connexion.fbi` en 200), l'adresse est coupée 0,4 s après `POST /fbi/identification.fbi`. Le premier fichier JS de l'accueil part déjà en `ERR_CONNECTION_TIMED_OUT`. Le délai avant coupure a diminué au fil de la journée : 6 à 9 s, puis 0,4 s. FBI semble réagir désormais immédiatement à toute connexion automatique de ce compte.
+
+Interrupteur général : `platform_settings.fbi_paused_until`, une date ISO lue par `fbiPausedUntil`. Avant cette date, ni `/internal/cron/fbi-jobs` ni `POST .../fbi/process-jobs` ne se connectent à FBI. Il est posé au 2026-10-07 06:00 UTC pour laisser retomber la protection.

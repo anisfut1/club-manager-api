@@ -152,3 +152,20 @@ export async function saveFbiSavedSession(supabase: DbClient, clubId: string, st
   );
   if (error) logError("Enregistrement de la session FBI échoué", error, { clubId });
 }
+
+/**
+ * Interrupteur général (2026-10-06) : `platform_settings.fbi_paused_until`
+ * (date ISO). Avant cette date, aucune connexion automatique à FBI (cron et
+ * bouton « traiter les jobs ») — pour laisser retomber une protection FBI
+ * qui coupe l'adresse dès la connexion.
+ */
+export async function fbiPausedUntil(supabase: DbClient): Promise<Date | null> {
+  try {
+    const { data } = await supabase.from("platform_settings").select("value").eq("key", "fbi_paused_until").maybeSingle();
+    const until = data?.value ? new Date(data.value) : null;
+    return until && !Number.isNaN(until.getTime()) && until.getTime() > Date.now() ? until : null;
+  } catch {
+    // Réglage illisible : pas de pause (comportement normal).
+    return null;
+  }
+}

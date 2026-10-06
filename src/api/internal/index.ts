@@ -105,6 +105,10 @@ internalRouter.get("/cron/fbi-jobs", async (c) => {
   const supabase = createServiceSupabaseClient();
   const workerId = `vercel-cron#${Date.now()}`;
 
+  const { fbiPausedUntil } = await import("../../integrations/fbi/fbi-diagnostics.js");
+  const pausedUntil = await fbiPausedUntil(supabase);
+  if (pausedUntil) return c.json({ claimed: 0, succeeded: 0, failed: 0, skipped: "fbi_en_pause", until: pausedUntil.toISOString() });
+
   // Rien de dû : aucun accès à FBI, même pas la vérification.
   const { data: due } = await supabase.from("fbi_jobs").select("id").eq("status", "pending").lte("scheduled_at", new Date().toISOString()).limit(1);
   if (!due || due.length === 0) return c.json({ claimed: 0, succeeded: 0, failed: 0 });
