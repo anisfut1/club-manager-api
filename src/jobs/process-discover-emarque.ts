@@ -112,15 +112,25 @@ async function loadDiscoverTarget(supabase: DbClient, job: FbiJobRow): Promise<D
  */
 const SESSION_NEW_JOB_BUDGET_MS = 120_000;
 const PAUSE_BETWEEN_MATCHES_MS = 3_000;
+/**
+ * Garde-fou (2026-10-06) : l'invocation Vercel est coupée à 300 s. Un match
+ * dispose d'au plus 120 s ; au-delà, il est replanifié au créneau suivant et
+ * la session s'arrête — l'issue est TOUJOURS enregistrée avant la coupure,
+ * jamais un job laissé « en cours » qui bloquerait le club 10 minutes.
+ */
+const INVOCATION_BUDGET_MS = 250_000;
+const MATCH_TIMEOUT_MS = 120_000;
 
 export interface DiscoverSessionOptions {
   /** Réclame le prochain job `discover_emarque` dû du même club, à traiter dans la session déjà ouverte. */
   claimNextInSession?: () => Promise<FbiJobRow | null>;
   /** Issue de chaque job SUPPLÉMENTAIRE traité dans la session (le premier est la valeur de retour). */
   onSessionJobDone?: (succeeded: boolean) => void;
-  /** Surcharge de test. */
+  /** Surcharges de test. */
   newJobBudgetMs?: number;
   pauseBetweenMatchesMs?: number;
+  matchTimeoutMs?: number;
+  invocationBudgetMs?: number;
 }
 
 /**
@@ -143,6 +153,7 @@ export interface DiscoverSessionOptions {
  * alors qu'un seul job avait réellement abouti.
  */
 export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobRow, options: DiscoverSessionOptions = {}): Promise<boolean> {
+  const invocationStartedAt = Date.now();
   const target = await loadDiscoverTarget(supabase, job);
   if (!target) return false;
 
@@ -174,16 +185,7 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
       // tentative de connexion par passage, jamais une par match (FBI coupe
       // précisément les connexions répétées).
       await scheduleNextCheck(supabase, job, target.match.match_datetime, message);
-      if (options.claimNextInSession) {
-        let deferred = 0;
-        for (let nextJob = await options.claimNextInSession(); nextJob; nextJob = await options.claimNextInSession()) {
-          const nextTarget = await loadDiscoverTarget(supabase, nextJob);
-          if (nextTarget) await scheduleNextCheck(supabase, nextJob, nextTarget.match.match_datetime, message);
-          options.onSessionJobDone?.(false);
-          deferred += 1;
-        }
-        if (deferred > 0) logInfo("Connexion FBI échouée : autres matchs du club reportés au créneau suivant", { clubId: job.club_id, deferred });
-      }
+      await deferRemainingClubJobs(supabase, job.club_id, options, message);
     }
 
     logError("Job discover_emarque : connexion FBI échouée", error, { clubId: job.club_id, jobId: job.id, loginStatus: status });
@@ -197,16 +199,22 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
   let current: { job: FbiJobRow; target: DiscoverTarget } | null = { job, target };
 
   try {
+    const matchTimeoutMs = options.matchTimeoutMs ?? MATCH_TIMEOUT_MS;
+    const remainingMs = () => invocationStartedAt + (options.invocationBudgetMs ?? INVOCATION_BUDGET_MS) - Date.now();
+
     while (current) {
-      const outcome = await discoverWithSession(supabase, client, session, current.job, current.target);
+      const outcome = await discoverWithDeadline(supabase, client, session, current.job, current.target, Math.max(1_000, Math.min(matchTimeoutMs, remainingMs())));
       if (current.job.id === job.id) firstSucceeded = outcome === "succeeded";
       else options.onSessionJobDone?.(outcome === "succeeded");
 
       current = null;
-      // Erreur FBI (coupure, délai dépassé) : on n'insiste pas sur les
-      // matchs suivants dans cette session — ils gardent leur créneau et
-      // seront repris au prochain passage.
-      while (outcome !== "error" && options.claimNextInSession && Date.now() - startedAt < budgetMs) {
+      // Erreur FBI (coupure, délai dépassé) : on n'insiste pas — les autres
+      // matchs dus du club passent au créneau suivant de leur calendrier.
+      if (outcome === "error") {
+        await deferRemainingClubJobs(supabase, job.club_id, options, "[info] Reporté au créneau suivant : FBI instable pendant ce passage (un seul essai de connexion par passage).");
+        break;
+      }
+      while (options.claimNextInSession && Date.now() - startedAt < budgetMs && remainingMs() > matchTimeoutMs) {
         const nextJob = await options.claimNextInSession();
         if (!nextJob) break;
         const nextTarget = await loadDiscoverTarget(supabase, nextJob);
@@ -227,7 +235,52 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
   return firstSucceeded;
 }
 
+/**
+ * FBI en difficulté pendant ce passage (connexion impossible, délai
+ * dépassé, coupure réseau) : tous les autres matchs dus du club passent au
+ * créneau suivant de LEUR calendrier — jamais une nouvelle connexion FBI
+ * quelques secondes plus tard dans le même passage (FBI coupe précisément
+ * les connexions répétées).
+ */
+async function deferRemainingClubJobs(supabase: DbClient, clubId: string, options: DiscoverSessionOptions, message: string): Promise<void> {
+  if (!options.claimNextInSession) return;
+  let deferred = 0;
+  for (let nextJob = await options.claimNextInSession(); nextJob; nextJob = await options.claimNextInSession()) {
+    const nextTarget = await loadDiscoverTarget(supabase, nextJob);
+    if (nextTarget) await scheduleNextCheck(supabase, nextJob, nextTarget.match.match_datetime, message);
+    options.onSessionJobDone?.(false);
+    deferred += 1;
+  }
+  if (deferred > 0) logInfo("FBI en difficulté : autres matchs du club reportés au créneau suivant", { clubId, deferred });
+}
+
 type DiscoverOutcome = "succeeded" | "not_yet" | "error";
+
+/** `discoverWithSession` borné dans le temps : délai écoulé → créneau suivant, issue « error » (fin de session). */
+async function discoverWithDeadline(
+  supabase: DbClient,
+  client: BrowserFbiClient,
+  session: BrowserFbiSession,
+  job: FbiJobRow,
+  target: DiscoverTarget,
+  timeoutMs: number,
+): Promise<DiscoverOutcome> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => resolve("timeout"), timeoutMs);
+  });
+  try {
+    const result = await Promise.race([discoverWithSession(supabase, client, session, job, target), timedOut]);
+    if (result !== "timeout") return result;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  const message = `FBI n'a pas répondu à temps pour la rencontre ${target.match.numero} (plus de ${Math.round(timeoutMs / 1000)} s) — nouvel essai au prochain créneau.`;
+  await scheduleNextCheck(supabase, job, target.match.match_datetime, message);
+  logError("Job discover_emarque : délai dépassé", new Error(message), { clubId: job.club_id, jobId: job.id, matchId: job.match_id });
+  return "error";
+}
 
 /** Recherche + téléchargement d'UN match dans une session FBI déjà ouverte — gère lui-même son issue (succès, créneau suivant). */
 async function discoverWithSession(supabase: DbClient, client: BrowserFbiClient, session: BrowserFbiSession, job: FbiJobRow, target: DiscoverTarget): Promise<DiscoverOutcome> {

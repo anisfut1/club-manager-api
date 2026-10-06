@@ -354,12 +354,14 @@ describe("processDiscoverEmarqueJob", () => {
 
       const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [] };
       const supabase = makeFakeSupabase({ match: { id: "match-1", club_id: "club-1", numero: "2813", match_datetime: null }, recorders });
-      const claimNextInSession = vi.fn(async () => baseJob({ id: "job-2" }));
+      const queue = [baseJob({ id: "job-2" })];
+      const claimNextInSession = vi.fn(async () => queue.shift() ?? null);
 
       await processDiscoverEmarqueJob(supabase, baseJob(), { claimNextInSession, pauseBetweenMatchesMs: 0 });
 
-      expect(claimNextInSession).not.toHaveBeenCalled();
-      expect(recorders.jobUpdates.at(-1)).toMatchObject({ id: "job-1", patch: expect.objectContaining({ status: "pending" }) });
+      // Aucun autre match TENTÉ : ceux du club passent au créneau suivant (une seule connexion par passage).
+      expect(findEmarqueDocumentsMock).toHaveBeenCalledTimes(1);
+      expect(recorders.jobUpdates.filter((u) => (u.patch as { status: string }).status === "pending").map((u) => u.id)).toEqual(["job-1", "job-2"]);
     });
 
     it("connexion FBI injoignable : UNE seule tentative, les autres matchs dus du club passent au créneau suivant", async () => {
@@ -379,6 +381,23 @@ describe("processDiscoverEmarqueJob", () => {
       const rescheduled = recorders.jobUpdates.filter((u) => (u.patch as { status: string }).status === "pending").map((u) => u.id);
       expect(rescheduled).toEqual(["job-1", "job-2", "job-3"]);
       expect(findEmarqueDocumentsMock).not.toHaveBeenCalled();
+    });
+
+    it("FBI ne répond plus : le match est replanifié avant la coupure Vercel, jamais laissé « en cours »", async () => {
+      getFbiCredentialsMock.mockResolvedValue({ username: "clubxxxx", password: "correct" });
+      loginMock.mockResolvedValue({ context: {}, page: {} });
+      findEmarqueDocumentsMock.mockImplementation(() => new Promise(() => {}));
+
+      const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [] };
+      const supabase = makeFakeSupabase({ match: { id: "match-1", club_id: "club-1", numero: "2813", match_datetime: null }, recorders });
+      const claimNextInSession = vi.fn(async () => null);
+
+      const succeeded = await processDiscoverEmarqueJob(supabase, baseJob(), { claimNextInSession, matchTimeoutMs: 20, pauseBetweenMatchesMs: 0 });
+
+      expect(succeeded).toBe(false);
+      expect(recorders.jobUpdates.find((u) => u.id === "job-1")).toMatchObject({ patch: expect.objectContaining({ status: "pending", last_error: expect.stringContaining("pas répondu à temps") }) });
+      expect(findEmarqueDocumentsMock).toHaveBeenCalledTimes(1);
+      expect(closeBrowserMock).toHaveBeenCalledOnce();
     });
 
     it("temps de session écoulé : aucun nouveau match démarré", async () => {

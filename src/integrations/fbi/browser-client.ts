@@ -11,6 +11,17 @@ import { emarqueDownloadUrl, executeSearchQuery, parseSearchResponse, pickRow, s
 import { fbiProxySettings } from "./browser-launcher.js";
 
 /**
+ * Délais maximum des requêtes vers FBI (2026-10-06) : un `fetch` lancé
+ * depuis la page n'a AUCUN délai par défaut — quand FBI ne répondait pas,
+ * il attendait jusqu'à la coupure Vercel (300 s), laissant le job « en
+ * cours » et le club bloqué. Chaque appel échoue désormais proprement.
+ */
+const FBI_IN_PAGE_REQUEST_TIMEOUT_MS = 30_000;
+const FBI_IN_PAGE_DOWNLOAD_TIMEOUT_MS = 40_000;
+const FBI_NAVIGATION_DOWNLOAD_TIMEOUT_MS = 30_000;
+const FBI_NODE_REQUEST_TIMEOUT_MS = 20_000;
+
+/**
  * BrowserFbiClient — automatisation Playwright de FBI, utilisée UNIQUEMENT
  * par les routes `/internal/*` (jamais par une route `/v1/*` servant une
  * requête utilisateur, voir docs/FBI.md). C'est la stratégie DE SECOURS
@@ -239,7 +250,7 @@ export class BrowserFbiClient {
       let lastNetworkError: unknown;
       for (let attempt = 1; attempt <= 3; attempt += 1) {
         try {
-          await page.goto(`${this.baseUrl}/connexion.fbi`, { waitUntil: "domcontentloaded" });
+          await page.goto(`${this.baseUrl}/connexion.fbi`, { waitUntil: "domcontentloaded", timeout: 25_000 });
           lastNetworkError = undefined;
           break;
         } catch (error) {
@@ -552,7 +563,7 @@ export class BrowserFbiClient {
       let body: string;
       const inPage = await page
         .evaluate(
-          async ({ searchUrl, form, query }) => {
+          async ({ searchUrl, form, query, timeoutMs }) => {
             const describe = async (step: string, response: Response) => `${step} HTTP ${response.status} (${(await response.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 160)})`;
             try {
               const controlResponse = await fetch(`${searchUrl}?action=controleRecherche`, {
@@ -560,16 +571,17 @@ export class BrowserFbiClient {
                 headers: { "X-Requested-With": "XMLHttpRequest", "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
                 body: new URLSearchParams(form).toString(),
                 credentials: "include",
+                signal: AbortSignal.timeout(timeoutMs),
               });
               if (!controlResponse.ok) return { error: await describe("controleRecherche", controlResponse) };
-              const executeResponse = await fetch(`${searchUrl}?${query}`, { headers: { "X-Requested-With": "XMLHttpRequest" }, credentials: "include" });
+              const executeResponse = await fetch(`${searchUrl}?${query}`, { headers: { "X-Requested-With": "XMLHttpRequest" }, credentials: "include", signal: AbortSignal.timeout(timeoutMs) });
               if (!executeResponse.ok) return { error: await describe("executeRecherche", executeResponse) };
               return { body: await executeResponse.text() };
             } catch (error) {
               return { error: `fetch : ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}` };
             }
           },
-          { searchUrl, form, query },
+          { searchUrl, form, query, timeoutMs: FBI_IN_PAGE_REQUEST_TIMEOUT_MS },
         )
         .catch((error: unknown) => ({ error: `évaluation dans la page impossible (${error instanceof Error ? error.message.split("\n")[0] : String(error)})` }));
 
@@ -578,9 +590,9 @@ export class BrowserFbiClient {
       } else {
         const browserError = `navigateur : ${inPage.error}`;
         try {
-          const control = await context.request.post(`${searchUrl}?action=controleRecherche`, { form, headers, timeout: 30000 });
+          const control = await context.request.post(`${searchUrl}?action=controleRecherche`, { form, headers, timeout: FBI_NODE_REQUEST_TIMEOUT_MS });
           if (!control.ok()) return { kind: "unavailable", note: `${browserError} ; Node : controleRecherche HTTP ${control.status()}` };
-          const execute = await context.request.get(`${searchUrl}?${query}`, { headers, timeout: 30000 });
+          const execute = await context.request.get(`${searchUrl}?${query}`, { headers, timeout: FBI_NODE_REQUEST_TIMEOUT_MS });
           if (!execute.ok()) return { kind: "unavailable", note: `${browserError} ; Node : executeRecherche HTTP ${execute.status()}` };
           body = await execute.text();
         } catch (error) {
@@ -2221,9 +2233,9 @@ export class BrowserFbiClient {
     // Une vraie réponse HTTP en erreur reste une erreur ; seul un échec
     // réseau du navigateur fait retomber sur `context.request` ci-dessous.
     const inPage = await session.page
-      .evaluate(async (documentUrl) => {
+      .evaluate(async ({ documentUrl, timeoutMs }) => {
         try {
-          const response = await fetch(documentUrl, { credentials: "include" });
+          const response = await fetch(documentUrl, { credentials: "include", signal: AbortSignal.timeout(timeoutMs) });
           if (!response.ok) return { status: response.status, base64: null, error: null };
           const bytes = new Uint8Array(await response.arrayBuffer());
           let binary = "";
@@ -2234,7 +2246,7 @@ export class BrowserFbiClient {
         } catch (error) {
           return { status: null, base64: null, error: error instanceof Error ? `${error.name}: ${error.message}` : String(error) };
         }
-      }, url)
+      }, { documentUrl: url, timeoutMs: FBI_IN_PAGE_DOWNLOAD_TIMEOUT_MS })
       .catch((error: unknown) => ({ status: null, base64: null, error: `évaluation dans la page impossible (${error instanceof Error ? error.message.split("\n")[0] : String(error)})` }));
 
     if (inPage.base64 != null) return Buffer.from(inPage.base64, "base64");
@@ -2248,13 +2260,13 @@ export class BrowserFbiClient {
     if (Buffer.isBuffer(viaNavigation)) return viaNavigation;
     const browserError = `navigateur : fetch ${inPage.error} / navigation ${viaNavigation}`;
 
-    const maxAttempts = 3;
+    const maxAttempts = 2;
     let lastNetworkError: unknown;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       let response;
       try {
-        response = await session.context.request.get(url);
+        response = await session.context.request.get(url, { timeout: FBI_NODE_REQUEST_TIMEOUT_MS });
       } catch (error) {
         lastNetworkError = error;
         if (attempt < maxAttempts) {
@@ -2282,8 +2294,8 @@ export class BrowserFbiClient {
   private async downloadViaNavigation(session: BrowserFbiSession, url: string): Promise<Buffer> {
     const tab = await session.context.newPage();
     try {
-      const downloadPromise = tab.waitForEvent("download", { timeout: 60000 }).catch(() => null);
-      const response = await tab.goto(url, { timeout: 60000 }).catch(() => null);
+      const downloadPromise = tab.waitForEvent("download", { timeout: FBI_NAVIGATION_DOWNLOAD_TIMEOUT_MS }).catch(() => null);
+      const response = await tab.goto(url, { timeout: FBI_NAVIGATION_DOWNLOAD_TIMEOUT_MS }).catch(() => null);
       if (response) {
         if (!response.ok()) throw new Error(`HTTP ${response.status()}`);
         return await response.body();

@@ -89,7 +89,7 @@ jobs:
             fi
             out=$(curl --fail --silent --show-error --max-time 300 \
               -X GET "https://club-manager-api-two.vercel.app/internal/cron/fbi-jobs" \
-              -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}") || { echo "fbi-jobs en échec"; exit 1; }
+              -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}") || { echo "fbi-jobs en échec (repris au prochain passage)"; break; }
             echo "fbi-jobs #$i : $out"
             curl --fail --silent --show-error --max-time 280 \
               -X GET "https://club-manager-api-two.vercel.app/internal/cron/emarque-parse" \
