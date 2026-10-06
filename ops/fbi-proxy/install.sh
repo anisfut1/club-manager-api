@@ -73,7 +73,7 @@ echo "$PROXY_URL" > /root/fbi-proxy-url.txt
 
 sleep 2
 FBI_TEST=$(curl -s -o /dev/null --max-time 30 -w "%{http_code} en %{time_total}s" -x "http://${USER_NAME}:${PASSWORD}@127.0.0.1:${PORT}" https://extranet.ffbb.com/fbi/connexion.fbi || echo "échec")
-OTHER_TEST=$(curl -s -o /dev/null --max-time 15 -w "%{http_code}" -x "http://${USER_NAME}:${PASSWORD}@127.0.0.1:${PORT}" https://www.google.com || true)
+OTHER_TEST=$(curl -s -o /dev/null --max-time 15 -w "%{http_connect}" -x "http://${USER_NAME}:${PASSWORD}@127.0.0.1:${PORT}" https://www.google.com || true)
 
 echo
 echo "=================================================================="
