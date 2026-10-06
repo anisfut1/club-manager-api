@@ -95,6 +95,57 @@ export function computeQualityWarnings(
   return warnings;
 }
 
+/**
+ * Contrôles de COHÉRENCE des statistiques avant publication (retour du club,
+ * 2026-10-06 : "un coup les stats sont fausses") — sévérité "error", donc
+ * import "à vérifier" (needs_review), jamais publié en l'état :
+ * - la somme des points des joueurs de chaque équipe doit égaler le score
+ *   officiel FFBB de cette équipe (un point mal lu, une ligne manquante ou
+ *   une ligne attribuée au mauvais joueur se voient ici) ;
+ * - un même maillot ne peut pas apparaître deux fois dans une équipe.
+ */
+export function computeStatsConsistencyWarnings(
+  data: Pick<EMarqueMatchData, "players" | "playerStats">,
+  context: QualityCheckContext,
+): EMarqueQualityWarning[] {
+  const warnings: EMarqueQualityWarning[] = [];
+
+  for (const [side, label, officialScore] of [
+    ["home", "domicile", context.ffbbScoreHome],
+    ["away", "extérieur", context.ffbbScoreAway],
+  ] as const) {
+    if (officialScore === null) continue;
+    const rows = data.playerStats.filter((stat) => stat.teamSide === side);
+    if (rows.length === 0) continue;
+    const unread = rows.filter((stat) => stat.points === null).length;
+    const total = rows.reduce((sum, stat) => sum + (stat.points ?? 0), 0);
+    if (unread > 0 || total !== officialScore) {
+      warnings.push({
+        code: "PLAYER_POINTS_TOTAL_MISMATCH",
+        message: `Équipe ${label} : total des points des joueurs ${total}${unread > 0 ? ` (${unread} valeur(s) illisible(s))` : ""} différent du score officiel ${officialScore}.`,
+        severity: "error",
+      });
+    }
+  }
+
+  for (const side of ["home", "away"] as const) {
+    const seen = new Set<string>();
+    for (const player of data.players) {
+      if (player.teamSide !== side || player.jerseyNumber === null) continue;
+      if (seen.has(player.jerseyNumber)) {
+        warnings.push({
+          code: "DUPLICATE_JERSEY_NUMBER",
+          message: `Maillot ${player.jerseyNumber} présent deux fois (${side === "home" ? "domicile" : "extérieur"}).`,
+          severity: "error",
+        });
+      }
+      seen.add(player.jerseyNumber);
+    }
+  }
+
+  return warnings;
+}
+
 export function computeOverallConfidence(confidences: (number | null)[]): number | null {
   const known = confidences.filter((c): c is number => c !== null);
   if (known.length === 0) return null;

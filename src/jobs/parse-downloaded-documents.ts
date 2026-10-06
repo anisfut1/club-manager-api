@@ -102,7 +102,7 @@ export async function parseDownloadedEmarqueDocuments(supabase: DbClient, option
         ffbbScoreAway: match.score_away,
       });
 
-      await persistEmarqueMatchData(supabase, {
+      const persisted = await persistEmarqueMatchData(supabase, {
         matchId: doc.match_id,
         clubId: doc.club_id,
         fileHash: doc.sha256,
@@ -111,6 +111,12 @@ export async function parseDownloadedEmarqueDocuments(supabase: DbClient, option
         parserVersion: PARSER_VERSION,
         data: parsed,
       });
+      // Fichier identique déjà lu par cette version du parseur (ex : relance
+      // manuelle) : rien n'est réécrit, le match retrouve simplement le
+      // statut de cette lecture — jamais laissé "en cours de lecture".
+      if (persisted.alreadyImported) {
+        await supabase.from("matches").update({ emarque_status: persisted.status }).eq("id", doc.match_id);
+      }
 
       await supabase.from("match_documents").update({ status: "imported", updated_at: new Date().toISOString() }).eq("id", doc.id);
       result.imported += 1;

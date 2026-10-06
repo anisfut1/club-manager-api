@@ -47,7 +47,9 @@ function baseJob(overrides: Partial<FbiJobRow> = {}): FbiJobRow {
     finished_at: null,
     last_error: null,
     result: null,
-    created_at: "2026-01-01T00:00:00.000Z",
+    // Job créé à l'instant : fenêtre de vérification e-Marque ouverte (voir `nextEmarqueCheckAt`).
+    created_at: new Date().toISOString(),
+    window_start: null,
     ...overrides,
   };
 }
@@ -168,7 +170,7 @@ describe("processDiscoverEmarqueJob", () => {
     downloadDocumentMock.mockResolvedValue(Buffer.from("<html><body>Aucun fichier</body></html>"));
 
     const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [] };
-    const supabase = makeFakeSupabase({ match: { id: "match-1", club_id: "club-1", numero: "6", match_datetime: "2026-09-27T11:00:00.000Z" }, recorders });
+    const supabase = makeFakeSupabase({ match: { id: "match-1", club_id: "club-1", numero: "6", match_datetime: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString() }, recorders });
 
     await processDiscoverEmarqueJob(supabase, baseJob());
 
@@ -218,8 +220,55 @@ describe("processDiscoverEmarqueJob", () => {
     await processDiscoverEmarqueJob(supabase, baseJob());
 
     expect(recorders.jobUpdates.at(-1)).toMatchObject({ patch: expect.objectContaining({ status: "pending", last_error: expect.stringContaining("2813") }) });
-    expect(recorders.matchUpdates).toContainEqual({ id: "match-1", patch: { emarque_status: "error" } });
+    // Jamais laissé "en erreur" : toujours en attente du créneau suivant (processus déterministe, 2026-10-06).
+    expect(recorders.matchUpdates).toContainEqual({ id: "match-1", patch: { emarque_status: "waiting_for_emarque" } });
     expect(recorders.documentInserts).toEqual([]);
+  });
+
+  it("FBI injoignable : jamais d'abandon, prochain créneau du calendrier fixe (15 min après un match tout juste terminé)", async () => {
+    getFbiCredentialsMock.mockResolvedValue({ username: "clubxxxx", password: "correct" });
+    loginMock.mockRejectedValue(new FbiError("Page de connexion FBI injoignable", "LOGIN_PAGE_UNREACHABLE"));
+
+    const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [] };
+    const matchStart = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(); // terminé à l'instant
+    const supabase = makeFakeSupabase({ match: { id: "match-1", club_id: "club-1", numero: "2813", match_datetime: matchStart }, recorders });
+
+    await processDiscoverEmarqueJob(supabase, baseJob({ attempt_count: 50 }));
+
+    const patch = recorders.jobUpdates.at(-1)?.patch as { status: string; scheduled_at: string };
+    expect(patch.status).toBe("pending");
+    const delayMinutes = (new Date(patch.scheduled_at).getTime() - Date.now()) / 60000;
+    expect(delayMinutes).toBeGreaterThan(10);
+    expect(delayMinutes).toBeLessThanOrEqual(15.1);
+  });
+
+  it("7 jours après le match sans feuille : vérifications terminées, match « pas de feuille e-Marque »", async () => {
+    getFbiCredentialsMock.mockResolvedValue({ username: "clubxxxx", password: "correct" });
+    loginMock.mockResolvedValue({ context: {}, page: {} });
+    findEmarqueDocumentsMock.mockResolvedValue({ documents: [], diagnostic: "[info, pas une erreur] aucun document" });
+
+    const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [] };
+    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+    const supabase = makeFakeSupabase({ match: { id: "match-1", club_id: "club-1", numero: "2813", match_datetime: tenDaysAgo }, recorders });
+
+    await processDiscoverEmarqueJob(supabase, baseJob());
+
+    expect(recorders.jobUpdates.at(-1)).toMatchObject({ patch: expect.objectContaining({ status: "failed", last_error: expect.stringContaining("7 jours") }) });
+    expect(recorders.matchUpdates).toContainEqual({ id: "match-1", patch: { emarque_status: "not_available" } });
+  });
+
+  it("relance manuelle (window_start) : nouvelle fenêtre de 7 jours même pour un match ancien", async () => {
+    getFbiCredentialsMock.mockResolvedValue({ username: "clubxxxx", password: "correct" });
+    loginMock.mockResolvedValue({ context: {}, page: {} });
+    findEmarqueDocumentsMock.mockResolvedValue({ documents: [], diagnostic: "[info, pas une erreur] aucun document" });
+
+    const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [] };
+    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+    const supabase = makeFakeSupabase({ match: { id: "match-1", club_id: "club-1", numero: "2813", match_datetime: tenDaysAgo }, recorders });
+
+    await processDiscoverEmarqueJob(supabase, baseJob({ window_start: new Date().toISOString() }));
+
+    expect(recorders.jobUpdates.at(-1)).toMatchObject({ patch: expect.objectContaining({ status: "pending" }) });
   });
 
   it("marque le job en échec (jamais de retry) sur des identifiants invalides", async () => {

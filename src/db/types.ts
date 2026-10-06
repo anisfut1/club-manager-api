@@ -42,7 +42,8 @@ export type EmarqueMatchStatus =
   | "parsing"
   | "imported"
   | "error"
-  | "needs_review";
+  | "needs_review"
+  | "not_available";
 export type SyncProvider = "ffbb" | "fbi";
 export type SyncStatus = "running" | "success" | "partial" | "error";
 export type EmarqueImportStatus = "discovered" | "downloading" | "downloaded" | "parsing" | "imported" | "error" | "needs_review";
@@ -78,6 +79,8 @@ export type FbiJobRow = {
   last_error: string | null;
   result: unknown;
   created_at: string;
+  /** Début de la fenêtre de vérification e-Marque d'un job relancé à la main (sinon : fin du match) — voir `nextEmarqueCheckAt`. */
+  window_start: string | null;
 };
 
 export interface Database {
@@ -688,6 +691,7 @@ export interface Database {
           last_error?: string | null;
           result?: unknown;
           created_at?: string;
+          window_start?: string | null;
         }
       >;
 

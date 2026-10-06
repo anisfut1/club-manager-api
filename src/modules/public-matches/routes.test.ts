@@ -128,6 +128,18 @@ describe("GET /v1/public/clubs/:clubSlug/matches/:matchId", () => {
     expect(body.id).toBe("match-a");
   });
 
+  it("une lecture « à vérifier » n'est jamais publiée : composition et statistiques vides, statut visible (processus e-Marque, 2026-10-06)", async () => {
+    state.matches = [{ ...MATCH_A, status: "played", score_home: 52, score_away: 53, emarque_status: "needs_review" }, MATCH_B];
+
+    const res = await request("/matches/match-a");
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.emarque.status).toBe("needs_review");
+    expect(body.participants).toEqual([]);
+    expect(body.stats).toEqual([]);
+  });
+
   it("404 pour un match d'un AUTRE club, même id valide (jamais une fuite cross-tenant)", async () => {
     const res = await request("/matches/match-b");
     expect(res.status).toBe(404);

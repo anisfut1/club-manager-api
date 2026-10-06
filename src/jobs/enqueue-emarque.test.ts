@@ -6,6 +6,8 @@ const CLUB_ID = "club-1";
 interface FakeMatchCandidate {
   id: string;
   numero: string | null;
+  match_datetime?: string | null;
+  emarque_status?: string;
 }
 
 function makeFakeSupabase(options: {
@@ -14,6 +16,8 @@ function makeFakeSupabase(options: {
   /** Numéros de match pour lesquels l'insertion doit simuler une violation unique (déjà en file). */
   alreadyQueuedMatchIds?: string[];
   insertedRows: Array<{ club_id: string; match_id: string; type: string }>;
+  scheduledAt?: Record<string, string>;
+  matchUpdates?: Array<{ id: string; patch: unknown }>;
 }) {
   const alreadyQueued = new Set(options.alreadyQueuedMatchIds ?? []);
 
@@ -37,15 +41,24 @@ function makeFakeSupabase(options: {
               }),
             }),
           }),
+          update: (patch: unknown) => ({
+            eq: (_col: string, id: string) => {
+              options.matchUpdates?.push({ id, patch });
+              return Promise.resolve({ error: null });
+            },
+          }),
         };
       }
       if (table === "fbi_jobs") {
         return {
-          insert: (row: { club_id: string; match_id: string; type: string }) => {
+          select: () => ({ eq: () => ({ eq: () => ({ in: () => Promise.resolve({ data: [], error: null }) }) }) }),
+          insert: (row: { club_id: string; match_id: string; type: string; scheduled_at?: string }) => {
             if (alreadyQueued.has(row.match_id)) {
               return Promise.resolve({ error: { code: "23505", message: "duplicate key value violates unique constraint" } });
             }
-            options.insertedRows.push(row);
+            const { scheduled_at: scheduledAt, ...rest } = row;
+            if (scheduledAt && options.scheduledAt) options.scheduledAt[row.match_id] = scheduledAt;
+            options.insertedRows.push(rest);
             return Promise.resolve({ error: null });
           },
         };
@@ -142,5 +155,34 @@ describe("enqueueEmarqueDiscoveryJobsForClub", () => {
     const result = await enqueueEmarqueDiscoveryJobsForClub(supabase, CLUB_ID);
 
     expect(result.jobsCreated).toBe(1);
+  });
+
+  describe("calendrier fixe (processus déterministe, retour du club 2026-10-06)", () => {
+    const hoursAgo = (h: number) => new Date(Date.now() - h * 60 * 60 * 1000).toISOString();
+
+    it("match terminé : premier essai immédiat ; lecture en erreur : créneau suivant ; > 7 jours : « pas de feuille », aucun job", async () => {
+      const insertedRows: Array<{ club_id: string; match_id: string; type: string }> = [];
+      const scheduledAt: Record<string, string> = {};
+      const matchUpdates: Array<{ id: string; patch: unknown }> = [];
+      const supabase = makeFakeSupabase({
+        fbiStatus: { configured: true, auto_import_emarque: true },
+        candidates: [
+          { id: "fresh", numero: "1", match_datetime: hoursAgo(3), emarque_status: "pending" },
+          { id: "parse-error", numero: "2", match_datetime: hoursAgo(3), emarque_status: "error" },
+          { id: "old", numero: "3", match_datetime: hoursAgo(10 * 24), emarque_status: "waiting_for_emarque" },
+          { id: "old-error", numero: "4", match_datetime: hoursAgo(10 * 24), emarque_status: "error" },
+        ],
+        insertedRows,
+        scheduledAt,
+        matchUpdates,
+      });
+
+      await enqueueEmarqueDiscoveryJobsForClub(supabase, CLUB_ID);
+
+      expect(insertedRows.map((r) => r.match_id)).toEqual(["fresh", "parse-error"]);
+      expect(new Date(scheduledAt.fresh!).getTime()).toBeLessThanOrEqual(Date.now());
+      expect(new Date(scheduledAt["parse-error"]!).getTime()).toBeGreaterThan(Date.now());
+      expect(matchUpdates).toEqual([{ id: "old", patch: { emarque_status: "not_available" } }]);
+    });
   });
 });

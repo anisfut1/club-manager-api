@@ -22,6 +22,8 @@ describe("generateOpenApiDocument", () => {
     expect(doc.paths["/v1/clubs/{clubId}/integrations/fbi"]).toHaveProperty("patch"); // gap 4
 
     expect(doc.paths).toHaveProperty("/v1/clubs/{clubId}/emarque-imports"); // gap 5
+    expect(doc.paths["/v1/clubs/{clubId}/emarque-tracking"]).toHaveProperty("get"); // suivi des stats, 2026-10-06
+    expect(doc.paths["/v1/clubs/{clubId}/emarque-tracking/{matchId}/relaunch"]).toHaveProperty("post");
 
     expect(doc.components?.schemas).toHaveProperty("MatchDocumentDto"); // documents (mimeType/discoveredAt)
 

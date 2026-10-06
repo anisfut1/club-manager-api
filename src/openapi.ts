@@ -31,6 +31,7 @@ import {
 } from "./contracts/maintenance.js";
 import { ClubCapabilitiesSchema, ErrorEnvelopeSchema } from "./contracts/common.js";
 import { EmarqueImportDtoSchema, EmarqueImportsQueryDtoSchema } from "./contracts/emarque.js";
+import { EmarqueTrackingDtoSchema, EmarqueTrackingRelaunchDtoSchema } from "./contracts/emarque-tracking.js";
 import { MeDtoSchema } from "./contracts/me.js";
 import {
   LicenciesListDtoSchema,
@@ -260,6 +261,23 @@ registry.registerPath({
     ...errorResponses,
     ...validationResponses,
   },
+});
+
+// Suivi des statistiques e-Marque (retour du club, 2026-10-06 : processus clair, réservé à l'admin du club).
+registry.registerPath({
+  method: "get",
+  path: "/v1/clubs/{clubId}/emarque-tracking",
+  security: bearerAuth,
+  request: { params: clubIdParam },
+  responses: { 200: jsonResponse("État de récupération des statistiques de chaque match joué de la saison", EmarqueTrackingDtoSchema), ...errorResponses },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/clubs/{clubId}/emarque-tracking/{matchId}/relaunch",
+  security: bearerAuth,
+  request: { params: clubIdParam.extend({ matchId: z.string() }) },
+  responses: { 202: jsonResponse("Relance enregistrée : essai au prochain passage, puis 7 jours au calendrier fixe", EmarqueTrackingRelaunchDtoSchema), ...errorResponses },
 });
 
 registry.registerPath({

@@ -80,7 +80,13 @@ publicMatchesRouter.get("/matches/:matchId", async (c) => {
   if (!matchId) throw badRequest("Paramètre de route :matchId manquant.");
 
   const dto = await loadMatchDetails(c.get("supabase"), club, matchId);
-  return c.json(dto);
+  // Garde-fou de publication (processus e-Marque, 2026-10-06 : "un coup les
+  // stats sont fausses") : une lecture "à vérifier" (total des points ≠
+  // score officiel, maillot en double...) ou en erreur n'est JAMAIS
+  // affichée au public — l'onglet indique simplement qu'elle est en cours
+  // de vérification ; l'admin du club la voit, avec la raison.
+  const unpublished = dto.emarque.status === "needs_review" || dto.emarque.status === "error";
+  return c.json(unpublished ? { ...dto, participants: [], coaches: [], stats: [] } : dto);
 });
 
 /**

@@ -8,7 +8,7 @@ import { classifyFbiLoginStatus, FbiError } from "../integrations/fbi/errors.js"
 import { inferMatchDocumentType, mimeTypeForFileName } from "../integrations/fbi/document-type.js";
 import { looksLikeZip } from "../integrations/fbi/emarque-search.js";
 import { emarqueStoragePath, resolveSeasonLabel, uploadEmarqueFile } from "../storage/emarque-storage.js";
-import { nextErrorBackoffSeconds, nextWaitingBackoffSeconds } from "./backoff.js";
+import { emarqueCheckWindowStart, nextEmarqueCheckAt } from "./backoff.js";
 import { getEnv } from "../config/env.js";
 import { logError, logInfo } from "../logger.js";
 
@@ -23,6 +23,28 @@ async function rescheduleJob(supabase: DbClient, job: FbiJobRow, delaySeconds: n
 
 async function failJob(supabase: DbClient, job: FbiJobRow, message: string): Promise<void> {
   await supabase.from("fbi_jobs").update({ status: "failed", finished_at: new Date().toISOString(), last_error: message }).eq("id", job.id);
+}
+
+/**
+ * Seule issue d'un essai qui n'a pas abouti (feuille pas encore publiée,
+ * FBI injoignable, fichier invalide, erreur imprévue) : prochain créneau
+ * du calendrier FIXE (`nextEmarqueCheckAt`), jamais un délai dépendant du
+ * nombre d'essais ni un abandon anticipé. Fenêtre de 7 jours écoulée :
+ * match "pas de feuille e-Marque" (relance manuelle possible).
+ */
+async function scheduleNextCheck(supabase: DbClient, job: FbiJobRow, matchDatetime: string | null, message: string | null): Promise<void> {
+  // Match sans date connue : fenêtre ouverte à la création du job.
+  const windowStart = emarqueCheckWindowStart(matchDatetime, job.window_start ?? (matchDatetime ? null : job.created_at));
+  const next = windowStart ? nextEmarqueCheckAt(windowStart) : null;
+
+  if (next) {
+    await supabase.from("matches").update({ emarque_status: "waiting_for_emarque" }).eq("id", job.match_id!);
+    await rescheduleJob(supabase, job, Math.max(0, (next.getTime() - Date.now()) / 1000), message);
+    return;
+  }
+
+  await supabase.from("matches").update({ emarque_status: "not_available" }).eq("id", job.match_id!);
+  await failJob(supabase, job, `Pas de feuille e-Marque récupérée sur FBI 7 jours après le match — vérifications automatiques terminées (relance manuelle possible). Dernier essai : ${message ?? "—"}`);
 }
 
 async function recordLoginOutcome(supabase: DbClient, clubId: string, success: boolean, message: string | null): Promise<void> {
@@ -111,10 +133,9 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
       // Ne se corrigera jamais tout seul en réessayant — surfacé via
       // fbi_integration_status.last_error, visible côté API/admin.
       await failJob(supabase, job, message);
-    } else if (job.attempt_count >= job.max_attempts) {
-      await failJob(supabase, job, `Connexion FBI en échec après ${job.attempt_count} tentatives : ${message}`);
     } else {
-      await rescheduleJob(supabase, job, nextErrorBackoffSeconds(job.attempt_count), message);
+      // FBI injoignable : jamais d'abandon, créneau suivant du calendrier.
+      await scheduleNextCheck(supabase, job, match.match_datetime, message);
     }
 
     logError("Job discover_emarque : connexion FBI échouée", error, { clubId: job.club_id, jobId: job.id, loginStatus: status });
@@ -127,7 +148,6 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
     const { documents, diagnostic } = await client.findEmarqueDocuments(session, match.numero, season, division);
 
     if (documents.length === 0) {
-      await supabase.from("matches").update({ emarque_status: "waiting_for_emarque" }).eq("id", job.match_id);
       /**
        * Le diagnostic riche (trace/champs/HTML) est persisté dans
        * `last_error` MÊME si ce n'est pas une vraie erreur (§ "Vingt-
@@ -136,7 +156,7 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
        * des logs Vercel. Le préfixe `[info, pas une erreur]` (déjà dans
        * `diagnostic`) évite toute confusion en le relisant plus tard.
        */
-      await rescheduleJob(supabase, job, nextWaitingBackoffSeconds(job.attempt_count), diagnostic);
+      await scheduleNextCheck(supabase, job, match.match_datetime, diagnostic);
       logInfo("Job discover_emarque : aucun document trouvé pour l'instant, nouvelle tentative planifiée", { clubId: job.club_id, jobId: job.id, matchId: job.match_id });
       return false;
     }
@@ -158,11 +178,10 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
       // le match reste « en attente », nouvelle tentative plus tard.
       if (doc.fileName.toLowerCase().endsWith(".zip") && !looksLikeZip(buffer)) {
         const preview = buffer.subarray(0, 200).toString("utf8").replace(/\s+/g, " ").trim();
-        await supabase.from("matches").update({ emarque_status: "waiting_for_emarque" }).eq("id", job.match_id);
-        await rescheduleJob(
+        await scheduleNextCheck(
           supabase,
           job,
-          nextWaitingBackoffSeconds(job.attempt_count),
+          match.match_datetime,
           `[info, pas une erreur] FBI n'a pas renvoyé de ZIP e-Marque pour la rencontre ${match.numero} (${buffer.length} octets, début : ${preview})`,
         );
         logInfo("Job discover_emarque : fichier e-Marque pas encore disponible (réponse non-ZIP)", { clubId: job.club_id, jobId: job.id, matchId: job.match_id });
@@ -221,13 +240,9 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
 
-    if (job.attempt_count >= job.max_attempts) {
-      await failJob(supabase, job, message);
-    } else {
-      await rescheduleJob(supabase, job, nextErrorBackoffSeconds(job.attempt_count), message);
-    }
-
-    await supabase.from("matches").update({ emarque_status: "error" }).eq("id", job.match_id);
+    // Erreur imprévue (téléchargement, dépôt...) : jamais d'abandon ni de
+    // match laissé "en erreur" — créneau suivant du calendrier fixe.
+    await scheduleNextCheck(supabase, job, match.match_datetime, message);
     logError("Job discover_emarque en erreur", error, { clubId: job.club_id, jobId: job.id, matchId: job.match_id });
     return false;
   } finally {

@@ -29,6 +29,7 @@ const A_JOB: FbiJobRow = {
   last_error: null,
   result: null,
   created_at: "2026-01-01T00:00:00.000Z",
+  window_start: null,
 };
 
 /**

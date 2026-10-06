@@ -47,7 +47,8 @@ function buildFakeSupabase(state: FakeState) {
       }
       if (table === "fbi_jobs") {
         return {
-          insert: (row: { club_id: string; match_id: string }) => {
+          select: () => ({ eq: () => ({ eq: () => ({ in: () => Promise.resolve({ data: [], error: null }) }) }) }),
+          insert: ({ scheduled_at: _scheduledAt, ...row }: { club_id: string; match_id: string; scheduled_at?: string }) => {
             state.insertedJobs.push(row);
             return Promise.resolve({ error: null });
           },

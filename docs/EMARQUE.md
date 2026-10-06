@@ -364,3 +364,20 @@ correctement lus. Détail complet (scope, permissions, fiche joueur) :
 Pas de module dérogations/tables de marque au sens FBI authentifié
 au-delà de l'extension prévue mais non implémentée mentionnée dans
 `docs/FBI.md` (`listDerogations()`).
+
+## Processus de récupération des statistiques (déterministe, 2026-10-06)
+
+Retour du club : « je veux un process clair, où je suis sûr que les matchs seront à jour avec les stats, dans l'ordre, pas au hasard ». Une seule règle, pour tous les matchs :
+
+| Étape | Règle |
+|---|---|
+| Déclenchement | Synchro FFBB toutes les 15 min (GitHub Actions) : un match passé « joué » entre dans la file e-Marque. |
+| Calendrier des essais | Fenêtre ouverte à la fin du match (début + 2 h) : un essai toutes les 15 min pendant 6 h, puis toutes les heures jusqu'à 48 h, puis toutes les 6 h jusqu'à 7 jours (`nextEmarqueCheckAt`, `src/jobs/backoff.ts`). Jamais dépendant du nombre d'essais. |
+| Panne FBI | Jamais d'abandon : essai suivant au prochain créneau. Seuls des identifiants FBI refusés arrêtent (à corriger dans Intégrations). |
+| Ordre | Les feuilles e-Marque passent avant les autres vérifications FBI, du match le plus ancien au plus récent (`claim_next_fbi_job`). |
+| Lecture | Téléchargement puis lecture dans le même passage du planificateur. |
+| Contrôles avant publication | Score de la feuille = score FFBB ; somme des points des joueurs de chaque équipe = score de l'équipe ; maillots uniques (`computeStatsConsistencyWarnings`). Échec → « à vérifier » (`needs_review`) : rien n'est publié au public, la raison est visible par l'admin. |
+| Fin de fenêtre | 7 jours sans feuille → « pas de feuille e-Marque » (`not_available`), état final. |
+| Relance manuelle | Admin → Suivi des stats → Relancer : essai au prochain passage, puis nouvelle fenêtre de 7 jours (`fbi_jobs.window_start`). |
+
+Suivi : `GET /v1/clubs/:clubId/emarque-tracking` (état clair par match joué, prochain essai, résultat du dernier essai, problèmes), `POST .../:matchId/relaunch`.

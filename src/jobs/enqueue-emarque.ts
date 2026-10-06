@@ -1,6 +1,7 @@
 import type { DbClient } from "../db/client.js";
 import { logError, logInfo } from "../logger.js";
 import { currentSeasonStart } from "../season.js";
+import { emarqueCheckWindowStart, nextEmarqueCheckAt } from "./backoff.js";
 
 const UNIQUE_VIOLATION = "23505";
 
@@ -50,10 +51,13 @@ export async function enqueueEmarqueDiscoveryJobsForClub(supabase: DbClient, clu
 
   const { data: candidates, error: candidatesError } = await supabase
     .from("matches")
-    .select("id, numero")
+    .select("id, numero, match_datetime, emarque_status")
     .eq("club_id", clubId)
     .eq("status", "played")
-    .in("emarque_status", ["pending", "waiting_for_emarque"])
+    // "error" inclus (processus déterministe, 2026-10-06) : une lecture en
+    // échec est retentée au créneau suivant tant que la fenêtre de 7 jours
+    // court, jamais laissée bloquée.
+    .in("emarque_status", ["pending", "waiting_for_emarque", "error"])
     // Saison en cours uniquement (retour du club, 2026-10-02) : 28 matchs de la saison
     // précédente (avril-mai), jamais disponibles sur FBI, saturaient la file d'un job / 15 min.
     .gte("match_datetime", currentSeasonStart().toISOString());
@@ -65,11 +69,41 @@ export async function enqueueEmarqueDiscoveryJobsForClub(supabase: DbClient, clu
   const queueable = (candidates ?? []).filter((match) => Boolean(match.numero));
   result.candidatesExamined = queueable.length;
 
+  const { data: activeJobs, error: activeJobsError } = await supabase
+    .from("fbi_jobs")
+    .select("match_id")
+    .eq("club_id", clubId)
+    .eq("type", "discover_emarque")
+    .in("status", ["pending", "claimed", "running"]);
+  if (activeJobsError) throw new Error(`Lecture des jobs e-Marque en cours échouée : ${activeJobsError.message}`);
+  const alreadyQueuedMatchIds = new Set((activeJobs ?? []).map((job) => job.match_id));
+
+  const now = new Date();
   for (const match of queueable) {
+    if (alreadyQueuedMatchIds.has(match.id)) {
+      result.alreadyQueued += 1;
+      continue;
+    }
+
+    // Calendrier fixe (`nextEmarqueCheckAt`) : premier essai dès la fin du
+    // match ; une lecture en erreur attend le créneau suivant ; fenêtre de
+    // 7 jours écoulée -> "pas de feuille e-Marque" (jamais pour une erreur
+    // de lecture, qui reste visible comme telle).
+    const windowStart = emarqueCheckWindowStart(match.match_datetime, null) ?? now;
+    const nextSlot = nextEmarqueCheckAt(windowStart, now);
+    if (!nextSlot) {
+      if (match.emarque_status !== "error") {
+        await supabase.from("matches").update({ emarque_status: "not_available" }).eq("id", match.id);
+      }
+      continue;
+    }
+    const scheduledAt = match.emarque_status === "error" ? nextSlot : now < windowStart ? windowStart : now;
+
     const { error: insertError } = await supabase.from("fbi_jobs").insert({
       club_id: clubId,
       match_id: match.id,
       type: "discover_emarque",
+      scheduled_at: scheduledAt.toISOString(),
     });
 
     if (!insertError) {

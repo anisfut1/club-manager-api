@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeOverallConfidence, computeQualityWarnings } from "./compute-quality-warnings.js";
+import { computeOverallConfidence, computeQualityWarnings, computeStatsConsistencyWarnings } from "./compute-quality-warnings.js";
 import type { EMarqueMatchData } from "../types.js";
 
 function baseData(): Pick<EMarqueMatchData, "match" | "players" | "tableOfficials"> {
@@ -103,5 +103,54 @@ describe("computeOverallConfidence", () => {
 
   it("retourne null si aucune confiance n'est connue", () => {
     expect(computeOverallConfidence([null, null])).toBeNull();
+  });
+});
+
+describe("computeStatsConsistencyWarnings (garde-fou avant publication, 2026-10-06)", () => {
+  const stat = (teamSide: "home" | "away", jerseyNumber: string, points: number | null) => ({
+    teamSide,
+    jerseyNumber,
+    lastName: "X",
+    firstName: "Y",
+    secondsPlayed: null,
+    points,
+    shotsMade: null,
+    threePointsMade: null,
+    twoPointsInteriorMade: null,
+    twoPointsExteriorMade: null,
+    freeThrowsMade: null,
+    foulsCommitted: null,
+  });
+  const player = (teamSide: "home" | "away", jerseyNumber: string | null) => ({
+    teamSide,
+    jerseyNumber,
+    lastName: "X",
+    firstName: "Y",
+    licenseNumber: null,
+    isCaptain: false,
+    isStarter: null,
+    confidence: null,
+  });
+  const context = { ffbbMatchNumero: "1", ffbbScoreHome: 10, ffbbScoreAway: 7 };
+
+  it("aucun avertissement quand chaque total d'équipe égale le score officiel et que les maillots sont uniques", () => {
+    const data = { players: [player("home", "4"), player("home", "5"), player("away", "4")], playerStats: [stat("home", "4", 6), stat("home", "5", 4), stat("away", "4", 7)] };
+    expect(computeStatsConsistencyWarnings(data, context)).toEqual([]);
+  });
+
+  it("total des points différent du score, ou valeur illisible : « à vérifier »", () => {
+    const data = { players: [], playerStats: [stat("home", "4", 6), stat("home", "5", 3), stat("away", "4", null)] };
+    const warnings = computeStatsConsistencyWarnings(data, context);
+    expect(warnings.map((w) => [w.code, w.severity])).toEqual([
+      ["PLAYER_POINTS_TOTAL_MISMATCH", "error"],
+      ["PLAYER_POINTS_TOTAL_MISMATCH", "error"],
+    ]);
+    expect(warnings[0]!.message).toContain("9");
+    expect(warnings[1]!.message).toContain("illisible");
+  });
+
+  it("maillot en double dans une équipe : « à vérifier »", () => {
+    const data = { players: [player("away", "10"), player("away", "10"), player("home", "10")], playerStats: [] };
+    expect(computeStatsConsistencyWarnings(data, context).map((w) => w.code)).toEqual(["DUPLICATE_JERSEY_NUMBER"]);
   });
 });

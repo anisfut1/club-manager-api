@@ -384,7 +384,9 @@ export async function persistEmarqueMatchData(supabase: Client, params: PersistE
     throw new Error(`Recherche d'import e-Marque existant échouée : ${existingImportError.message}`);
   }
 
-  if (existingImport && existingImport.parser_version === parserVersion) {
+  // Même fichier déjà lu par CETTE version du parseur : rien à refaire —
+  // sauf si cette lecture avait échoué (statut "error"), retentée.
+  if (existingImport && existingImport.parser_version === parserVersion && existingImport.status !== "error") {
     logInfo("Import e-Marque déjà traité (hash identique), aucune ré-écriture", { importId: existingImport.id, fileHash });
     return { importId: existingImport.id, status: existingImport.status, alreadyImported: true, participantsLinked: 0, participantsUnlinked: 0 };
   }

@@ -20,6 +20,8 @@ const qualityWarningCodeSchema = z.enum([
   "DOCUMENT_MISSING",
   "NO_PLAYERS_EXTRACTED",
   "DEBUG_TEMP_SKIPPED_ROW",
+  "PLAYER_POINTS_TOTAL_MISMATCH",
+  "DUPLICATE_JERSEY_NUMBER",
 ]);
 
 const playerSchema = z.object({

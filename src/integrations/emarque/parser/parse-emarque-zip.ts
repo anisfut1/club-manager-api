@@ -3,7 +3,7 @@ import { selectExtractor } from "./select-extractor.js";
 import { parseFeuillematch } from "./parse-feuillematch.js";
 import { parseResume } from "./parse-resume.js";
 import { mergePlayersWithStats } from "./merge.js";
-import { computeOverallConfidence, computeQualityWarnings, type QualityCheckContext } from "../quality/compute-quality-warnings.js";
+import { computeOverallConfidence, computeQualityWarnings, computeStatsConsistencyWarnings, type QualityCheckContext } from "../quality/compute-quality-warnings.js";
 import { emarqueMatchDataSchema } from "../schemas/emarque-match-data.js";
 import type { EMarqueMatchData, EMarqueQualityWarning } from "../types.js";
 
@@ -116,6 +116,7 @@ export async function parseEmarqueZip(zipBuffer: Buffer, context: QualityCheckCo
 
   const dataForQuality = { match, players, tableOfficials: feuillematchResult.tableOfficials };
   warnings.push(...computeQualityWarnings(dataForQuality, context));
+  warnings.push(...computeStatsConsistencyWarnings({ players, playerStats }, context));
 
   const overallConfidence = computeOverallConfidence([
     ...players.map((p) => p.confidence),

@@ -35,6 +35,7 @@ export const EMARQUE_STATUS_LABELS: Record<string, string> = {
   imported: "imported",
   error: "error",
   needs_review: "needs_review",
+  not_available: "not_available",
 };
 
 type DerogationStatusCategory = "en_cours" | "acceptee" | "refusee";

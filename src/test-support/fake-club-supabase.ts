@@ -258,6 +258,8 @@ export interface FakeFbiJobRow {
   claimed_at?: string | null;
   finished_at?: string | null;
   last_error?: string | null;
+  window_start?: string | null;
+  created_at?: string;
 }
 
 export interface FakeClubSupabaseState {
@@ -623,6 +625,10 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
           rows.forEach((r) => Object.assign(r, patch));
           return Promise.resolve({ data: rows, error: null });
         },
+        // `.update(patch).eq(...)` attendu directement, sans `.select()`.
+        then(onFulfilled: (v: { error: null }) => unknown) {
+          return api.select().then(() => ({ error: null })).then(onFulfilled);
+        },
       };
       return api;
     },
@@ -668,7 +674,7 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
   let fbiJobCounter = 0;
   const fbiJobsTable = {
     select: (_cols?: string) => queryable(state.fbiJobs),
-    insert: (payload: { club_id: string; match_id?: string | null; type: string }) => {
+    insert: (payload: { club_id: string; match_id?: string | null; type: string; scheduled_at?: string; window_start?: string | null }) => {
       const matchId = payload.match_id ?? null;
       const blockingStatuses = ["pending", "claimed", "running"];
       const hasConflict = state.fbiJobs.some(
@@ -677,7 +683,17 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
       if (hasConflict) return Promise.resolve({ error: { code: "23505", message: "duplicate key value violates unique constraint" } });
 
       fbiJobCounter += 1;
-      state.fbiJobs.push({ id: `fbi-job-${fbiJobCounter}`, club_id: payload.club_id, match_id: matchId, type: payload.type, status: "pending", scheduled_at: new Date().toISOString() });
+      const now = new Date().toISOString();
+      state.fbiJobs.push({
+        id: `fbi-job-${fbiJobCounter}`,
+        club_id: payload.club_id,
+        match_id: matchId,
+        type: payload.type,
+        status: "pending",
+        scheduled_at: payload.scheduled_at ?? now,
+        window_start: payload.window_start ?? null,
+        created_at: now,
+      });
       return Promise.resolve({ error: null });
     },
     // `.update(patch).eq(...).in(...).lt(...)`, thenable sans `.select()` —
@@ -828,11 +844,7 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
   // pour la même raison, voir son propre fichier de test) : seule la
   // logique de permission (admin/self/aucun) est couverte au niveau route,
   // la jointure elle-même est vérifiée manuellement contre la vraie base.
-  const matchParticipantsTable = {
-    select: (_cols?: string) => ({
-      eq: (_c1: string, _clubId: string) => ({ eq: (_c2: string, _licencieId: string) => Promise.resolve({ data: [], error: null }) }),
-    }),
-  };
+  const matchParticipantsTable = { select: (_cols?: string) => queryable<never>([]) };
   // `queryable([])` plutôt qu'un stub sur-mesure : couvre à la fois
   // `.in("participant_id", ids)` (fiche joueur, modules/licencies/routes.ts)
   // ET `.eq("match_id", ...).eq("club_id", ...)` (détail d'un match,
