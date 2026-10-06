@@ -3920,3 +3920,11 @@ Constats :
 Les coupures existaient déjà fin septembre (`connect ETIMEDOUT` notés les 30/09 et 02/10). L'ancien fonctionnement, un match par invocation, chacune depuis une adresse Vercel souvent différente, les rendait invisibles. Le 06/10, trois changements les ont rendues bloquantes : la relecture de 19 matchs d'un coup, l'enchaînement de plusieurs matchs par session, et une adresse fixe (VPS, coupée environ 4 h).
 
 Retenu : un match par passage (`MAX_MATCHES_PER_SESSION = 1`), en direct depuis Vercel, avec connexion puis déconnexion à chaque fois. On abandonne le plafond de 3 h et la reprise de session (la table `fbi_saved_sessions` reste, inutilisée). La vérification préalable de joignabilité, les délais maximum, le rythme humain et les traces restent en place. Le proxy (`platform_settings.fbi_proxy_url`) est retiré de la configuration. Le code reste prêt si la FFBB autorise un jour une adresse fixe.
+
+### Fenêtre d'environ 8 s après la connexion : le parcours doit être rapide (2026-10-06, 19:07)
+
+Comparaison des traces :
+- **14:21, sans pauses** : connexion à 2,2 s, feuille téléchargée à 8,6 s, soit 6,4 s après la connexion. Succès.
+- **14:45, 17:48 et 19:07, avec le rythme humain** : coupure 7,7 à 9,3 s après la connexion, avant même la recherche.
+
+FBI laisse donc environ 8 s après chaque connexion avant de couper l'adresse. L'ancien parcours rapide finissait dans cette fenêtre, d'où le « ça marchait avant ». `humanPacing` est désactivé (option conservée dans `BrowserFbiClient`), et le parcours reste le plus court possible : connexion, recherche directe sans ouvrir l'écran, téléchargement.

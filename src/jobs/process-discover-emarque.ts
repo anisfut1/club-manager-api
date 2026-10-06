@@ -175,7 +175,12 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
 
   const browser = await launchServerlessBrowser();
   const via = fbiProxySettings() ? "proxy" : "direct";
-  const client = new BrowserFbiClient({ baseUrl: getEnv().FBI_BASE_URL, browser, humanPacing: true });
+  // Parcours le plus court possible, sans pauses (2026-10-06, traces) : FBI
+  // coupe l'adresse ~8 s après chaque connexion. Sans pauses, la feuille
+  // était téléchargée 6,4 s après la connexion (14:21, succès) ; avec le
+  // « rythme humain », la coupure arrivait avant la recherche (14:45, 17:48,
+  // 19:07). `humanPacing` reste disponible mais désactivé.
+  const client = new BrowserFbiClient({ baseUrl: getEnv().FBI_BASE_URL, browser });
   let session: BrowserFbiSession;
 
   try {
