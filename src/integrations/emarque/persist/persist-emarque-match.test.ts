@@ -33,6 +33,8 @@ function buildData(overrides: Partial<EMarqueMatchData> = {}): EMarqueMatchData 
 interface FakeSupabaseOptions {
   existingImport?: { id: string; status: string; parser_version: string } | null;
   licenciesByLicense?: Record<string, string[]>;
+  /** Licenciés du club (rattachement par nom, voir `findLicencieIdByName`). */
+  licenciesByName?: { id: string; first_name: string; last_name: string }[];
   failOnTable?: string;
   /** `matches.is_home` pour BASE_PARAMS.matchId — `undefined`/absent = non renseigné (jamais une supposition, voir persist-emarque-match.ts). */
   isHome?: boolean;
@@ -108,6 +110,8 @@ function makeFakeSupabase(options: FakeSupabaseOptions = {}) {
                   const ids = options.licenciesByLicense?.[license] ?? [];
                   return Promise.resolve({ data: ids.map((id) => ({ id })), error: null });
                 },
+                then: (onFulfilled: (v: { data: unknown[]; error: null }) => unknown) =>
+                  Promise.resolve({ data: options.licenciesByName ?? [], error: null }).then(onFulfilled),
               }),
             }),
             insert: (payload: unknown) => ({
@@ -219,6 +223,64 @@ describe("persistEmarqueMatchData", () => {
       ]);
     }
     expect(supabase._inserted.emarque_imports).toHaveLength(1);
+  });
+
+  describe("rattachement par nom quand la licence n'a pas pu être lue (joueur du club uniquement)", () => {
+    const unreadPlayer = (lastName: string, firstName: string, teamSide: "home" | "away" = "home") => ({
+      teamSide,
+      jerseyNumber: "9",
+      lastName,
+      firstName,
+      licenseNumber: null,
+      isCaptain: false,
+      isStarter: null,
+      confidence: 0.9,
+    });
+
+    it("rattache au seul licencié du club portant exactement ce nom et ce prénom (accents, casse et confusion l/I tolérés)", async () => {
+      const supabase = makeFakeSupabase({
+        isHome: true,
+        licenciesByName: [
+          { id: "lic-ilyes", last_name: "Morsli", first_name: "Ilyes" },
+          { id: "lic-kenzo", last_name: "Morsli", first_name: "Kenzo" },
+        ],
+      });
+
+      const result = await persistEmarqueMatchData(supabase, { ...BASE_PARAMS, data: buildData({ players: [unreadPlayer("MORSLI", "llyes")] }) });
+
+      expect(result.participantsLinked).toBe(1);
+      expect(supabase._inserted.match_participants[0]).toMatchObject({ licencie_id: "lic-ilyes", license_number: null });
+      expect(supabase._inserted.licencies).toBeUndefined();
+    });
+
+    it("ne rattache jamais en cas d'homonymes", async () => {
+      const supabase = makeFakeSupabase({
+        isHome: true,
+        licenciesByName: [
+          { id: "lic-1", last_name: "Dubois", first_name: "Liam" },
+          { id: "lic-2", last_name: "DUBOIS", first_name: "Liam" },
+        ],
+      });
+
+      const result = await persistEmarqueMatchData(supabase, { ...BASE_PARAMS, data: buildData({ players: [unreadPlayer("Dubois", "Liam")] }) });
+
+      expect(result.participantsLinked).toBe(0);
+      expect(supabase._inserted.match_participants[0]).toMatchObject({ licencie_id: null });
+    });
+
+    it("ne rattache jamais sur une initiale seule ni pour l'équipe adverse", async () => {
+      const supabase = makeFakeSupabase({
+        isHome: true,
+        licenciesByName: [{ id: "lic-1", last_name: "Rivet", first_name: "Macéo" }],
+      });
+
+      const result = await persistEmarqueMatchData(supabase, {
+        ...BASE_PARAMS,
+        data: buildData({ players: [unreadPlayer("Rivet", "M."), { ...unreadPlayer("Rivet", "Macéo", "away"), jerseyNumber: "4" }] }),
+      });
+
+      expect(result.participantsLinked).toBe(0);
+    });
   });
 
   it("lie automatiquement un participant dont la licence correspond exactement à un licencié existant", async () => {

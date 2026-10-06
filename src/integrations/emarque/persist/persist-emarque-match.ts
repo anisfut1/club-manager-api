@@ -47,6 +47,66 @@ async function findLicencieIdByLicense(supabase: Client, clubId: string, license
   return data[0]!.id;
 }
 
+/**
+ * Clé de comparaison d'un nom : sans accents, sans casse, ponctuation/
+ * tirets/espaces multiples réduits à un espace, et "l" assimilé à "i" —
+ * confusion OCR constatée en production (2026-10-04, "llyes" lu pour
+ * "Ilyes"). Appliquée des DEUX côtés de la comparaison.
+ */
+export function nameMatchKey(lastName: string | null | undefined, firstName: string | null | undefined): string | null {
+  const normalize = (value: string | null | undefined) =>
+    (value ?? "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/l/g, "i")
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+  const last = normalize(lastName);
+  const first = normalize(firstName);
+  // Jamais sur une initiale seule ("A.") ni un nom vide : uniquement un
+  // prénom complet, tel que lu sur le document "résumé".
+  if (!last || first.replace(/ /g, "").length < 2) return null;
+  return `${last}|${first}`;
+}
+
+/**
+ * Repli de rattachement pour un·e joueur·se DU CLUB dont la licence n'a pas
+ * pu être lue sur la feuille (retour du club, 2026-10-06 : 29 joueurs non
+ * rattachés sur les matchs du 26/09 au 04/10, dont les 9 du n°13 — ligne
+ * de licence illisible, joueur connu uniquement par le document "résumé",
+ * qui porte nom ET prénom complets). Rattaché UNIQUEMENT si un seul
+ * licencié du club porte exactement ce nom et ce prénom (voir
+ * `nameMatchKey`) — homonyme ou absence : pas de lien, jamais deviné.
+ */
+async function findLicencieIdByName(
+  supabase: Client,
+  clubId: string,
+  player: EMarquePlayer,
+  cache: { byKey: Map<string, string[]> | null },
+): Promise<string | null> {
+  const key = nameMatchKey(player.lastName, player.firstName);
+  if (!key) return null;
+
+  if (!cache.byKey) {
+    const { data, error } = await supabase.from("licencies").select("id, first_name, last_name").eq("club_id", clubId);
+    if (error) {
+      logError("Lecture des licenciés pour rattachement par nom échouée", error, { clubId });
+      cache.byKey = new Map();
+      return null;
+    }
+    cache.byKey = new Map();
+    for (const licencie of data ?? []) {
+      const licencieKey = nameMatchKey(licencie.last_name, licencie.first_name);
+      if (!licencieKey) continue;
+      cache.byKey.set(licencieKey, [...(cache.byKey.get(licencieKey) ?? []), licencie.id]);
+    }
+  }
+
+  const ids = cache.byKey.get(key);
+  return ids && ids.length === 1 ? ids[0]! : null;
+}
+
 /** Détermine le statut final d'import à partir des avertissements qualité : une seule erreur suffit à réclamer une revue humaine (ARCHITECTURE.md §24). */
 function statusFromWarnings(data: EMarqueMatchData): "imported" | "needs_review" {
   const hasError = data.quality.warnings.some((w) => w.severity === "error");
@@ -114,11 +174,17 @@ async function insertParticipants(
   const byKey = new Map<string, string>();
   let linked = 0;
   let unlinked = 0;
+  const nameCache: { byKey: Map<string, string[]> | null } = { byKey: null };
 
   for (const player of players) {
     let licencieId = await findLicencieIdByLicense(supabase, clubId, player.licenseNumber);
+    const isClubSide = clubTeamSide !== null && player.teamSide === clubTeamSide;
 
-    if (!licencieId && clubTeamSide && player.teamSide === clubTeamSide) {
+    if (!licencieId && isClubSide && !player.licenseNumber) {
+      licencieId = await findLicencieIdByName(supabase, clubId, player, nameCache);
+    }
+
+    if (!licencieId && isClubSide) {
       licencieId = await autoProvisionLicencieId(supabase, clubId, player, teamId);
     }
 
