@@ -3863,3 +3863,19 @@ Constaté le 2026-10-06 : la plupart des essais de l'heure échouaient sur « Pa
 
 1. **Une connexion par passage** : `processDiscoverEmarqueJob` ouvre la session FBI une fois, puis réclame les autres jobs `discover_emarque` dus du même club via `claim_next_discover_job_in_session` (migration `20261006140000`) et les traite dans cette session. Pas de garde « un job actif par club » dans cette fonction : l'appelant détient déjà le job actif du club. Bornes : aucun nouveau match après 2 min, 10 s entre deux matchs (écran de recherche réutilisé, images/polices/médias bloqués pour limiter les connexions), arrêt de l'enchaînement à la première erreur FBI.
 2. **Proxy à IP fixe** : `FBI_PROXY_URL` (format `http://utilisateur:motdepasse@hote:port`, ou `socks5://hote:port`) est passé à Chromium au lancement et à chaque contexte navigateur, ce qui couvre aussi `context.request`. Sans la variable, rien ne change. Utiliser une adresse FIXE dédiée (petit VPS avec un proxy type Squid/tinyproxy, ou un service « static IP »). Ne jamais utiliser un proxy rotatif : le compte du club apparaîtrait depuis des dizaines d'adresses. Les identifiants du proxy ne sont jamais journalisés. `HttpFbiClient` (test de connexion HTTP) n'utilise pas ce proxy.
+
+## Proxy à IP fixe sur un VPS OVH — mise en place (2026-10-06)
+
+Mesuré le 2026-10-06 : FBI ignore par moments les connexions venant de Vercel (`ERR_CONNECTION_TIMED_OUT` dès la page de connexion), alors qu'il répond en 0,6 s à une autre machine au même instant. Correctif : tout le trafic navigateur vers FBI passe par un VPS à adresse fixe (`FBI_PROXY_URL`, voir plus haut).
+
+Installation sur le VPS (Ubuntu 22.04/24.04), une commande : `curl -fsSL https://raw.githubusercontent.com/anisfut1/club-manager-api/main/ops/fbi-proxy/install.sh | sudo bash`.
+
+Le script `ops/fbi-proxy/install.sh` :
+- installe Squid avec authentification (mot de passe aléatoire généré sur le VPS, affiché uniquement à l'écran et gardé dans `/root/fbi-proxy-url.txt`) ;
+- limite les destinations à `*.ffbb.com`, ports 80/443 : autre site → 403, sans mot de passe → 407 (vérifié avec Squid 6.14) ;
+- coupe les journaux de connexion et les en-têtes `Via`/`X-Forwarded-For` ;
+- ouvre le pare-feu sur SSH et le port du proxy seulement (port aléatoire 20000-60000) ;
+- active les mises à jour de sécurité automatiques ;
+- teste FBI à travers le proxy et affiche la valeur `FBI_PROXY_URL` à ajouter dans Vercel (projet club-manager-api, Production), puis redéployer.
+
+Les identifiants FBI des clubs ne transitent jamais en clair par le VPS : Chrome ouvre un tunnel HTTPS de bout en bout jusqu'à FBI à travers le proxy.
