@@ -63,11 +63,12 @@ jobs:
       # e-Marque, le plus ancien en premier) UN PAR UN, chacun suivi du
       # parsing de ce qu'il a téléchargé. Retour du club, 2026-10-02 : à un
       # seul job par passage (4/heure), un weekend chargé mettait des heures
-      # à se vider. On n'enchaîne cependant le job suivant QUE si le
-      # précédent a réussi, avec une pause : constaté le même jour que des
-      # connexions FBI enchaînées sans pause rendaient FBI injoignable
-      # pendant plusieurs minutes. Un échec ou "claimed": 0 (file vide)
-      # termine le passage ; le suivant reprend 15 minutes plus tard.
+      # à se vider. Une pause de 30 s sépare deux jobs (des connexions FBI
+      # enchaînées sans pause rendaient FBI injoignable), 4 jobs maximum.
+      # Un échec n'arrête PLUS le passage (2026-10-06 : deux matchs en échec
+      # répété bloquaient toute la file) — le job en échec est reprogrammé
+      # au créneau suivant de son calendrier fixe ; seule une file vide
+      # ("claimed": 0) termine le passage.
       - name: Traiter les jobs FBI en attente et parser les e-Marque
         run: |
           start=$(date +%s)
@@ -84,5 +85,5 @@ jobs:
               -X GET "https://club-manager-api-two.vercel.app/internal/cron/emarque-parse" \
               -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" || echo "emarque-parse en échec (repris au prochain passage)"
             echo
-            case "$out" in *'"succeeded":1'*) ;; *) break ;; esac
+            case "$out" in *'"claimed":0'*) break ;; esac
           done
