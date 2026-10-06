@@ -19,3 +19,15 @@ describe("fbiProxySettings", () => {
     expect(fbiProxySettings("socks5://203.0.113.10:1080")).toEqual({ server: "socks5://203.0.113.10:1080" });
   });
 });
+
+describe("fbiBrowserIdentity (FBI coupe l'accès d'un navigateur annoncé « HeadlessChrome »)", async () => {
+  const { fbiBrowserIdentity } = await import("./browser-client.js");
+
+  it("se présente comme un Chrome de bureau en français, de la même version que le moteur", () => {
+    const identity = fbiBrowserIdentity("141.0.7390.37");
+    expect(identity.userAgent).toContain("Chrome/141.0.0.0");
+    expect(identity.userAgent).not.toContain("Headless");
+    expect(identity.extraHTTPHeaders["sec-ch-ua"]).not.toContain("Headless");
+    expect(identity.locale).toBe("fr-FR");
+  });
+});

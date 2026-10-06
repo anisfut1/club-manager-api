@@ -23,6 +23,29 @@ const FBI_NODE_REQUEST_TIMEOUT_MS = 20_000;
 const SKIPPED_RESOURCE_TYPES = new Set(["image", "font", "media"]);
 
 /**
+ * Identité du navigateur auprès de FBI (2026-10-06). Par défaut, Chrome sans
+ * écran s'annonce « HeadlessChrome » (User-Agent et Sec-CH-UA), en anglais,
+ * sous Linux : constaté que FBI coupe alors l'accès de l'adresse utilisée
+ * (Vercel, puis le VPS du proxy — qui répondait en 0,4 s juste avant). Même
+ * identité qu'un Chrome de bureau ordinaire, cohérente avec la version réelle
+ * du moteur ; même principe que `FBI_REQUEST_HEADERS` (http-client.ts).
+ */
+export function fbiBrowserIdentity(browserVersion: string) {
+  const major = /^(\d+)/.exec(browserVersion)?.[1] ?? "141";
+  return {
+    userAgent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`,
+    locale: "fr-FR",
+    timezoneId: "Europe/Paris",
+    viewport: { width: 1366, height: 768 },
+    extraHTTPHeaders: {
+      "sec-ch-ua": `"Google Chrome";v="${major}", "Chromium";v="${major}", "Not?A_Brand";v="24"`,
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": '"Windows"',
+    },
+  };
+}
+
+/**
  * BrowserFbiClient — automatisation Playwright de FBI, utilisée UNIQUEMENT
  * par les routes `/internal/*` (jamais par une route `/v1/*` servant une
  * requête utilisateur, voir docs/FBI.md). C'est la stratégie DE SECOURS
@@ -234,7 +257,7 @@ export class BrowserFbiClient {
     // Proxy à IP fixe (`FBI_PROXY_URL`) aussi au niveau du contexte : couvre
     // `context.request` (requêtes hors page) en plus des pages.
     const proxy = fbiProxySettings();
-    const context = await this.browser.newContext(proxy ? { proxy } : {});
+    const context = await this.browser.newContext({ ...fbiBrowserIdentity(this.browser.version()), ...(proxy ? { proxy } : {}) });
     // Moins de connexions vers FBI (2026-10-06 : FBI coupe au-delà d'un
     // certain volume) : images, polices et médias ne servent à rien ici.
     // Les feuilles de style restent chargées (visibilité des éléments).

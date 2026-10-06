@@ -3881,3 +3881,9 @@ Le script `ops/fbi-proxy/install.sh` :
 Les identifiants FBI des clubs ne transitent jamais en clair par le VPS : Chrome ouvre un tunnel HTTPS de bout en bout jusqu'à FBI à travers le proxy.
 
 **Sans passer par Vercel** : l'adresse du proxy peut aussi être enregistrée en base, `platform_settings` (clé `fbi_proxy_url`, migration `20261006170000`, service_role uniquement). Elle est lue à chaque lancement du navigateur : active au passage suivant, sans redéploiement. La variable `FBI_PROXY_URL`, si elle existe dans Vercel, reste prioritaire. Valeur invalide ou illisible : sortie directe, jamais un échec du job.
+
+## FBI coupe l'adresse d'un navigateur annoncé « HeadlessChrome » (2026-10-06)
+
+Constaté le 2026-10-06 : le VPS du proxy répondait en 0,44 s à l'installation (12:45). Après une session de l'app (connexion réussie à 13:03), FBI ne lui répondait plus du tout (3 essais `curl` à 25 s), alors que le navigateur du club, au même moment, chargeait FBI en 1 s. C'est la même signature que les coupures des adresses Vercel. Le Chrome sans écran s'annonçait `HeadlessChrome` (User-Agent et `Sec-CH-UA`), sous Linux, en anglais, avec `navigator.webdriver = true`.
+
+Correctif : `fbiBrowserIdentity` (User-Agent et `Sec-CH-UA` d'un Chrome de bureau Windows de la même version que le moteur, `fr-FR`, fuseau Europe/Paris, fenêtre 1366×768) et `--disable-blink-features=AutomationControlled`. Vérifié sur un serveur local : en-têtes et `navigator` sans aucune trace « Headless » ni `webdriver`.

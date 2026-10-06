@@ -81,7 +81,8 @@ export async function launchServerlessBrowser(): Promise<Browser> {
   logInfo("Lancement de Chromium serverless pour BrowserFbiClient", { executablePath, proxy: proxy ? "actif" : "aucun" });
 
   return playwrightChromium.launch({
-    args: chromium.args,
+    // Retire le marqueur « navigateur piloté » (navigator.webdriver) — voir `fbiBrowserIdentity`.
+    args: [...chromium.args, "--disable-blink-features=AutomationControlled"],
     executablePath,
     headless: true,
     ...(proxy ? { proxy } : {}),
