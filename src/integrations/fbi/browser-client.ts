@@ -357,15 +357,19 @@ export class BrowserFbiClient {
     const { page } = session;
 
     const trace: string[] = [];
-    // Plusieurs matchs dans la même session : la recherche directe ne quitte
-    // pas l'écran de recherche — inutile de le recharger (et ses ressources).
-    const alreadyOnSearchScreen =
-      page.url().startsWith(`${this.baseUrl}/rechercherRencontreSaisieResultat.fbi`) &&
-      (await page.locator('select[name$="idSaison"]').count().catch(() => 0)) > 0;
-    const navigation = alreadyOnSearchScreen ? "écran de recherche déjà ouvert (session réutilisée)" : await this.tryNavigateToSearchScreen(page);
 
-    // Recherche DIRECTE d'abord (retour du club, 2026-10-02) — voir `emarque-search.ts`.
-    const direct = await this.tryDirectEmarqueSearch(session, matchNumber, season, division);
+    // Recherche DIRECTE d'abord (retour du club, 2026-10-02) — voir
+    // `emarque-search.ts`. Depuis le 2026-10-06, sans même OUVRIR l'écran de
+    // recherche : son chargement complet (scripts, styles) expirait à travers
+    // le proxy alors qu'un seul de ses éléments sert (la liste des saisons),
+    // lu par `readSeasonOptions`. Le parcours historique reste le secours.
+    let navigation = "écran de recherche non ouvert (recherche directe)";
+    let direct = await this.tryDirectEmarqueSearch(session, matchNumber, season, division);
+    if (direct.kind === "unavailable") {
+      const firstAttempt = direct.note;
+      navigation = `${await this.tryNavigateToSearchScreen(page)} (recherche directe sans l'écran : ${firstAttempt})`;
+      direct = await this.tryDirectEmarqueSearch(session, matchNumber, season, division);
+    }
     if (direct.kind === "document") return { documents: [direct.document], diagnostic: null };
     if (direct.kind === "no_emarque") {
       return { documents: [], diagnostic: `[info, pas une erreur] Rencontre ${matchNumber} trouvée sur FBI mais sans e-Marque téléchargeable pour l'instant (colonne EM vide). ${direct.note}` };
@@ -545,6 +549,40 @@ export class BrowserFbiClient {
    * page/réponse inattendue) et `not_found` laissent l'appelant retomber sur
    * le parcours à la souris — jamais un échec du job à ce stade.
    */
+  /**
+   * Saisons du formulaire de recherche : sur la page si elle est déjà
+   * ouverte, sinon en lisant SEULEMENT le HTML de l'écran (une requête depuis
+   * la page, même session, aucune ressource annexe) — même état côté serveur
+   * qu'une ouverture complète, en une fraction du temps.
+   */
+  private async readSeasonOptions(page: Page): Promise<Array<{ value: string; label: string; selected: boolean }>> {
+    const onPage = await page
+      .locator('select[name$="idSaison"] option')
+      .evaluateAll((options) => options.map((o) => ({ value: (o as HTMLOptionElement).value, label: (o.textContent ?? "").trim(), selected: (o as HTMLOptionElement).selected })))
+      .catch(() => []);
+    if (onPage.length > 0) return onPage;
+
+    return page
+      .evaluate(
+        async ({ url, timeoutMs }) => {
+          try {
+            const response = await fetch(url, { credentials: "include", signal: AbortSignal.timeout(timeoutMs) });
+            if (!response.ok) return [];
+            const doc = new DOMParser().parseFromString(await response.text(), "text/html");
+            return Array.from(doc.querySelectorAll('select[name$="idSaison"] option')).map((o) => ({
+              value: (o as HTMLOptionElement).value,
+              label: (o.textContent ?? "").trim(),
+              selected: (o as HTMLOptionElement).hasAttribute("selected"),
+            }));
+          } catch {
+            return [];
+          }
+        },
+        { url: `${this.baseUrl}/rechercherRencontreSaisieResultat.fbi`, timeoutMs: FBI_IN_PAGE_REQUEST_TIMEOUT_MS },
+      )
+      .catch(() => []);
+  }
+
   private async tryDirectEmarqueSearch(
     session: BrowserFbiSession,
     matchNumber: string,
@@ -556,9 +594,7 @@ export class BrowserFbiClient {
   > {
     const { page, context } = session;
     try {
-      const seasonOptions = await page
-        .locator('select[name$="idSaison"] option')
-        .evaluateAll((options) => options.map((o) => ({ value: (o as HTMLOptionElement).value, label: (o.textContent ?? "").trim(), selected: (o as HTMLOptionElement).selected })));
+      const seasonOptions = await this.readSeasonOptions(page);
       const seasonOption = (season ? seasonOptions.find((o) => o.label.includes(season)) : undefined) ?? seasonOptions.find((o) => o.selected && o.value);
       if (!seasonOption?.value) return { kind: "unavailable", note: `saison "${season ?? "?"}" introuvable dans le formulaire (${seasonOptions.length} options)` };
 

@@ -376,6 +376,8 @@ describe("BrowserFbiClient.findEmarqueDocuments — recherche directe (retour du
 
     expect(diagnostic).toBeNull();
     expect(documents).toEqual([{ url: `${server.baseUrl}/telechargerFeuilleMatchEmarque.fbi?action=emV2&plugin=true&idRenc=BBB%2F%3D`, fileName: "emarque_BU15MN1_6_2.zip" }]);
+    // 2026-10-06 : l'écran de recherche n'est plus ouvert (son chargement expirait via le proxy).
+    expect(session.page.url()).not.toContain("rechercherRencontreSaisieResultat");
     await client.closeSession(session);
   });
 
