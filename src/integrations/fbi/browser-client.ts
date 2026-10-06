@@ -250,7 +250,11 @@ export class BrowserFbiClient {
       if (lastNetworkError) throw lastNetworkError;
     } catch (error) {
       await context.close();
-      throw new FbiError("Page de connexion FBI injoignable", "LOGIN_PAGE_UNREACHABLE", error);
+      // Cause technique gardée dans le message (délai dépassé, connexion
+      // refusée…) : sans elle, impossible de distinguer une panne FBI d'un
+      // blocage des adresses Vercel (2026-10-06). Jamais d'identifiant ici.
+      const cause = error instanceof Error ? error.message.split("\n")[0].slice(0, 160) : String(error).slice(0, 160);
+      throw new FbiError(`Page de connexion FBI injoignable (${cause})`, "LOGIN_PAGE_UNREACHABLE", error);
     }
 
     if (!(await selectors.looksLikeLoginPage(page))) {
