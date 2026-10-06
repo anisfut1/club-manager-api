@@ -20,6 +20,7 @@ const FBI_IN_PAGE_REQUEST_TIMEOUT_MS = 30_000;
 const FBI_IN_PAGE_DOWNLOAD_TIMEOUT_MS = 40_000;
 const FBI_NAVIGATION_DOWNLOAD_TIMEOUT_MS = 30_000;
 const FBI_NODE_REQUEST_TIMEOUT_MS = 20_000;
+const SKIPPED_RESOURCE_TYPES = new Set(["image", "font", "media"]);
 
 /**
  * BrowserFbiClient — automatisation Playwright de FBI, utilisée UNIQUEMENT
@@ -234,6 +235,12 @@ export class BrowserFbiClient {
     // `context.request` (requêtes hors page) en plus des pages.
     const proxy = fbiProxySettings();
     const context = await this.browser.newContext(proxy ? { proxy } : {});
+    // Moins de connexions vers FBI (2026-10-06 : FBI coupe au-delà d'un
+    // certain volume) : images, polices et médias ne servent à rien ici.
+    // Les feuilles de style restent chargées (visibilité des éléments).
+    await context.route("**/*", (route) =>
+      SKIPPED_RESOURCE_TYPES.has(route.request().resourceType()) ? route.abort() : route.continue(),
+    );
     const page = await context.newPage();
 
     try {
@@ -348,7 +355,12 @@ export class BrowserFbiClient {
     const { page } = session;
 
     const trace: string[] = [];
-    const navigation = await this.tryNavigateToSearchScreen(page);
+    // Plusieurs matchs dans la même session : la recherche directe ne quitte
+    // pas l'écran de recherche — inutile de le recharger (et ses ressources).
+    const alreadyOnSearchScreen =
+      page.url().startsWith(`${this.baseUrl}/rechercherRencontreSaisieResultat.fbi`) &&
+      (await page.locator('select[name$="idSaison"]').count().catch(() => 0)) > 0;
+    const navigation = alreadyOnSearchScreen ? "écran de recherche déjà ouvert (session réutilisée)" : await this.tryNavigateToSearchScreen(page);
 
     // Recherche DIRECTE d'abord (retour du club, 2026-10-02) — voir `emarque-search.ts`.
     const direct = await this.tryDirectEmarqueSearch(session, matchNumber, season, division);

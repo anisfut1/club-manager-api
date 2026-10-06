@@ -108,10 +108,10 @@ async function loadDiscoverTarget(supabase: DbClient, job: FbiJobRow): Promise<D
  * job, les jobs `discover_emarque` dus du MÊME club sont réclamés et
  * traités dans la même session, tant qu'il reste du temps sur l'invocation
  * Vercel (`maxDuration` 300 s) — jamais un nouveau match démarré après
- * `SESSION_NEW_JOB_BUDGET_MS`, une courte pause entre deux matchs.
+ * `SESSION_NEW_JOB_BUDGET_MS`, 10 s de pause entre deux matchs.
  */
 const SESSION_NEW_JOB_BUDGET_MS = 120_000;
-const PAUSE_BETWEEN_MATCHES_MS = 3_000;
+const PAUSE_BETWEEN_MATCHES_MS = 10_000;
 /**
  * Garde-fou (2026-10-06) : l'invocation Vercel est coupée à 300 s. Un match
  * dispose d'au plus 120 s ; au-delà, il est replanifié au créneau suivant et
