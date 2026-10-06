@@ -75,7 +75,12 @@ interface Recorders {
   documentResets?: Array<{ patch: Record<string, unknown>; filters: Record<string, unknown> }>;
 }
 
-function makeFakeSupabase(options: { match: { id: string; club_id: string; numero: string | null; match_datetime: string | null } | null; recorders: Recorders; documentInsertConflict?: boolean }) {
+function makeFakeSupabase(options: {
+  match: { id: string; club_id: string; numero: string | null; match_datetime: string | null } | null;
+  recorders: Recorders;
+  documentInsertConflict?: boolean;
+  loginStatus?: { last_credential_login_at: string | null };
+}) {
   const { match, recorders } = options;
 
   return {
@@ -97,16 +102,27 @@ function makeFakeSupabase(options: { match: { id: string; club_id: string; numer
       }
       if (table === "fbi_jobs") {
         return {
-          update: (patch: unknown) => ({
-            eq: (_col: string, id: string) => {
-              recorders.jobUpdates.push({ id, patch });
-              return Promise.resolve({ error: null });
-            },
-          }),
+          update: (patch: unknown) => {
+            const filters: Record<string, unknown> = {};
+            const chain = {
+              eq: (col: string, value: unknown) => {
+                filters[col] = value;
+                return chain;
+              },
+              in: () => chain,
+              lt: () => chain,
+              then: (onFulfilled: (v: { error: null }) => unknown) => {
+                recorders.jobUpdates.push({ id: String(filters.id ?? `club:${String(filters.club_id)}`), patch });
+                return Promise.resolve({ error: null }).then(onFulfilled);
+              },
+            };
+            return chain;
+          },
         };
       }
       if (table === "fbi_integration_status") {
         return {
+          select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: options.loginStatus ?? null, error: null }) }) }),
           upsert: (payload: unknown) => {
             recorders.statusUpserts.push(payload);
             return Promise.resolve({ error: null });
@@ -327,7 +343,7 @@ describe("processDiscoverEmarqueJob", () => {
     expect(recorders.jobUpdates.at(-1)).toMatchObject({ patch: expect.objectContaining({ status: "failed" }) });
     expect(getFbiCredentialsMock).not.toHaveBeenCalled();
   });
-  it("session conservée (chiffrée) pour le passage suivant et trace enregistrée ; supprimée si FBI a coupé", async () => {
+  it("session conservée (chiffrée) pour le passage suivant et trace enregistrée ; gardée même si FBI a coupé (la coupure ne l'invalide pas)", async () => {
     getFbiCredentialsMock.mockResolvedValue({ username: "clubxxxx", password: "correct" });
     loginMock.mockResolvedValue({ context: {}, page: {} });
     findEmarqueDocumentsMock.mockResolvedValue({ documents: [], diagnostic: null });
@@ -340,7 +356,55 @@ describe("processDiscoverEmarqueJob", () => {
 
     findEmarqueDocumentsMock.mockRejectedValue(new Error("net::ERR_TIMED_OUT"));
     await processDiscoverEmarqueJob(supabase, baseJob());
-    expect(saveFbiSavedSessionMock).toHaveBeenLastCalledWith(supabase, "club-1", null);
+    expect(saveFbiSavedSessionMock).toHaveBeenLastCalledWith(supabase, "club-1", '{"cookies":[]}');
+  });
+
+  describe("plafond de connexions identifiant/mot de passe (une toutes les 3 h, 2026-10-06)", () => {
+    it("sans session à reprendre et connexion récente : aucun accès FBI, jobs du club repoussés à l'heure autorisée", async () => {
+      getFbiCredentialsMock.mockResolvedValue({ username: "clubxxxx", password: "correct" });
+      const lastLogin = new Date(Date.now() - 60 * 60 * 1000);
+      const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [] };
+      const supabase = makeFakeSupabase({ match: { id: "match-1", club_id: "club-1", numero: "2813", match_datetime: null }, recorders, loginStatus: { last_credential_login_at: lastLogin.toISOString() } });
+
+      const succeeded = await processDiscoverEmarqueJob(supabase, baseJob());
+
+      expect(succeeded).toBe(false);
+      expect(launchServerlessBrowserMock).not.toHaveBeenCalled();
+      expect(loginMock).not.toHaveBeenCalled();
+      const deferred = recorders.jobUpdates.find((u) => u.id === "club:club-1")?.patch as { scheduled_at: string };
+      expect(new Date(deferred.scheduled_at).getTime()).toBe(lastLogin.getTime() + 3 * 60 * 60 * 1000);
+    });
+
+    it("connexion autorisée : le login reçoit l'autorisation et l'heure de connexion est enregistrée avant l'envoi des identifiants", async () => {
+      getFbiCredentialsMock.mockResolvedValue({ username: "clubxxxx", password: "correct" });
+      loginMock.mockImplementation(async (_credentials, options: { allowCredentialLogin?: boolean; onCredentialLogin?: () => Promise<void> }) => {
+        expect(options.allowCredentialLogin).toBe(true);
+        await options.onCredentialLogin?.();
+        return { context: {}, page: {} };
+      });
+      findEmarqueDocumentsMock.mockResolvedValue({ documents: [], diagnostic: null });
+      const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [] };
+      const supabase = makeFakeSupabase({ match: { id: "match-1", club_id: "club-1", numero: "2813", match_datetime: null }, recorders, loginStatus: { last_credential_login_at: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString() } });
+
+      await processDiscoverEmarqueJob(supabase, baseJob());
+
+      expect(recorders.statusUpserts).toContainEqual(expect.objectContaining({ club_id: "club-1", last_credential_login_at: expect.any(String) }));
+    });
+
+    it("session conservée expirée et plafond atteint : session supprimée, jobs repoussés, aucune connexion avec identifiants", async () => {
+      getFbiCredentialsMock.mockResolvedValue({ username: "clubxxxx", password: "correct" });
+      const { loadFbiSavedSession } = await import("../integrations/fbi/fbi-diagnostics.js");
+      vi.mocked(loadFbiSavedSession).mockResolvedValueOnce('{"cookies":[]}');
+      loginMock.mockRejectedValue(new FbiError("Session FBI conservée expirée", "SESSION_EXPIRED"));
+      const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [] };
+      const supabase = makeFakeSupabase({ match: { id: "match-1", club_id: "club-1", numero: "2813", match_datetime: null }, recorders, loginStatus: { last_credential_login_at: new Date().toISOString() } });
+
+      await processDiscoverEmarqueJob(supabase, baseJob());
+
+      expect(saveFbiSavedSessionMock).toHaveBeenLastCalledWith(supabase, "club-1", null);
+      expect(recorders.jobUpdates.some((u) => u.id === "club:club-1")).toBe(true);
+      expect(closeBrowserMock).toHaveBeenCalled();
+    });
   });
 
   describe("une seule connexion FBI pour plusieurs matchs du club (2026-10-06)", () => {

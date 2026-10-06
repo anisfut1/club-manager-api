@@ -670,6 +670,7 @@ export interface Database {
           auto_import_emarque: boolean;
           historical_sync_mode: HistoricalSyncMode;
           updated_at: string;
+          last_credential_login_at: string | null;
         },
         {
           id?: string;
@@ -683,6 +684,7 @@ export interface Database {
           last_job_at?: string | null;
           last_job_status?: string | null;
           last_error?: string | null;
+          last_credential_login_at?: string | null;
           auto_import_emarque?: boolean;
           historical_sync_mode?: HistoricalSyncMode;
           updated_at?: string;

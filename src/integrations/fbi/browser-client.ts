@@ -362,7 +362,10 @@ export class BrowserFbiClient {
    * reprise sans renvoyer identifiant et mot de passe — une connexion par
    * jour au lieu d'une par passage (2026-10-06 : coupures FBI).
    */
-  async login(credentials: { username: string; password: string }, options: { savedState?: string } = {}): Promise<BrowserFbiSession> {
+  async login(
+    credentials: { username: string; password: string },
+    options: { savedState?: string; allowCredentialLogin?: boolean; onCredentialLogin?: () => Promise<void> } = {},
+  ): Promise<BrowserFbiSession> {
     if (options.savedState) {
       const proxy = fbiProxySettings();
       let storageState: BrowserContextOptions["storageState"];
@@ -387,6 +390,10 @@ export class BrowserFbiClient {
         await context.close();
       }
     }
+    if (options.allowCredentialLogin === false) {
+      throw new FbiError("Session FBI conservée expirée ; nouvelle connexion avec identifiants pas encore autorisée (plafond de connexions).", "SESSION_EXPIRED");
+    }
+    await options.onCredentialLogin?.();
     return this.loginWithCredentials(credentials);
   }
 

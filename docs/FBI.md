@@ -3903,3 +3903,9 @@ Mesures :
 - **rythme humain** (`humanPacing`) : pauses de 1,5 à 4,5 s entre les étapes, identifiants saisis caractère par caractère, mouvements de souris ;
 - **un match par session** (`MAX_MATCHES_PER_SESSION = 1`), la session étant reprise au passage suivant sans nouvelle connexion ;
 - **signature du pare-feu** dans `fbi_session_traces.fingerprint` : noms des cookies (jamais leur valeur) et en-têtes d'infrastructure `server`, `via`, `x-*`. Chaque fabricant (F5, Akamai, Imperva, Cloudflare…) laisse la sienne.
+
+### Trace du 2026-10-06 14:45 : la coupure suit la connexion avec identifiants
+
+Avec le rythme humain, la coupure tombe environ 9 s après `POST /fbi/identification.fbi`, avant toute recherche et tout téléchargement. Signature serveur : `server: Apache`, seul cookie `JSESSIONID`. Il n'y a donc pas de pare-feu anti-robots commercial, mais une règle réseau côté FFBB. Toutes les coupures de la journée suivent une connexion avec identifiants, et l'app en faisait jusqu'à plusieurs centaines par jour.
+
+Correctif : plafond d'**une connexion identifiant/mot de passe toutes les 3 h par club** (`fbi_integration_status.last_credential_login_at`, migration `20261006200000`, enregistré juste avant l'envoi des identifiants). Entre deux connexions, seule la session conservée est reprise, et une coupure réseau ne la supprime plus. Sans session à reprendre et avec le plafond atteint, aucun accès à FBI : les jobs du club sont repoussés à l'heure autorisée. Si la session conservée est refusée par FBI alors que le plafond est atteint, elle est supprimée et les jobs sont repoussés de la même façon.

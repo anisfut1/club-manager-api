@@ -120,6 +120,24 @@ const SESSION_NEW_JOB_BUDGET_MS = 120_000;
  * avec la session reprise (sans nouvelle connexion).
  */
 const MAX_MATCHES_PER_SESSION = 1;
+/**
+ * Plafond de connexions identifiant/mot de passe (2026-10-06) : chaque coupure
+ * d'adresse de la journée a suivi d'environ 10 s une connexion avec
+ * identifiants. Au plus une toutes les 3 h par club ; entre deux, seule la
+ * session conservée est reprise.
+ */
+export const MIN_INTERVAL_BETWEEN_CREDENTIAL_LOGINS_MS = 3 * 60 * 60 * 1000;
+
+/** Jobs e-Marque dus du club repoussés à `until` (aucun accès FBI d'ici là). */
+async function deferClubDiscoverJobsUntil(supabase: DbClient, clubId: string, until: Date, message: string): Promise<void> {
+  await supabase
+    .from("fbi_jobs")
+    .update({ status: "pending", scheduled_at: until.toISOString(), last_error: message })
+    .eq("club_id", clubId)
+    .eq("type", "discover_emarque")
+    .in("status", ["pending", "claimed", "running"])
+    .lt("scheduled_at", until.toISOString());
+}
 const PAUSE_BETWEEN_MATCHES_MS = 10_000;
 /**
  * Garde-fou (2026-10-06) : l'invocation Vercel est coupée à 300 s. Un match
@@ -173,20 +191,46 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
     return false;
   }
 
+  const savedState = await loadFbiSavedSession(supabase, job.club_id);
+  const { data: loginStatus } = await supabase.from("fbi_integration_status").select("last_credential_login_at").eq("club_id", job.club_id).maybeSingle();
+  const lastCredentialLogin = loginStatus?.last_credential_login_at ? new Date(loginStatus.last_credential_login_at).getTime() : 0;
+  const credentialLoginAllowedAt = new Date(lastCredentialLogin + MIN_INTERVAL_BETWEEN_CREDENTIAL_LOGINS_MS);
+  const credentialLoginAllowed = Date.now() >= credentialLoginAllowedAt.getTime();
+
+  if (!savedState && !credentialLoginAllowed) {
+    // Aucune session à reprendre et plafond atteint : aucun accès FBI.
+    await deferClubDiscoverJobsUntil(supabase, job.club_id, credentialLoginAllowedAt, `[info] En attente : prochaine connexion FBI autorisée à ${credentialLoginAllowedAt.toISOString()} (une toutes les 3 h).`);
+    return false;
+  }
+
   const browser = await launchServerlessBrowser();
   const via = fbiProxySettings() ? "proxy" : "direct";
   const client = new BrowserFbiClient({ baseUrl: getEnv().FBI_BASE_URL, browser, humanPacing: true });
   let session: BrowserFbiSession;
 
   try {
-    session = await client.login(credentials, { savedState: (await loadFbiSavedSession(supabase, job.club_id)) ?? undefined });
+    session = await client.login(credentials, {
+      savedState: savedState ?? undefined,
+      allowCredentialLogin: credentialLoginAllowed,
+      onCredentialLogin: async () => {
+        await supabase.from("fbi_integration_status").upsert({ club_id: job.club_id, last_credential_login_at: new Date().toISOString() }, { onConflict: "club_id" });
+      },
+    });
     await recordLoginOutcome(supabase, job.club_id, true, null);
   } catch (error) {
+    if (error instanceof FbiError && error.code === "SESSION_EXPIRED") {
+      await saveFbiSavedSession(supabase, job.club_id, null);
+      await saveFbiSessionTrace(supabase, { clubId: job.club_id, trace: client.lastTrace, via, outcome: "session conservée expirée, connexion pas encore autorisée" });
+      await deferClubDiscoverJobsUntil(supabase, job.club_id, credentialLoginAllowedAt, `[info] En attente : session FBI expirée, prochaine connexion autorisée à ${credentialLoginAllowedAt.toISOString()}.`);
+      await browser.close();
+      return false;
+    }
     const status = classifyFbiLoginStatus(error);
     const message = error instanceof FbiError ? error.message : "Connexion FBI impossible.";
     await recordLoginOutcome(supabase, job.club_id, false, message);
     await saveFbiSessionTrace(supabase, { clubId: job.club_id, trace: client.lastTrace, via, outcome: `connexion échouée (${status}) : ${message}` });
-    await saveFbiSavedSession(supabase, job.club_id, null);
+    // Session conservée gardée : une coupure réseau ne l'invalide pas côté FBI.
+    if (status === "INVALID_CREDENTIALS" || status === "AUTH_FLOW_CHANGED") await saveFbiSavedSession(supabase, job.club_id, null);
 
     if (status === "INVALID_CREDENTIALS" || status === "AUTH_FLOW_CHANGED") {
       // Ne se corrigera jamais tout seul en réessayant — surfacé via
@@ -245,9 +289,9 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
     }
   } finally {
     // Session conservée (chiffrée) pour le passage suivant, sans déconnexion
-    // côté FBI — sauf si FBI a coupé pendant le passage : on repartira d'une
-    // connexion neuve.
-    await saveFbiSavedSession(supabase, job.club_id, tally.error > 0 ? null : await client.exportSessionState(session));
+    // côté FBI — même après une coupure réseau, qui ne l'invalide pas : la
+    // reprendre évite une nouvelle connexion avec identifiants.
+    await saveFbiSavedSession(supabase, job.club_id, await client.exportSessionState(session));
     await client.detachSession(session);
     await browser.close();
     await saveFbiSessionTrace(supabase, {
