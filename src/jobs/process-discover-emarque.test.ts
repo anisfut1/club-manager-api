@@ -362,6 +362,25 @@ describe("processDiscoverEmarqueJob", () => {
       expect(recorders.jobUpdates.at(-1)).toMatchObject({ id: "job-1", patch: expect.objectContaining({ status: "pending" }) });
     });
 
+    it("connexion FBI injoignable : UNE seule tentative, les autres matchs dus du club passent au créneau suivant", async () => {
+      getFbiCredentialsMock.mockResolvedValue({ username: "clubxxxx", password: "correct" });
+      loginMock.mockRejectedValue(new FbiError("Page de connexion FBI injoignable", "LOGIN_PAGE_UNREACHABLE"));
+
+      const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [] };
+      const supabase = makeFakeSupabase({ match: { id: "match-1", club_id: "club-1", numero: "2813", match_datetime: null }, recorders });
+      const queue = [baseJob({ id: "job-2" }), baseJob({ id: "job-3" })];
+      const claimNextInSession = vi.fn(async () => queue.shift() ?? null);
+      const sessionOutcomes: boolean[] = [];
+
+      await processDiscoverEmarqueJob(supabase, baseJob(), { claimNextInSession, onSessionJobDone: (ok) => sessionOutcomes.push(ok) });
+
+      expect(loginMock).toHaveBeenCalledTimes(1);
+      expect(sessionOutcomes).toEqual([false, false]);
+      const rescheduled = recorders.jobUpdates.filter((u) => (u.patch as { status: string }).status === "pending").map((u) => u.id);
+      expect(rescheduled).toEqual(["job-1", "job-2", "job-3"]);
+      expect(findEmarqueDocumentsMock).not.toHaveBeenCalled();
+    });
+
     it("temps de session écoulé : aucun nouveau match démarré", async () => {
       getFbiCredentialsMock.mockResolvedValue({ username: "clubxxxx", password: "correct" });
       loginMock.mockResolvedValue({ context: {}, page: {} });

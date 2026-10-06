@@ -169,8 +169,21 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
       // fbi_integration_status.last_error, visible côté API/admin.
       await failJob(supabase, job, message);
     } else {
-      // FBI injoignable : jamais d'abandon, créneau suivant du calendrier.
+      // FBI injoignable : jamais d'abandon, créneau suivant du calendrier —
+      // pour CE match et pour tous les autres matchs dus du club : une seule
+      // tentative de connexion par passage, jamais une par match (FBI coupe
+      // précisément les connexions répétées).
       await scheduleNextCheck(supabase, job, target.match.match_datetime, message);
+      if (options.claimNextInSession) {
+        let deferred = 0;
+        for (let nextJob = await options.claimNextInSession(); nextJob; nextJob = await options.claimNextInSession()) {
+          const nextTarget = await loadDiscoverTarget(supabase, nextJob);
+          if (nextTarget) await scheduleNextCheck(supabase, nextJob, nextTarget.match.match_datetime, message);
+          options.onSessionJobDone?.(false);
+          deferred += 1;
+        }
+        if (deferred > 0) logInfo("Connexion FBI échouée : autres matchs du club reportés au créneau suivant", { clubId: job.club_id, deferred });
+      }
     }
 
     logError("Job discover_emarque : connexion FBI échouée", error, { clubId: job.club_id, jobId: job.id, loginStatus: status });
