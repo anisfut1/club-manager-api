@@ -362,6 +362,7 @@ describe("processDiscoverEmarqueJob", () => {
         claimNextInSession,
         onSessionJobDone: (ok) => sessionOutcomes.push(ok),
         pauseBetweenMatchesMs: 0,
+        maxMatchesPerSession: 3,
       });
 
       expect(firstSucceeded).toBe(true);
@@ -369,7 +370,8 @@ describe("processDiscoverEmarqueJob", () => {
       expect(loginMock).toHaveBeenCalledTimes(1);
       expect(launchServerlessBrowserMock).toHaveBeenCalledTimes(1);
       expect(findEmarqueDocumentsMock).toHaveBeenCalledTimes(3);
-      expect(claimNextInSession).toHaveBeenCalledTimes(3);
+      // Limite de 3 atteinte : plus de demande de match suivant.
+      expect(claimNextInSession).toHaveBeenCalledTimes(2);
       const succeededJobs = recorders.jobUpdates.filter((u) => (u.patch as { status: string }).status === "succeeded").map((u) => u.id);
       expect(succeededJobs).toEqual(["job-1", "job-2", "job-3"]);
       expect(closeSessionMock).toHaveBeenCalledOnce();
@@ -427,6 +429,20 @@ describe("processDiscoverEmarqueJob", () => {
       expect(recorders.jobUpdates.find((u) => u.id === "job-1")).toMatchObject({ patch: expect.objectContaining({ status: "pending", last_error: expect.stringContaining("pas répondu à temps") }) });
       expect(findEmarqueDocumentsMock).toHaveBeenCalledTimes(1);
       expect(closeBrowserMock).toHaveBeenCalledOnce();
+    });
+
+    it("par défaut, un seul match par session (FBI coupe l'adresse après le premier téléchargement — trace du 2026-10-06)", async () => {
+      getFbiCredentialsMock.mockResolvedValue({ username: "clubxxxx", password: "correct" });
+      loginMock.mockResolvedValue({ context: {}, page: {} });
+      findEmarqueDocumentsMock.mockResolvedValue({ documents: [], diagnostic: null });
+      const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [] };
+      const supabase = makeFakeSupabase({ match: { id: "match-1", club_id: "club-1", numero: "2813", match_datetime: null }, recorders });
+      const claimNextInSession = vi.fn(async () => baseJob({ id: "job-2" }));
+
+      await processDiscoverEmarqueJob(supabase, baseJob(), { claimNextInSession, pauseBetweenMatchesMs: 0 });
+
+      expect(claimNextInSession).not.toHaveBeenCalled();
+      expect(findEmarqueDocumentsMock).toHaveBeenCalledTimes(1);
     });
 
     it("temps de session écoulé : aucun nouveau match démarré", async () => {

@@ -643,8 +643,8 @@ export interface Database {
         { id?: number; checked_at?: string; via: "proxy" | "direct"; ok: boolean; http_status?: number | null; elapsed_ms: number; error?: string | null }
       >;
       fbi_session_traces: Table<
-        { id: string; club_id: string; started_at: string; finished_at: string; via: "proxy" | "direct"; outcome: string; request_count: number; failed_count: number; events: unknown },
-        { id?: string; club_id: string; started_at: string; finished_at?: string; via: "proxy" | "direct"; outcome: string; request_count: number; failed_count: number; events: unknown }
+        { id: string; club_id: string; started_at: string; finished_at: string; via: "proxy" | "direct"; outcome: string; request_count: number; failed_count: number; events: unknown; fingerprint: unknown },
+        { id?: string; club_id: string; started_at: string; finished_at?: string; via: "proxy" | "direct"; outcome: string; request_count: number; failed_count: number; events: unknown; fingerprint?: unknown }
       >;
       fbi_saved_sessions: Table<
         { club_id: string; state_ciphertext: string; state_iv: string; state_auth_tag: string; created_at: string; updated_at: string },

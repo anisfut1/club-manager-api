@@ -112,6 +112,14 @@ async function loadDiscoverTarget(supabase: DbClient, job: FbiJobRow): Promise<D
  * `SESSION_NEW_JOB_BUDGET_MS`, 10 s de pause entre deux matchs.
  */
 const SESSION_NEW_JOB_BUDGET_MS = 120_000;
+/**
+ * Un seul match par session pour l'instant (2026-10-06) : la trace de
+ * 14:21 montre l'adresse coupée par FBI quelques secondes après le premier
+ * téléchargement — le match suivant n'aboutit jamais et sa tentative
+ * prolonge la coupure. Les autres matchs passent aux passages suivants,
+ * avec la session reprise (sans nouvelle connexion).
+ */
+const MAX_MATCHES_PER_SESSION = 1;
 const PAUSE_BETWEEN_MATCHES_MS = 10_000;
 /**
  * Garde-fou (2026-10-06) : l'invocation Vercel est coupée à 300 s. Un match
@@ -132,6 +140,7 @@ export interface DiscoverSessionOptions {
   pauseBetweenMatchesMs?: number;
   matchTimeoutMs?: number;
   invocationBudgetMs?: number;
+  maxMatchesPerSession?: number;
 }
 
 /**
@@ -166,7 +175,7 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
 
   const browser = await launchServerlessBrowser();
   const via = fbiProxySettings() ? "proxy" : "direct";
-  const client = new BrowserFbiClient({ baseUrl: getEnv().FBI_BASE_URL, browser });
+  const client = new BrowserFbiClient({ baseUrl: getEnv().FBI_BASE_URL, browser, humanPacing: true });
   let session: BrowserFbiSession;
 
   try {
@@ -220,7 +229,8 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
         await deferRemainingClubJobs(supabase, job.club_id, options, "[info] Reporté au créneau suivant : FBI instable pendant ce passage (un seul essai de connexion par passage).");
         break;
       }
-      while (options.claimNextInSession && Date.now() - startedAt < budgetMs && remainingMs() > matchTimeoutMs) {
+      const matchesDone = tally.succeeded + tally.not_yet + tally.error;
+      while (options.claimNextInSession && matchesDone < (options.maxMatchesPerSession ?? MAX_MATCHES_PER_SESSION) && Date.now() - startedAt < budgetMs && remainingMs() > matchTimeoutMs) {
         const nextJob = await options.claimNextInSession();
         if (!nextJob) break;
         const nextTarget = await loadDiscoverTarget(supabase, nextJob);

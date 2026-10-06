@@ -3894,3 +3894,12 @@ Migration `20261006180000`, trois tables service_role uniquement :
 - **`fbi_reachability_checks`** : à chaque passage du planificateur (`/internal/cron/fbi-reachability`, plus avant toute session dans `/internal/cron/fbi-jobs`), une requête `GET /fbi/connexion.fbi` sans identifiant, via le proxy s'il existe. Seuls 2xx/3xx comptent comme « FBI répond ». FBI injoignable : `/cron/fbi-jobs` saute le passage sans lancer Chrome ni se connecter, et les jobs gardent leur créneau. L'historique donne le début, la fin et la durée de chaque coupure.
 - **`fbi_session_traces`** : chaque session navigateur, requête par requête. On y trouve le chemin sans paramètres ni `;jsessionid`, le type, le statut ou l'erreur réseau, la durée, et `ignoré` pour les images et polices bloquées volontairement. Jamais de corps, cookie ni identifiant. Sert à voir à quelle requête FBI coupe.
 - **`fbi_saved_sessions`** : cookies de la session FBI chiffrés (AES-256-GCM, `club_id` en AAD), repris au passage suivant via `accueil.fbi`. Plus de déconnexion en fin de passage, d'où une connexion identifiant/mot de passe par jour au lieu d'une par passage. Une session de plus de 12 h n'est pas tentée. Si FBI coupe pendant un passage, la session est supprimée et la suivante repart d'une connexion neuve.
+
+### Trace du 2026-10-06 14:21 : coupure quelques secondes après le premier téléchargement
+
+Session en direct (adresse Vercel), avec la nouvelle identité Chrome. Connexion, accueil, recherche, puis téléchargement de la feuille (HTTP 200) à 8,6 s. Toutes les requêtes suivantes, dès 20,4 s, partent en `ERR_CONNECTION_TIMED_OUT`. Recoupé avec les coupures de la journée (10:44, 11:20, 13:03), le blocage tombe 10 à 20 s après la connexion, sur une session qui enchaîne les pages sans interaction. C'est la signature d'un pare-feu anti-robots comportemental. L'URL de téléchargement est bien celle du clic sur l'icône EM, confirmée en production.
+
+Mesures :
+- **rythme humain** (`humanPacing`) : pauses de 1,5 à 4,5 s entre les étapes, identifiants saisis caractère par caractère, mouvements de souris ;
+- **un match par session** (`MAX_MATCHES_PER_SESSION = 1`), la session étant reprise au passage suivant sans nouvelle connexion ;
+- **signature du pare-feu** dans `fbi_session_traces.fingerprint` : noms des cookies (jamais leur valeur) et en-têtes d'infrastructure `server`, `via`, `x-*`. Chaque fabricant (F5, Akamai, Imperva, Cloudflare…) laisse la sienne.

@@ -123,6 +123,7 @@ export async function saveFbiSessionTrace(
     request_count: events.length + input.trace.dropped,
     failed_count: failed,
     events,
+    fingerprint: input.trace.fingerprint,
   });
   if (error) logError("Enregistrement de la trace de session FBI échoué", error, { clubId: input.clubId });
 }

@@ -103,7 +103,15 @@ export interface FbiSessionTrace {
   startedAt: string;
   events: FbiTraceEvent[];
   dropped: number;
+  /**
+   * Signature du serveur/pare-feu devant FBI (2026-10-06) : NOMS des cookies
+   * posés (jamais leur valeur) et en-têtes d'infrastructure des pages FBI
+   * (server, via, x-*). Chaque pare-feu anti-robots a la sienne.
+   */
+  fingerprint: { cookieNames: string[]; headers: Record<string, string> };
 }
+
+const FINGERPRINT_HEADER = /^(server|via|x-.*|cf-.*|akamai-.*|set-cookie)$/i;
 
 const MAX_TRACE_EVENTS = 400;
 
@@ -132,6 +140,8 @@ type DerogationEtatPass = (typeof DEROGATION_ETAT_PASSES)[number];
 export interface BrowserFbiClientOptions {
   baseUrl: string;
   browser: Browser;
+  /** Rythme humain (pauses, saisie caractère par caractère, souris) — voir `humanPause`. */
+  humanPacing?: boolean;
   /** Délai après une action de navigation, avant de considérer la page stabilisée (ms). Les apps Java legacy type FBI n'utilisent pas toujours des transitions détectables par networkidle. */
   navigationSettleMs?: number;
   /**
@@ -229,7 +239,22 @@ export class BrowserFbiClient {
    */
   lastTrace: FbiSessionTrace | null = null;
 
+  /**
+   * Rythme humain (2026-10-06) : un pare-feu devant FBI coupe l'adresse d'une
+   * session qui enchaîne connexion, pages et téléchargement en quelques
+   * secondes sans aucune interaction. Pauses de quelques secondes, saisie
+   * caractère par caractère, mouvements de souris. Désactivé dans les tests.
+   */
+  private readonly humanPacing: boolean;
+
+  private async humanPause(page: Page, minMs: number, maxMs: number): Promise<void> {
+    if (!this.humanPacing) return;
+    await page.mouse.move(200 + Math.random() * 800, 150 + Math.random() * 450, { steps: 6 + Math.floor(Math.random() * 6) }).catch(() => undefined);
+    await page.waitForTimeout(minMs + Math.random() * (maxMs - minMs));
+  }
+
   constructor(options: BrowserFbiClientOptions) {
+    this.humanPacing = options.humanPacing ?? false;
     this.baseUrl = options.baseUrl;
     this.browser = options.browser;
     this.navigationSettleMs = options.navigationSettleMs ?? 500;
@@ -282,7 +307,20 @@ export class BrowserFbiClient {
   }
 
   private attachTrace(context: BrowserContext): FbiSessionTrace {
-    const trace: FbiSessionTrace = { startedAt: new Date().toISOString(), events: [], dropped: 0 };
+    const trace: FbiSessionTrace = { startedAt: new Date().toISOString(), events: [], dropped: 0, fingerprint: { cookieNames: [], headers: {} } };
+    const noteHeaders = (headers: Record<string, string>) => {
+      for (const [name, value] of Object.entries(headers)) {
+        if (!FINGERPRINT_HEADER.test(name)) continue;
+        if (name.toLowerCase() === "set-cookie") {
+          for (const line of value.split("\n")) {
+            const cookieName = line.split("=")[0]?.trim();
+            if (cookieName && !trace.fingerprint.cookieNames.includes(cookieName)) trace.fingerprint.cookieNames.push(cookieName);
+          }
+        } else if (!(name in trace.fingerprint.headers)) {
+          trace.fingerprint.headers[name] = value.slice(0, 120);
+        }
+      }
+    };
     const origin = Date.now();
     const started = new Map<object, number>();
     const fbiHost = new URL(this.baseUrl).host;
@@ -304,7 +342,10 @@ export class BrowserFbiClient {
       const begin = started.get(request);
       void request
         .response()
-        .then((response) => push({ t: (begin ?? Date.now()) - origin, m: request.method(), u: describe(request.url()), r: request.resourceType(), s: response?.status() ?? "sans réponse", d: begin ? Date.now() - begin : null }))
+        .then(async (response) => {
+          push({ t: (begin ?? Date.now()) - origin, m: request.method(), u: describe(request.url()), r: request.resourceType(), s: response?.status() ?? "sans réponse", d: begin ? Date.now() - begin : null });
+          if (response && new URL(request.url()).host === fbiHost) noteHeaders(await response.allHeaders().catch(() => ({})));
+        })
         .catch(() => undefined);
     });
     context.on("requestfailed", (request) => {
@@ -339,7 +380,10 @@ export class BrowserFbiClient {
           .goto(`${this.baseUrl}/accueil.fbi`, { waitUntil: "domcontentloaded", timeout: 25_000 })
           .then(async () => !(await selectors.looksLikeLoginPage(page)))
           .catch(() => false);
-        if (resumed) return { context, page, reused: true };
+        if (resumed) {
+          await this.humanPause(page, 2000, 4000);
+          return { context, page, reused: true };
+        }
         await context.close();
       }
     }
@@ -403,8 +447,18 @@ export class BrowserFbiClient {
     }
 
     try {
-      await selectors.usernameInput(page).fill(credentials.username);
-      await selectors.passwordInput(page).fill(credentials.password);
+      if (this.humanPacing) {
+        await this.humanPause(page, 1500, 3000);
+        await selectors.usernameInput(page).click();
+        await selectors.usernameInput(page).pressSequentially(credentials.username, { delay: 60 + Math.random() * 60 });
+        await this.humanPause(page, 300, 800);
+        await selectors.passwordInput(page).click();
+        await selectors.passwordInput(page).pressSequentially(credentials.password, { delay: 60 + Math.random() * 60 });
+        await this.humanPause(page, 500, 1200);
+      } else {
+        await selectors.usernameInput(page).fill(credentials.username);
+        await selectors.passwordInput(page).fill(credentials.password);
+      }
 
       const submit = selectors.submitControl(page);
       if ((await submit.count()) > 0) {
@@ -424,6 +478,7 @@ export class BrowserFbiClient {
       throw new FbiError("Connexion FBI refusée (identifiants incorrects, ou formulaire modifié)", "LOGIN_FAILED");
     }
 
+    await this.humanPause(page, 2500, 4500);
     return { context, page };
   }
 
@@ -483,6 +538,7 @@ export class BrowserFbiClient {
     // recherche : son chargement complet (scripts, styles) expirait à travers
     // le proxy alors qu'un seul de ses éléments sert (la liste des saisons),
     // lu par `readSeasonOptions`. Le parcours historique reste le secours.
+    await this.humanPause(page, 1500, 3000);
     let navigation = "écran de recherche non ouvert (recherche directe)";
     let direct = await this.tryDirectEmarqueSearch(session, matchNumber, season, division);
     if (direct.kind === "unavailable") {
@@ -2396,6 +2452,7 @@ export class BrowserFbiClient {
    * souvent.
    */
   async downloadDocument(session: BrowserFbiSession, url: string): Promise<Buffer> {
+    await this.humanPause(session.page, 1500, 3000);
     // D'abord DEPUIS LA PAGE (fetch du navigateur, même session) — constaté
     // en production le 2026-10-02 (rencontre n°1) : `context.request` (pile
     // réseau Node) échouait en "connect ETIMEDOUT" 3 fois de suite alors
