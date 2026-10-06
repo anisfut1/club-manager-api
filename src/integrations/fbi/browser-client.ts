@@ -8,7 +8,7 @@ import { normalizeDerogationRow, compareDerogationDateDepot } from "./derogation
 import type { DerogationCreationRequest, DerogationResponseDecision, DerogationResponseOutcome, FbiDerogationDetailFields, FbiDerogationRow, FbiScheduleRow } from "./types.js";
 import { logInfo } from "../../logger.js";
 import { emarqueDownloadUrl, executeSearchQuery, parseSearchResponse, pickRow, searchFormFields } from "./emarque-search.js";
-import { fbiProxySettings } from "./browser-launcher.js";
+import { fbiProxySettings, probeFbiProxy } from "./browser-launcher.js";
 
 /**
  * Délais maximum des requêtes vers FBI (2026-10-06) : un `fetch` lancé
@@ -272,7 +272,9 @@ export class BrowserFbiClient {
       // refusée…) : sans elle, impossible de distinguer une panne FBI d'un
       // blocage des adresses Vercel (2026-10-06). Jamais d'identifiant ici.
       const cause = error instanceof Error ? error.message.split("\n")[0].slice(0, 160) : String(error).slice(0, 160);
-      throw new FbiError(`Page de connexion FBI injoignable (${cause})`, "LOGIN_PAGE_UNREACHABLE", error);
+      // Échec côté proxy : sonde depuis cette machine pour savoir où ça bloque.
+      const proxyProbe = cause.includes("ERR_PROXY") || cause.includes("ERR_TUNNEL") ? ` ; sonde du proxy : ${await probeFbiProxy().catch(() => "impossible")}` : "";
+      throw new FbiError(`Page de connexion FBI injoignable (${cause})${proxyProbe}`, "LOGIN_PAGE_UNREACHABLE", error);
     }
 
     if (!(await selectors.looksLikeLoginPage(page))) {

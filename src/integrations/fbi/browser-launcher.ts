@@ -1,3 +1,4 @@
+import { connect } from "node:net";
 import type { Browser } from "playwright-core";
 import { getEnv } from "../../config/env.js";
 import { logInfo } from "../../logger.js";
@@ -99,4 +100,32 @@ async function readProxyUrlFromDatabase(): Promise<string | undefined> {
     // Réglage illisible : sortie directe, jamais un échec du job pour ça.
     return undefined;
   }
+}
+
+/**
+ * Sonde du proxy depuis cette machine (diagnostic, 2026-10-06) : connexion
+ * TCP puis `CONNECT extranet.ffbb.com:443` authentifié, en Node — sans
+ * Chrome. Ne renvoie que des codes (jamais l'identifiant ni le mot de passe).
+ */
+export function probeFbiProxy(proxy: FbiProxySettings | undefined = fbiProxySettings(), timeoutMs = 8_000): Promise<string> {
+  if (!proxy) return Promise.resolve("aucun proxy configuré");
+  const url = new URL(proxy.server);
+  const port = Number(url.port || 80);
+  const startedAt = Date.now();
+  return new Promise((resolve) => {
+    const socket = connect({ host: url.hostname, port });
+    let connectedAfter: number | null = null;
+    const done = (message: string) => {
+      socket.destroy();
+      resolve(message);
+    };
+    socket.setTimeout(timeoutMs, () => done(connectedAfter === null ? `TCP vers le proxy : délai dépassé (${timeoutMs} ms)` : `TCP OK en ${connectedAfter} ms, pas de réponse du proxy`));
+    socket.on("error", (error: NodeJS.ErrnoException) => done(`TCP vers le proxy : ${error.code ?? error.message}`));
+    socket.on("connect", () => {
+      connectedAfter = Date.now() - startedAt;
+      const auth = proxy.username ? `Proxy-Authorization: Basic ${Buffer.from(`${proxy.username}:${proxy.password ?? ""}`).toString("base64")}\r\n` : "";
+      socket.write(`CONNECT extranet.ffbb.com:443 HTTP/1.1\r\nHost: extranet.ffbb.com:443\r\n${auth}\r\n`);
+    });
+    socket.once("data", (chunk: Buffer) => done(`TCP OK en ${connectedAfter} ms, proxy : ${chunk.toString("latin1").split("\r\n")[0].slice(0, 80)}`));
+  });
 }
