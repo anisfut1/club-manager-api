@@ -4005,3 +4005,29 @@ Outils ajoutés (production inchangée) :
   navigateur et profil persistants, une seule connexion manuelle, aucune
   reconnexion automatique, expiration de session journalisée avec preuves
   (`fbi_probe_events`). Voir son README.
+
+### Mesure du 07/10 08:37 UTC depuis le VPS OVH (15.235.62.135)
+
+| Cible | Résultat |
+|---|---|
+| extranet.ffbb.com (178.170.19.77) :443 et :80 | **aucune réponse au SYN** (curl 28, nc « timed out ») |
+| resultats.ffbb.com (178.170.19.78, même bloc) | TCP 0,17 s, HTTP 404 sur « / » |
+| emarque.ffbb.com (178.170.19.84, même bloc) | TCP 0,15 s, HTTP 404 sur « / » |
+| www.ffbb.com (autre infrastructure) | HTTP 200 |
+
+`traceroute -T -p 443` vers .77 et .78 : chemin identique jusqu'à la
+passerelle du bloc FFBB (178.170.19.6, saut 16). Vers .78 le saut suivant est
+la cible ; vers .77, plus aucune réponse après 178.170.19.6. Le même
+navigateur Chromium, piloté à la main sur le VPS, échoue en
+`ERR_CONNECTION_TIMED_OUT` ; un PC personnel joint FBI au même moment.
+
+Établi : DNS, routage OVH, transit et réseau de l'hébergeur FFBB
+fonctionnent ; les paquets de 15.235.62.135 vers 178.170.19.77 sont
+abandonnés sans réponse (ni RST ni ICMP) **sur le dernier segment** — serveur
+FBI ou équipement de filtrage juste devant lui — et seulement pour cette
+source. NON établi : ce qui a déclenché ce filtrage et sa durée
+(chronologie seule : joignable 06/10 17:12–17:48, session automatisée à
+17:48:47, injoignable de 18:13 jusqu'à la mesure).
+
+Le worker sonde désormais aussi un hôte témoin (resultats.ffbb.com) à chaque
+passage pour distinguer « chemin en panne » de « FBI seul injoignable ».

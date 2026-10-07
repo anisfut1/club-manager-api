@@ -49,6 +49,13 @@ const config = {
   probeToken: process.env.FBI_PROBE_TOKEN || "",
   /** Chromium à utiliser (sinon celui installé par `playwright-core install chromium`). */
   chromiumPath: process.env.FBI_WORKER_CHROMIUM || "",
+  /**
+   * Hôte témoin, même bloc d'adresses et même chemin réseau que FBI
+   * (resultats.ffbb.com = 178.170.19.78, FBI = .77 ; traceroutes du 07/10) :
+   * témoin joignable + FBI injoignable = blocage limité au serveur FBI,
+   * pas une panne du chemin.
+   */
+  controlHost: process.env.FBI_WORKER_CONTROL_HOST ?? "resultats.ffbb.com",
 };
 
 type SessionState = "no_session" | "authenticated" | "expired";
@@ -262,11 +269,24 @@ async function networkProbe(kind: string): Promise<void> {
     useTls: base.protocol === "https:",
     path: `${base.pathname}/connexion.fbi`,
   });
+  const control = config.controlHost ? await probeFbiLayers({ host: config.controlHost, path: "/" }) : null;
   await record({
     kind,
     outcome: result.classification,
     elapsedMs: (result.dns.elapsedMs ?? 0) + (result.tcp?.elapsedMs ?? 0) + (result.tls?.elapsedMs ?? 0) + (result.http?.elapsedMs ?? 0),
-    detail: { ...result, egressIp: await egressIp() },
+    detail: {
+      ...result,
+      egressIp: await egressIp(),
+      control: control && {
+        host: control.host,
+        address: control.tcp?.address ?? control.dns.addresses[0] ?? null,
+        classification: control.classification,
+        // Un 404 sur « / » du témoin est une réponse HTTP normale : seule compte l'ouverture TCP/TLS.
+        tcpOk: control.tcp?.ok ?? false,
+        tcpMs: control.tcp?.elapsedMs ?? null,
+        httpStatus: control.http?.status ?? null,
+      },
+    },
   });
 }
 
