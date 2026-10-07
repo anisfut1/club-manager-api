@@ -25,7 +25,8 @@ export function ask(question: string, hidden: boolean): Promise<string> {
         if (char === "\u0003") process.exit(130);
         if (char === "\u007f") value = value.slice(0, -1);
         else value += char;
-        if (!hidden) process.stdout.write(char);
+        // Terminal en mode ligne : il affiche déjà la saisie lui-même.
+        if (!hidden && stdin.isTTY && stdin.isRaw) process.stdout.write(char);
       }
     };
     stdin.on("data", onData);

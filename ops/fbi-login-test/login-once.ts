@@ -64,6 +64,21 @@ function summarize(result: LayeredProbeResult) {
   };
 }
 
+/** Phrases visibles d'une page FBI qui ressemblent à un message d'erreur ou d'information. */
+function visibleMessages(html: string): string[] {
+  const text = html
+    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<[^>]+>/g, "\n")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&eacute;/g, "é")
+    .replace(/&egrave;/g, "è")
+    .replace(/&agrave;/g, "à");
+  const lines = text.split("\n").map((line) => line.replace(/\s+/g, " ").trim()).filter((line) => line.length > 15);
+  const pattern = /incorrect|invalide|erron|bloqu|verrouill|expir|session|tentative|captcha|désactiv|suspendu|refus|erreur|échec|connect/i;
+  return [...new Set(lines.filter((line) => pattern.test(line)))].slice(0, 5).map((line) => line.slice(0, 200));
+}
+
 async function egressIp(): Promise<string | null> {
   try {
     const response = await fetch("https://checkip.amazonaws.com/", { signal: AbortSignal.timeout(5_000) });
@@ -113,6 +128,22 @@ async function main(): Promise<void> {
     ...(process.env.FBI_TEST_CHROMIUM ? { executablePath: process.env.FBI_TEST_CHROMIUM } : {}),
   });
   log("browser_launched", { version: browser.version() });
+
+  // Message affiché par FBI en réponse au formulaire (mot de passe incorrect,
+  // compte bloqué, session déjà ouverte…) : lu sur la réponse du POST, sans
+  // toucher au moteur de production. Texte visible seulement (balises et
+  // valeurs de champs retirées : jamais l'identifiant ni le mot de passe).
+  let loginResponse: { status: number; messages: string[] } | null = null;
+  const originalNewContext = browser.newContext.bind(browser);
+  browser.newContext = async (options) => {
+    const context = await originalNewContext(options);
+    context.on("response", async (response) => {
+      if (response.request().method() !== "POST" || !/identification\.fbi/.test(response.url())) return;
+      const html = await response.text().catch(() => "");
+      loginResponse = { status: response.status(), messages: visibleMessages(html) };
+    });
+    return context;
+  };
   const client = new BrowserFbiClient({ baseUrl: BASE_URL, browser, lightSession: true });
 
   // 3. UNE connexion. Jamais d'autre appel à `login`, même en cas d'échec.
@@ -125,8 +156,10 @@ async function main(): Promise<void> {
     console.log(`[${new Date().toISOString()}] connexion       : réussie (${new URL(session.page.url()).pathname})`);
   } catch (error) {
     const message = error instanceof Error ? error.message.split("\n")[0] : String(error);
-    log("login_finished", { ok: false, startedAt: loginStartedAt, error: message, code: (error as { code?: string }).code ?? null });
+    log("login_finished", { ok: false, startedAt: loginStartedAt, error: message, code: (error as { code?: string }).code ?? null, fbiResponse: loginResponse });
     console.log(`[${new Date().toISOString()}] connexion       : ÉCHEC — ${message} (aucune nouvelle tentative)`);
+    const shown = (loginResponse as { messages: string[] } | null)?.messages ?? [];
+    console.log(`                           message affiché par FBI : ${shown.length ? shown.join(" | ") : "(aucun message reconnu)"}`);
   }
   // Horodatage exact de chaque requête de la connexion (chemins, statuts, erreurs réseau).
   const trace = client.lastTrace;

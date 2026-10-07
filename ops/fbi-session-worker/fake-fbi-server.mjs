@@ -16,7 +16,7 @@ http.createServer((req, res) => {
   if (url.pathname === "/fbi/identification.fbi" && req.method === "POST") {
     let body = ""; req.on("data", (c) => (body += c)); req.on("end", () => {
       const ok = body.includes("identifiant=robot") && body.includes("mdp=bon");
-      if (!ok) { res.setHeader("content-type", "text/html"); res.end(loginForm); return; }
+      if (!ok) { res.setHeader("content-type", "text/html"); res.end(loginForm.replace("<form", '<div class="alert">Identifiant ou mot de passe incorrect.</div><form')); return; }
       logins += 1; const id = randomBytes(8).toString("hex"); sessions.add(id);
       res.writeHead(302, { "set-cookie": `JSESSIONID=${id}; Path=/fbi; HttpOnly`, location: "/fbi/accueil.fbi" }); res.end();
     }); return;
