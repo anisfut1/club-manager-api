@@ -650,6 +650,10 @@ export interface Database {
         { club_id: string; state_ciphertext: string; state_iv: string; state_auth_tag: string; created_at: string; updated_at: string },
         { club_id: string; state_ciphertext: string; state_iv: string; state_auth_tag: string; created_at?: string; updated_at?: string }
       >;
+      emarque_debug_cells: Table<
+        { id: string; match_id: string; team: string; row_index: number; row_top: number; row_bottom: number; results: unknown; png_base64: string | null; created_at: string },
+        { id?: string; match_id: string; team: string; row_index: number; row_top: number; row_bottom: number; results: unknown; png_base64?: string | null; created_at?: string }
+      >;
       platform_settings: Table<
         { key: string; value: string; updated_at: string },
         { key: string; value: string; updated_at?: string }

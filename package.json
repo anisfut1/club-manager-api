@@ -16,7 +16,8 @@
     "fbi:worker": "tsx ops/fbi-session-worker/worker.ts",
     "fbi:worker:ctl": "tsx ops/fbi-session-worker/ctl.ts",
     "fbi:login-test": "tsx ops/fbi-login-test/login-once.ts",
-    "fbi:local-worker": "tsx ops/fbi-local-worker/run.ts"
+    "fbi:local-worker": "tsx ops/fbi-local-worker/run.ts",
+    "emarque:debug-licenses": "tsx ops/emarque-debug/license-cells.ts"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^9.1.0",
