@@ -326,9 +326,11 @@ integrationsRouter.post("/fbi/process-jobs", requireClubRole("club_admin"), asyn
   const serviceSupabase = createServiceSupabaseClient();
   const workerId = `admin-app#${club.id}#${Date.now()}`;
 
-  const { fbiPausedUntil } = await import("../../integrations/fbi/fbi-diagnostics.js");
+  const { fbiPausedUntil, recentFbiCredentialLogin } = await import("../../integrations/fbi/fbi-diagnostics.js");
   const pausedUntil = await fbiPausedUntil(serviceSupabase);
   if (pausedUntil) return c.json({ claimed: 0, succeeded: 0, failed: 0 });
+  // Connexion FBI toute récente pour ce club : pas de nouvelle connexion (voir `FBI_MIN_LOGIN_GAP_MS`).
+  if (await recentFbiCredentialLogin(serviceSupabase, club.id)) return c.json({ claimed: 0, succeeded: 0, failed: 0 });
 
   const result = await processJobBatch(serviceSupabase, CLUB_JOB_BATCH_SIZE, () => claimNextJobForClub(serviceSupabase, club.id, workerId), {
     claimNextDiscoverInSession: () => claimNextDiscoverJobInSession(serviceSupabase, club.id, workerId),

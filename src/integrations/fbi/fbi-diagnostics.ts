@@ -217,3 +217,27 @@ export async function saveFbiSeasonId(supabase: DbClient, seasonLabel: string, v
     logError("Enregistrement de l'identifiant de saison FBI échoué", error, { seasonLabel });
   }
 }
+
+/**
+ * Écart minimal entre deux connexions FBI avec identifiants (2026-10-07).
+ * Constat (`fbi_jobs`, `fbi_session_traces`) : jusqu'au 30/09, une connexion
+ * toutes les ~20 min, jamais coupée. Depuis le 02/10, la file est traitée en
+ * boucle (plusieurs connexions en 1-2 min) et les connexions rapprochées sont
+ * coupées — même depuis une adresse IP différente (07/10 07:46 réussie depuis
+ * 13.221.x, 07:47 coupée 3 s après la connexion depuis 44.192.x).
+ */
+export const FBI_MIN_LOGIN_GAP_MS = 12 * 60 * 1000;
+
+/** Date de la dernière connexion FBI si elle date de moins de `FBI_MIN_LOGIN_GAP_MS`, sinon `null`. */
+export async function recentFbiCredentialLogin(supabase: DbClient, clubId: string | null = null): Promise<Date | null> {
+  try {
+    let query = supabase.from("fbi_integration_status").select("last_credential_login_at").not("last_credential_login_at", "is", null);
+    if (clubId) query = query.eq("club_id", clubId);
+    const { data } = await query.order("last_credential_login_at", { ascending: false }).limit(1);
+    const last = data?.[0]?.last_credential_login_at ? new Date(data[0].last_credential_login_at) : null;
+    return last && Date.now() - last.getTime() < FBI_MIN_LOGIN_GAP_MS ? last : null;
+  } catch {
+    // Illisible : pas de blocage (comportement normal).
+    return null;
+  }
+}

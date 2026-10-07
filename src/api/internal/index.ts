@@ -105,9 +105,14 @@ internalRouter.get("/cron/fbi-jobs", async (c) => {
   const supabase = createServiceSupabaseClient();
   const workerId = `vercel-cron#${Date.now()}`;
 
-  const { fbiPausedUntil } = await import("../../integrations/fbi/fbi-diagnostics.js");
+  const { fbiPausedUntil, recentFbiCredentialLogin } = await import("../../integrations/fbi/fbi-diagnostics.js");
   const pausedUntil = await fbiPausedUntil(supabase);
   if (pausedUntil) return c.json({ claimed: 0, succeeded: 0, failed: 0, skipped: "fbi_en_pause", until: pausedUntil.toISOString() });
+  // Une connexion FBI à la fois, espacées (voir `FBI_MIN_LOGIN_GAP_MS`) :
+  // les appels suivants de la boucle du workflow ne se connectent pas.
+  // Un seul compte FBI aujourd'hui : écart global (par club quand il y en aura plusieurs).
+  const lastLogin = await recentFbiCredentialLogin(supabase);
+  if (lastLogin) return c.json({ claimed: 0, succeeded: 0, failed: 0, skipped: "connexion_fbi_recente", since: lastLogin.toISOString() });
 
   // Rien de dû : aucun accès à FBI, même pas la vérification.
   const { data: due } = await supabase.from("fbi_jobs").select("id").eq("status", "pending").lte("scheduled_at", new Date().toISOString()).limit(1);

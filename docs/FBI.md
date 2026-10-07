@@ -3966,3 +3966,19 @@ Correctif : région Paris retirée de `vercel.json` (fonctionnement d'avant).
 Contrôle : l'IP de sortie est enregistrée à chaque contrôle de joignabilité
 (`fbi_reachability_checks.egress_ip`) et dans chaque trace
 (`fbi_session_traces.fingerprint.egressIp`).
+
+### Écart minimal entre deux connexions FBI (2026-10-07)
+
+Après le retrait de la région Paris : 07:46 connexion réussie depuis
+13.221.x (feuille n°6 téléchargée), 07:47 nouvelle connexion depuis une AUTRE
+adresse (44.192.x) — coupée 3 s après. Ce n'est donc pas (seulement)
+l'adresse : ce sont les connexions rapprochées sur le compte. Jusqu'au 30/09
+(aucune coupure), une connexion toutes les ~20 min ; depuis le 02/10, la
+boucle du workflow (et les 6 essais de connexion d'affilée) en enchaînait
+plusieurs par minute.
+
+`FBI_MIN_LOGIN_GAP_MS` (12 min) : `/internal/cron/fbi-jobs` et
+« Traiter les jobs » ne se connectent pas si la dernière connexion
+(`fbi_integration_status.last_credential_login_at`, renseignée par tous les
+types de job) date de moins de 12 min — réponse `skipped:
+"connexion_fbi_recente"`.

@@ -43,6 +43,12 @@ export async function processJobBatch(
 
     try {
       let jobSucceeded: boolean;
+      if (job.type !== "discover_emarque") {
+        // Ces jobs se connectent aussi à FBI : même horodatage que la découverte e-Marque (écart minimal entre connexions).
+        await Promise.resolve()
+          .then(() => supabase.from("fbi_integration_status").upsert({ club_id: job.club_id, last_credential_login_at: new Date().toISOString() }, { onConflict: "club_id" }))
+          .catch(() => undefined);
+      }
       if (job.type === "test_connection") {
         const { processTestConnectionJob } = await import("./process-test-connection.js");
         jobSucceeded = await processTestConnectionJob(supabase, job);
