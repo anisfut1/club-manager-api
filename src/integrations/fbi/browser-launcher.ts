@@ -83,6 +83,8 @@ export async function launchServerlessBrowser(): Promise<Browser> {
     );
   }
 
+  if (process.env.FBI_LOCAL_BROWSER === "1") return launchLocalBrowser();
+
   // Import paresseux : évite de charger ces modules (et leur poids) quand
   // la capability est désactivée, ce qui est le cas par défaut.
   const [{ default: chromium }, { chromium: playwrightChromium }] = await Promise.all([
@@ -150,4 +152,25 @@ export function probeFbiProxy(proxy: FbiProxySettings | undefined = fbiProxySett
 export async function resolveFbiProxy(): Promise<FbiProxySettings | undefined> {
   proxyUrlFromDatabase = await readProxyUrlFromDatabase();
   return fbiProxySettings();
+}
+
+/**
+ * Worker FBI local (ops/fbi-local-worker, 2026-10-07) : Chromium installé
+ * par Playwright sur le poste (pas `@sparticuz/chromium`, binaire Linux de
+ * Vercel). Jamais utilisé sur Vercel (`FBI_LOCAL_BROWSER` absent).
+ */
+async function launchLocalBrowser(): Promise<Browser> {
+  const { chromium } = await import("playwright-core");
+  const browser = await chromium.launch({ headless: true, args: ["--disable-blink-features=AutomationControlled"] });
+  // Lancé via `tsx` (esbuild, keepNames), le code passé à `page.evaluate`
+  // appelle `__name(...)`, inconnu du navigateur : sans ce no-op, recherche et
+  // téléchargement « dans la page » échouent et basculent sur le repli Node.
+  const newContext = browser.newContext.bind(browser);
+  browser.newContext = async (options) => {
+    const context = await newContext(options);
+    await context.addInitScript("globalThis.__name = globalThis.__name || ((target) => target);");
+    return context;
+  };
+  logInfo("Lancement de Chromium local pour BrowserFbiClient (worker local)");
+  return browser;
 }

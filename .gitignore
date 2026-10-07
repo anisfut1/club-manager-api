@@ -9,3 +9,7 @@ dist/
 # défaut (aucun `cachePath` configuré, voir pdf-raster-ocr-extractor.ts) —
 # jamais le vrai fichier vendorisé (src/integrations/emarque/ocr-data/).
 /fra.traineddata
+
+# Worker FBI local : configuration et journaux propres au poste, jamais commités.
+.env.fbi-local
+fbi-login-test-*.jsonl
