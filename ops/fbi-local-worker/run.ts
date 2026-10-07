@@ -17,9 +17,10 @@
  *   chaque passe — Vercel ne se connecte plus à FBI ; libéré à l'arrêt
  *   (Ctrl+C), expiré seul si le poste s'éteint.
  *
- * Seuls les jobs `discover_emarque` (feuilles e-Marque) sont traités ici : les
- * autres types ouvriraient leur propre connexion. Le parsing des feuilles et
- * les stats restent faits par l'API.
+ * Tous les jobs FBI du club passent par CETTE session : feuilles e-Marque,
+ * calendrier (`reconcile_schedule`), dérogations (`check_all_derogations`,
+ * `check_derogation`), test de connexion. Le parsing des feuilles et les
+ * stats restent faits par l'API.
  *
  * Configuration : `.env.fbi-local` à la racine (voir README), sur le poste.
  * Journal : `fbi-local-worker-<date>.jsonl` (jamais d'identifiant, de mot de
@@ -54,7 +55,10 @@ const LEASE_MIN = 30;
 const BASE_URL = process.env.FBI_BASE_URL || "https://extranet.ffbb.com/fbi";
 
 const { createServiceSupabaseClient } = await import("../../src/db/client.js");
-const { claimNextDiscoverJobInSession } = await import("../../src/jobs/claim.js");
+const { claimNextJobForClub } = await import("../../src/jobs/claim.js");
+const { processReconcileScheduleJob } = await import("../../src/jobs/process-reconcile-schedule.js");
+const { processCheckAllDerogationsJob } = await import("../../src/jobs/process-check-all-derogations.js");
+const { processCheckDerogationJob } = await import("../../src/jobs/process-check-derogation.js");
 const { processDiscoverEmarqueJobInSession } = await import("../../src/jobs/process-discover-emarque.js");
 const { checkFbiReachability, recordFbiReachability, recentFbiCredentialLogin } = await import("../../src/integrations/fbi/fbi-diagnostics.js");
 const { getFbiCredentials } = await import("../../src/integrations/fbi/credentials-store.js");
@@ -100,7 +104,8 @@ if (ASK_PASSWORD) {
   typedCredentials = { username, password };
 }
 const browser = await launchServerlessBrowser();
-const client = new BrowserFbiClient({ baseUrl: BASE_URL, browser, lightSession: true });
+// Session complète (scripts FBI chargés) : le calendrier et les dérogations en ont besoin.
+const client = new BrowserFbiClient({ baseUrl: BASE_URL, browser });
 let session: Session | null = null;
 let sessionSince: string | null = null;
 let expiredOnce = false;
@@ -163,7 +168,6 @@ async function pass(): Promise<void> {
     .from("fbi_jobs")
     .select("id")
     .eq("status", "pending")
-    .eq("type", "discover_emarque")
     .eq("club_id", clubId)
     .lte("scheduled_at", new Date().toISOString());
   if (error) return record("pass_skipped", { error: error.message }, `lecture des jobs impossible : ${error.message}`);
@@ -185,7 +189,7 @@ async function pass(): Promise<void> {
     }
   }
 
-  if (!due || due.length === 0) return record("idle", {}, `aucune feuille e-Marque à chercher${session ? " (session gardée ouverte)" : ""}`);
+  if (!due || due.length === 0) return record("idle", {}, `aucun job FBI à traiter${session ? " (session gardée ouverte)" : ""}`);
 
   if (!session) {
     if (expiredOnce && !RELOGIN) return record("pass_skipped", {}, "session expirée et FBI_LOCAL_RELOGIN=never : aucune nouvelle connexion");
@@ -195,13 +199,48 @@ async function pass(): Promise<void> {
   }
 
   for (let done = 0; done < MAX_JOBS_PER_PASS && session; done += 1) {
-    const job = await claimNextDiscoverJobInSession(supabase, clubId, workerId);
+    const job = await claimNextJobForClub(supabase, clubId, workerId);
     if (!job) break;
     if (done > 0) await new Promise((resolve) => setTimeout(resolve, PAUSE_BETWEEN_JOBS_MS));
-    const outcome = await processDiscoverEmarqueJobInSession(supabase, job, client, session);
-    record("job", { jobId: job.id, matchId: job.match_id, outcome }, `match ${job.match_id} : ${outcome === "succeeded" ? "feuille récupérée" : outcome === "not_yet" ? "pas encore disponible (nouvel essai planifié)" : outcome === "error" ? "erreur FBI (nouvel essai planifié)" : "job invalide"}`);
-    // Erreur FBI : on n'enchaîne pas, la session est revérifiée à la passe suivante.
-    if (outcome === "error") break;
+    const outcome = await runJob(job, session);
+    record("job", { jobId: job.id, type: job.type, matchId: job.match_id, outcome }, `${JOB_LABELS[job.type] ?? job.type}${job.match_id ? ` (match ${job.match_id})` : ""} : ${outcome}`);
+    // Erreur : on n'enchaîne pas, la session est revérifiée à la passe suivante.
+    if (outcome.startsWith("erreur")) break;
+  }
+}
+
+const JOB_LABELS: Record<string, string> = {
+  discover_emarque: "feuille e-Marque",
+  reconcile_schedule: "calendrier FBI",
+  check_all_derogations: "dérogations (toutes)",
+  check_derogation: "dérogation",
+  test_connection: "test de connexion",
+};
+
+/** Un job, dans la session gardée — jamais de connexion ni de déconnexion ici. */
+async function runJob(job: Awaited<ReturnType<typeof claimNextJobForClub>> & object, current: Session): Promise<string> {
+  const shared = { client, session: current };
+  switch (job.type) {
+    case "discover_emarque": {
+      const outcome = await processDiscoverEmarqueJobInSession(supabase, job, client, current);
+      return outcome === "succeeded" ? "feuille récupérée" : outcome === "not_yet" ? "pas encore disponible (nouvel essai planifié)" : outcome === "error" ? "erreur FBI (nouvel essai planifié)" : "job invalide";
+    }
+    case "reconcile_schedule":
+      return (await processReconcileScheduleJob(supabase, job, shared)) ? "calendrier rapproché" : "erreur (nouvel essai planifié)";
+    case "check_all_derogations":
+      return (await processCheckAllDerogationsJob(supabase, job, shared)) ? "dérogations vérifiées" : "erreur (nouvel essai planifié)";
+    case "check_derogation":
+      return (await processCheckDerogationJob(supabase, job, shared)) ? "dérogation vérifiée" : "erreur (nouvel essai planifié)";
+    case "test_connection": {
+      // La session gardée vient d'être vérifiée authentifiée en début de passe.
+      const now = new Date().toISOString();
+      await supabase.from("fbi_integration_status").upsert({ club_id: clubId, configured: true, last_test_at: now, last_test_success: true, last_test_message: "Connexion FBI valide (session du worker local)", updated_at: now }, { onConflict: "club_id" });
+      await supabase.from("fbi_jobs").update({ status: "succeeded", finished_at: now, result: { loginStatus: "SUCCESS", via: "worker local" } }).eq("id", job.id);
+      return "connexion valide";
+    }
+    default:
+      await supabase.from("fbi_jobs").update({ status: "pending", scheduled_at: new Date(Date.now() + 60 * 60_000).toISOString(), last_error: `[info] Type de job non pris en charge par le worker local : ${job.type}` }).eq("id", job.id);
+      return `erreur : type ${job.type} non pris en charge`;
   }
 }
 

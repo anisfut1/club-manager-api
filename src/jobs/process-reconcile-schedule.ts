@@ -3,6 +3,8 @@ import type { FbiJobRow } from "../db/types.js";
 import { getFbiCredentials } from "../integrations/fbi/credentials-store.js";
 import { BrowserFbiClient, type BrowserFbiSession } from "../integrations/fbi/browser-client.js";
 import { launchServerlessBrowser } from "../integrations/fbi/browser-launcher.js";
+import type { Browser } from "playwright-core";
+import type { SharedFbiSession } from "./shared-session.js";
 import { classifyFbiLoginStatus, FbiError } from "../integrations/fbi/errors.js";
 import { reconcileFbiSchedule, type OurMatchForReconciliation } from "../integrations/fbi/schedule-reconciliation.js";
 import { nextErrorBackoffSeconds } from "./backoff.js";
@@ -51,36 +53,42 @@ function discrepancyKey(d: { divisionCode: string | null; numero: string | null;
  * fbi_jobs_unique_pending_reconcile_schedule) — déclenché à la demande
  * (bouton admin) pour l'instant, voir POST .../fbi/reconcile-schedule.
  */
-export async function processReconcileScheduleJob(supabase: DbClient, job: FbiJobRow): Promise<boolean> {
-  const credentials = await getFbiCredentials(supabase, job.club_id);
-  if (!credentials) {
-    await failJob(supabase, job, "Aucun identifiant FBI enregistré pour ce club.");
-    return false;
-  }
-
-  const browser = await launchServerlessBrowser();
-  const client = new BrowserFbiClient({ baseUrl: getEnv().FBI_BASE_URL, browser });
+export async function processReconcileScheduleJob(supabase: DbClient, job: FbiJobRow, shared?: SharedFbiSession): Promise<boolean> {
+  let browser: Browser | null = null;
+  let client: BrowserFbiClient;
   let session: BrowserFbiSession;
-
-  try {
-    session = await client.login(credentials);
-    await recordLoginOutcome(supabase, job.club_id, true, null);
-  } catch (error) {
-    const status = classifyFbiLoginStatus(error);
-    const message = error instanceof FbiError ? error.message : "Connexion FBI impossible.";
-    await recordLoginOutcome(supabase, job.club_id, false, message);
-
-    if (status === "INVALID_CREDENTIALS" || status === "AUTH_FLOW_CHANGED") {
-      await failJob(supabase, job, message);
-    } else if (job.attempt_count >= job.max_attempts) {
-      await failJob(supabase, job, `Connexion FBI en échec après ${job.attempt_count} tentatives : ${message}`);
-    } else {
-      await rescheduleJob(supabase, job, nextErrorBackoffSeconds(job.attempt_count), message);
+  if (shared) {
+    ({ client, session } = shared);
+  } else {
+    const credentials = await getFbiCredentials(supabase, job.club_id);
+    if (!credentials) {
+      await failJob(supabase, job, "Aucun identifiant FBI enregistré pour ce club.");
+      return false;
     }
 
-    logError("Job reconcile_schedule : connexion FBI échouée", error, { clubId: job.club_id, jobId: job.id, loginStatus: status });
-    await browser.close();
-    return false;
+    browser = await launchServerlessBrowser();
+    client = new BrowserFbiClient({ baseUrl: getEnv().FBI_BASE_URL, browser });
+
+    try {
+      session = await client.login(credentials);
+      await recordLoginOutcome(supabase, job.club_id, true, null);
+    } catch (error) {
+      const status = classifyFbiLoginStatus(error);
+      const message = error instanceof FbiError ? error.message : "Connexion FBI impossible.";
+      await recordLoginOutcome(supabase, job.club_id, false, message);
+
+      if (status === "INVALID_CREDENTIALS" || status === "AUTH_FLOW_CHANGED") {
+        await failJob(supabase, job, message);
+      } else if (job.attempt_count >= job.max_attempts) {
+        await failJob(supabase, job, `Connexion FBI en échec après ${job.attempt_count} tentatives : ${message}`);
+      } else {
+        await rescheduleJob(supabase, job, nextErrorBackoffSeconds(job.attempt_count), message);
+      }
+
+      logError("Job reconcile_schedule : connexion FBI échouée", error, { clubId: job.club_id, jobId: job.id, loginStatus: status });
+      await browser?.close();
+      return false;
+    }
   }
 
   try {
@@ -218,7 +226,9 @@ export async function processReconcileScheduleJob(supabase: DbClient, job: FbiJo
     logError("Job reconcile_schedule en erreur", error, { clubId: job.club_id, jobId: job.id });
     return false;
   } finally {
-    await client.closeSession(session);
-    await browser.close();
+    if (!shared) {
+      await client.closeSession(session);
+      await browser?.close();
+    }
   }
 }

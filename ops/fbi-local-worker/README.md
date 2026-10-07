@@ -40,14 +40,16 @@ npm run fbi:local-worker
   une connexion, puis la même session réutilisée à chaque passe ; aucune
   connexion tant qu'elle est authentifiée, aucune déconnexion.
 - Chaque passe (15 min) : FBI joignable ? → session encore authentifiée (page
-  d'accueil) ? → jusqu'à 3 feuilles e-Marque recherchées/téléchargées dans
-  cette session. Sans job, la passe vérifie seulement la session.
+  d'accueil) ? → jusqu'à 3 jobs FBI traités dans cette session. Sans job, la passe vérifie seulement la session.
 - Session renvoyée vers l'identification : expiration journalisée (preuves),
   traitements de la passe arrêtés ; UNE nouvelle connexion au plus tôt à la
   passe suivante (et 12 min après la précédente). `FBI_LOCAL_RELOGIN=never`
   dans `.env.fbi-local` pour l'interdire.
-- Seules les feuilles e-Marque sont traitées ici (les dérogations et le
-  calendrier ouvriraient leur propre connexion).
+- Tous les jobs FBI du club passent par cette session : feuilles e-Marque,
+  calendrier (`reconcile_schedule`), dérogations (`check_all_derogations`,
+  `check_derogation`) et test de connexion — jusqu'à 3 jobs par passe.
+  Restent sur Vercel : les actions déclenchées à la main dans l'appli
+  (vérifier/créer/répondre à une dérogation tout de suite).
 - Journal : `fbi-local-worker-<date>.jsonl` (sans identifiant, mot de passe
   ni valeur de cookie).
 - Tant qu'il tourne, Vercel ne se connecte plus à FBI (bail de 30 min

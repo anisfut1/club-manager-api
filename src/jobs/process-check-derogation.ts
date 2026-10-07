@@ -3,6 +3,8 @@ import type { FbiJobRow } from "../db/types.js";
 import { getFbiCredentials } from "../integrations/fbi/credentials-store.js";
 import { BrowserFbiClient, type BrowserFbiSession } from "../integrations/fbi/browser-client.js";
 import { launchServerlessBrowser } from "../integrations/fbi/browser-launcher.js";
+import type { Browser } from "playwright-core";
+import type { SharedFbiSession } from "./shared-session.js";
 import { classifyFbiLoginStatus, FbiError } from "../integrations/fbi/errors.js";
 import { nextErrorBackoffSeconds } from "./backoff.js";
 import { getEnv } from "../config/env.js";
@@ -36,7 +38,7 @@ async function recordLoginOutcome(supabase: DbClient, clubId: string, success: b
  * dérogation — cette phase (écriture) est volontairement pas construite
  * (voir "Ce qui n'est pas fait" dans docs/FBI.md).
  */
-export async function processCheckDerogationJob(supabase: DbClient, job: FbiJobRow): Promise<boolean> {
+export async function processCheckDerogationJob(supabase: DbClient, job: FbiJobRow, shared?: SharedFbiSession): Promise<boolean> {
   if (!job.match_id) {
     await failJob(supabase, job, "Job check_derogation sans match_id (ne devrait jamais arriver, voir la contrainte NOT NULL applicative).");
     return false;
@@ -59,35 +61,41 @@ export async function processCheckDerogationJob(supabase: DbClient, job: FbiJobR
     division = competition?.code ?? null;
   }
 
-  const credentials = await getFbiCredentials(supabase, job.club_id);
-  if (!credentials) {
-    await failJob(supabase, job, "Aucun identifiant FBI enregistré pour ce club.");
-    return false;
-  }
-
-  const browser = await launchServerlessBrowser();
-  const client = new BrowserFbiClient({ baseUrl: getEnv().FBI_BASE_URL, browser });
+  let browser: Browser | null = null;
+  let client: BrowserFbiClient;
   let session: BrowserFbiSession;
-
-  try {
-    session = await client.login(credentials);
-    await recordLoginOutcome(supabase, job.club_id, true, null);
-  } catch (error) {
-    const status = classifyFbiLoginStatus(error);
-    const message = error instanceof FbiError ? error.message : "Connexion FBI impossible.";
-    await recordLoginOutcome(supabase, job.club_id, false, message);
-
-    if (status === "INVALID_CREDENTIALS" || status === "AUTH_FLOW_CHANGED") {
-      await failJob(supabase, job, message);
-    } else if (job.attempt_count >= job.max_attempts) {
-      await failJob(supabase, job, `Connexion FBI en échec après ${job.attempt_count} tentatives : ${message}`);
-    } else {
-      await rescheduleJob(supabase, job, nextErrorBackoffSeconds(job.attempt_count), message);
+  if (shared) {
+    ({ client, session } = shared);
+  } else {
+    const credentials = await getFbiCredentials(supabase, job.club_id);
+    if (!credentials) {
+      await failJob(supabase, job, "Aucun identifiant FBI enregistré pour ce club.");
+      return false;
     }
 
-    logError("Job check_derogation : connexion FBI échouée", error, { clubId: job.club_id, jobId: job.id, loginStatus: status });
-    await browser.close();
-    return false;
+    browser = await launchServerlessBrowser();
+    client = new BrowserFbiClient({ baseUrl: getEnv().FBI_BASE_URL, browser });
+
+    try {
+      session = await client.login(credentials);
+      await recordLoginOutcome(supabase, job.club_id, true, null);
+    } catch (error) {
+      const status = classifyFbiLoginStatus(error);
+      const message = error instanceof FbiError ? error.message : "Connexion FBI impossible.";
+      await recordLoginOutcome(supabase, job.club_id, false, message);
+
+      if (status === "INVALID_CREDENTIALS" || status === "AUTH_FLOW_CHANGED") {
+        await failJob(supabase, job, message);
+      } else if (job.attempt_count >= job.max_attempts) {
+        await failJob(supabase, job, `Connexion FBI en échec après ${job.attempt_count} tentatives : ${message}`);
+      } else {
+        await rescheduleJob(supabase, job, nextErrorBackoffSeconds(job.attempt_count), message);
+      }
+
+      logError("Job check_derogation : connexion FBI échouée", error, { clubId: job.club_id, jobId: job.id, loginStatus: status });
+      await browser?.close();
+      return false;
+    }
   }
 
   try {
@@ -152,7 +160,9 @@ export async function processCheckDerogationJob(supabase: DbClient, job: FbiJobR
     logError("Job check_derogation en erreur", error, { clubId: job.club_id, jobId: job.id, matchId: job.match_id });
     return false;
   } finally {
-    await client.closeSession(session);
-    await browser.close();
+    if (!shared) {
+      await client.closeSession(session);
+      await browser?.close();
+    }
   }
 }
