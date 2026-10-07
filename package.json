@@ -11,7 +11,10 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "vercel-build": "echo 'Rien à builder côté Vercel : fonctions Node compilées à la volée par le runtime.'"
+    "vercel-build": "echo 'Rien à builder côté Vercel : fonctions Node compilées à la volée par le runtime.'",
+    "fbi:probe": "tsx ops/fbi-session-worker/probe.ts",
+    "fbi:worker": "tsx ops/fbi-session-worker/worker.ts",
+    "fbi:worker:ctl": "tsx ops/fbi-session-worker/ctl.ts"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^9.1.0",

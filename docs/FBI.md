@@ -3982,3 +3982,26 @@ plusieurs par minute.
 (`fbi_integration_status.last_credential_login_at`, renseignée par tous les
 types de job) date de moins de 12 min — réponse `skipped:
 "connexion_fbi_recente"`.
+
+### Statut des hypothèses et protocole de diagnostic (2026-10-07)
+
+Les explications avancées dans les sections précédentes (« FBI coupe une
+adresse », « connexions rapprochées sur le compte », région Paris…) sont des
+**hypothèses** : aucune trace ne montre directement la cause d'une coupure.
+Ce que les traces établissent : des requêtes vers FBI échouent en
+`net::ERR_CONNECTION_TIMED_OUT` quelques secondes après une connexion avec
+identifiants, et `ETIMEDOUT` sur la sonde suivante. Rien ne dit encore à
+quelle couche (TCP, TLS, HTTP) ni pourquoi.
+
+Outils ajoutés (production inchangée) :
+
+- `src/integrations/fbi/layered-probe.ts` + `npm run fbi:probe` : sonde
+  anonyme DNS → TCP → TLS → HTTP, chaque couche mesurée et classée séparément
+  (ETIMEDOUT/ECONNRESET/refus TCP, échec TLS, 403/429/5xx, redirection vers
+  l'identification). L'émetteur du certificat révèle un intermédiaire qui
+  intercepte TLS (constaté depuis l'environnement de développement : passerelle
+  de sortie, 403 qui ne vient PAS de FBI).
+- `ops/fbi-session-worker/` : worker de test sur le VPS OVH, accès direct,
+  navigateur et profil persistants, une seule connexion manuelle, aucune
+  reconnexion automatique, expiration de session journalisée avec preuves
+  (`fbi_probe_events`). Voir son README.

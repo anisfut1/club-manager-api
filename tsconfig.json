@@ -12,6 +12,6 @@
     "noEmit": true,
     "declaration": false
   },
-  "include": ["src/**/*.ts", "api/**/*.ts"],
+  "include": ["src/**/*.ts", "api/**/*.ts", "ops/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }
