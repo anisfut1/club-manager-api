@@ -278,6 +278,30 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
 }
 
 /**
+ * Variante « session persistante » (worker FBI local, ops/fbi-local-worker,
+ * 2026-10-07) : traite UN job dans une session FBI déjà ouverte et gardée par
+ * l'appelant — ni lancement de navigateur, ni connexion, ni déconnexion ici.
+ * Mêmes étapes que `processDiscoverEmarqueJob` (recherche, téléchargement,
+ * Storage, calendrier de vérification). Non utilisée par Vercel.
+ */
+export async function processDiscoverEmarqueJobInSession(
+  supabase: DbClient,
+  job: FbiJobRow,
+  client: BrowserFbiClient,
+  session: BrowserFbiSession,
+  options: { matchTimeoutMs?: number } = {},
+): Promise<DiscoverOutcome | "invalid_job"> {
+  const target = await loadDiscoverTarget(supabase, job);
+  if (!target) return "invalid_job";
+  const seasonCache: SeasonCache = { label: resolveSeasonLabel(target.match.match_datetime), id: null };
+  seasonCache.id = await loadFbiSeasonId(supabase, seasonCache.label);
+  const outcome = await discoverWithDeadline(supabase, client, session, job, target, seasonCache, options.matchTimeoutMs ?? MATCH_TIMEOUT_MS);
+  if (client.lastSeasonOption && client.lastSeasonOption.value !== seasonCache.id) await saveFbiSeasonId(supabase, client.lastSeasonOption.label, client.lastSeasonOption.value);
+  else if (seasonCache.invalidated) await saveFbiSeasonId(supabase, seasonCache.label, "");
+  return outcome;
+}
+
+/**
  * FBI en difficulté pendant ce passage (connexion impossible, délai
  * dépassé, coupure réseau) : tous les autres matchs dus du club passent au
  * créneau suivant de LEUR calendrier — jamais une nouvelle connexion FBI
@@ -296,7 +320,7 @@ async function deferRemainingClubJobs(supabase: DbClient, clubId: string, option
   if (deferred > 0) logInfo("FBI en difficulté : autres matchs du club reportés au créneau suivant", { clubId, deferred });
 }
 
-type DiscoverOutcome = "succeeded" | "not_yet" | "error";
+export type DiscoverOutcome = "succeeded" | "not_yet" | "error";
 
 /**
  * Identifiant FBI de la saison en cache (voir `loadFbiSeasonId`). Recherche

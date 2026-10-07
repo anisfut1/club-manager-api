@@ -13,3 +13,4 @@ dist/
 # Worker FBI local : configuration et journaux propres au poste, jamais commités.
 .env.fbi-local
 fbi-login-test-*.jsonl
+fbi-local-worker-*.jsonl
