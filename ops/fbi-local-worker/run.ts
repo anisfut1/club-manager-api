@@ -109,7 +109,9 @@ if (ASK_PASSWORD) {
 }
 const browser = await launchServerlessBrowser();
 // Session complète (scripts FBI chargés) : le calendrier et les dérogations en ont besoin.
-const client = new BrowserFbiClient({ baseUrl: BASE_URL, browser });
+// Pas de limite Vercel ici : le détail de CHAQUE dérogation (demandeur, motif,
+// horaire demandé, réponse) a le temps d'être lu, jamais tronqué à 220 s.
+const client = new BrowserFbiClient({ baseUrl: BASE_URL, browser, derogationDetailBudgetMs: 20 * 60_000 });
 let session: Session | null = null;
 let sessionSince: string | null = null;
 let expiredOnce = false;

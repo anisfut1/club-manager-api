@@ -144,6 +144,18 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
     if (existingChecksError) throw new Error(`Lecture du détail de dérogation déjà connu échouée : ${existingChecksError.message}`);
     const existingByRowKey = new Map((existingChecks ?? []).map((c) => [c.fbi_row_key, c]));
 
+    // Aucune dérogation lue alors que le club en a déjà en base : lecture FBI
+    // ratée, jamais un "succès" (constaté le 2026-10-07 : 3 lignes vides lues,
+    // job marqué réussi, affichage figé au 30/09 sans que personne le sache).
+    if (derogations.length === 0 && existingByRowKey.size > 0) {
+      const diagnostic = passDiagnostics[0];
+      // Diagnostic conservé en base malgré l'échec (preuve de ce qui a été lu).
+      await supabase.from("fbi_jobs").update({ result: { derogationsFound: 0, passDiagnostics } }).eq("id", job.id);
+      throw new Error(
+        `Aucune dérogation lue sur FBI alors que ${existingByRowKey.size} sont connues (lignes brutes : ${diagnostic?.rawRowCount ?? "?"}, conteneur trouvé : ${diagnostic?.derogationContainerFound ?? "?"}) — tableau FBI illisible, nouvel essai planifié.`,
+      );
+    }
+
     const now = new Date().toISOString();
     let matched = 0;
     let unmatched = 0;

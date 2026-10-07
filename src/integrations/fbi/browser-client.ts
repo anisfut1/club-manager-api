@@ -221,6 +221,8 @@ export interface DerogationPassDiagnostic {
   numeroValueBeforeClear: string | null;
   /** `selectors.derogationResultsContainer(page)` a été trouvé sur la page (voir `resolveDerogationScope`) — `false` signifie que les lectures sont retombées sur `page` entière (comportement d'avant le vingtième round), risquant de lire un tableau SANS RAPPORT ailleurs sur la page si le vrai tableau n'a pas encore de lignes. */
   derogationContainerFound: boolean;
+  /** Tableaux présents sur la page après la recherche (voir `describeTables`). */
+  tables?: Array<{ id: string; className: string; headers: string[]; bodyRows: number }>;
 }
 
 export class BrowserFbiClient {
@@ -1796,6 +1798,38 @@ export class BrowserFbiClient {
    * que cette hypothèse d'id doit être reconfirmée sur preuve plutôt que
    * de continuer à deviner un vingt-et-unième correctif.
    */
+  /** `resolveDerogationScope` répété jusqu'à ce que le conteneur apparaisse (même borne que `waitForDerogationTableRefresh`), repli sur la page entière sinon. */
+  private async waitForDerogationScope(page: Page): Promise<{ scope: Page | Locator; found: boolean }> {
+    for (let attempt = 0; attempt < 15; attempt += 1) {
+      const resolved = await this.resolveDerogationScope(page);
+      if (resolved.found) return resolved;
+      await new Promise((resolve) => setTimeout(resolve, this.navigationSettleMs));
+    }
+    return this.resolveDerogationScope(page);
+  }
+
+  /**
+   * Description des tableaux présents sur la page (id, classe, en-têtes,
+   * nombre de lignes) — preuve directe de CE qui a été lu quand la lecture
+   * échoue, jamais une hypothèse de plus. Uniquement des libellés de
+   * colonnes et des compteurs, aucune donnée de ligne.
+   */
+  private async describeTables(page: Page): Promise<Array<{ id: string; className: string; headers: string[]; bodyRows: number }>> {
+    const tables = page.locator("table");
+    const count = Math.min(await tables.count().catch(() => 0), 8);
+    const described: Array<{ id: string; className: string; headers: string[]; bodyRows: number }> = [];
+    for (let i = 0; i < count; i += 1) {
+      const table = tables.nth(i);
+      described.push({
+        id: (await table.getAttribute("id").catch(() => null)) ?? "",
+        className: ((await table.getAttribute("class").catch(() => null)) ?? "").slice(0, 80),
+        headers: (await table.locator("th").allTextContents().catch(() => [])).map((t) => t.trim().slice(0, 40)).slice(0, 16),
+        bodyRows: await table.locator("tbody tr").count().catch(() => 0),
+      });
+    }
+    return described;
+  }
+
   private async resolveDerogationScope(page: Page): Promise<{ scope: Page | Locator; found: boolean }> {
     const container = selectors.derogationResultsContainer(page);
     const found = (await container.count().catch(() => 0)) > 0;
@@ -1988,21 +2022,21 @@ export class BrowserFbiClient {
      * tableau de résultats n'avait pas encore de lignes). Voir
      * `resolveDerogationScope`/`selectors.derogationResultsContainer`.
      */
-    const { scope, found: derogationContainerFound } = await this.resolveDerogationScope(page);
+    const { scope: preSubmitScope } = await this.resolveDerogationScope(page);
 
     // État du tableau AVANT la soumission — voir `waitForDerogationTableRefresh` :
     // une recherche "tous les numéros" est nécessairement plus LENTE côté
     // serveur qu'une recherche filtrée sur un seul numéro, la comparaison
     // doit donc attendre un changement RÉEL, jamais juste une stabilisation
     // qui pourrait se figer sur cet état PRÉ-soumission.
-    const preSubmitSignature = JSON.stringify(await selectors.resultsTableGenericRows(scope).catch(() => null));
+    const preSubmitSignature = JSON.stringify(await selectors.resultsTableGenericRows(preSubmitScope).catch(() => null));
 
     try {
       const submit = selectors.searchSubmitControl(page).first();
       if ((await submit.count().catch(() => 0)) > 0) await submit.click();
       await this.settle(page);
       await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
-      await this.waitForDerogationTableRefresh(scope, preSubmitSignature);
+      await this.waitForDerogationTableRefresh(preSubmitScope, preSubmitSignature);
     } catch (error) {
       throw new FbiError(
         `Recherche de toutes les dérogations du club échouée : ${error instanceof Error ? error.message : String(error)}`,
@@ -2010,6 +2044,18 @@ export class BrowserFbiClient {
         error,
       );
     }
+
+    /**
+     * Conteneur des résultats résolu APRÈS la soumission (2026-10-07) : le
+     * tableau DataTables `#rechercherDerogationAjax` n'existe qu'une fois
+     * les résultats chargés — résolu avant, il n'était jamais trouvé
+     * (`derogationContainerFound: false` à CHAQUE exécution connue) et la
+     * lecture retombait sur la page entière. Constaté ce jour depuis le
+     * worker local : 3 lignes lues, toutes vides (`rawRowSample: [{}, {},
+     * {}]`), 0 dérogation alors que 84 sont connues.
+     */
+    const { scope, found: derogationContainerFound } = await this.waitForDerogationScope(page);
+    const tableDiagnostic = await this.describeTables(page);
 
     const detailDeadlineAt = Date.now() + this.derogationDetailBudgetMs;
     const { rows: normalized, pageCount, rawRowCount, lengthSelect, rawRowSample, pageTitleAtFirstRead } = await this.collectAllDerogationPages(page, scope, detailDeadlineAt);
@@ -2060,6 +2106,7 @@ export class BrowserFbiClient {
       rawRowSample,
       numeroValueBeforeClear,
       derogationContainerFound,
+      tables: tableDiagnostic,
     });
 
     return result;
