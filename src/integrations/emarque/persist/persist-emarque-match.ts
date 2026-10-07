@@ -170,6 +170,8 @@ async function insertParticipants(
   clubTeamSide: TeamSide | null,
   /** `matches.team_id` du match d'origine — transmis à `autoProvisionLicencieId` pour rattacher le·la nouveau·elle licencié·e à son équipe dès sa création (docs/TEAMS.md). `null` si le match n'a pas d'équipe interne connue. */
   teamId: string | null,
+  /** Faux si la lecture a une erreur qualité (revue humaine requise) : aucune fiche licencié créée à partir d'une lecture douteuse. */
+  allowAutoProvision: boolean,
 ): Promise<{ linked: number; unlinked: number; byKey: Map<string, string> }> {
   const byKey = new Map<string, string>();
   let linked = 0;
@@ -177,14 +179,18 @@ async function insertParticipants(
   const nameCache: { byKey: Map<string, string[]> | null } = { byKey: null };
 
   for (const player of players) {
-    let licencieId = await findLicencieIdByLicense(supabase, clubId, player.licenseNumber);
     const isClubSide = clubTeamSide !== null && player.teamSide === clubTeamSide;
+    // Camp adverse : jamais rattaché à un licencié du club (retour du club,
+    // 2026-10-07 : joueurs de Palavas rattachés, sur le n°9509, aux fiches
+    // créées par une ancienne lecture qui mélangeait les deux équipes).
+    const isOpponentSide = clubTeamSide !== null && !isClubSide;
+    let licencieId = isOpponentSide ? null : await findLicencieIdByLicense(supabase, clubId, player.licenseNumber);
 
     if (!licencieId && isClubSide && !player.licenseNumber) {
       licencieId = await findLicencieIdByName(supabase, clubId, player, nameCache);
     }
 
-    if (!licencieId && isClubSide) {
+    if (!licencieId && isClubSide && allowAutoProvision) {
       licencieId = await autoProvisionLicencieId(supabase, clubId, player, teamId);
     }
 
@@ -435,7 +441,7 @@ export async function persistEmarqueMatchData(supabase: Client, params: PersistE
   const matchTeamId: string | null = matchRow?.team_id ?? null;
 
   try {
-    const { linked, unlinked, byKey } = await insertParticipants(supabase, clubId, matchId, importId, data.players, clubTeamSide, matchTeamId);
+    const { linked, unlinked, byKey } = await insertParticipants(supabase, clubId, matchId, importId, data.players, clubTeamSide, matchTeamId, statusFromWarnings(data) === "imported");
     const { duplicatesSkipped } = await insertPlayerStats(supabase, clubId, matchId, data.playerStats, byKey);
     await insertCoaches(supabase, clubId, matchId, importId, data.coaches);
     await insertOfficials(supabase, clubId, matchId, importId, data.officials);

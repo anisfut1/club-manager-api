@@ -629,4 +629,27 @@ describe("persistEmarqueMatchData — auto-provisionnement des licenciés (deman
     expect(supabase._inserted.licencies).toBeUndefined();
     expect(supabase._inserted.match_participants[0]).toMatchObject({ licencie_id: "licencie-deja-la" });
   });
+
+  it("ne rattache jamais un joueur du camp ADVERSE à un licencié du club, même si sa licence y figure (retour du club, 2026-10-07, n°9509)", async () => {
+    const supabase = makeFakeSupabase({ isHome: false, licenciesByLicense: { JN870663: ["fiche-erronee"] } });
+    const data = buildData({ players: [buildHomePlayer({ teamSide: "home" })] });
+
+    const result = await persistEmarqueMatchData(supabase, { ...BASE_PARAMS, data });
+
+    expect(result.participantsUnlinked).toBe(1);
+    expect(supabase._inserted.match_participants[0]).toMatchObject({ licencie_id: null });
+  });
+
+  it("ne crée aucune fiche licencié à partir d'une lecture à revoir (erreur qualité)", async () => {
+    const supabase = makeFakeSupabase({ isHome: true });
+    const data = buildData({
+      players: [buildHomePlayer()],
+      quality: { warnings: [{ code: "SCORE_MISMATCH", message: "test", severity: "error" }], overallConfidence: 70 },
+    });
+
+    const result = await persistEmarqueMatchData(supabase, { ...BASE_PARAMS, data });
+
+    expect(result.participantsUnlinked).toBe(1);
+    expect(supabase._inserted.licencies).toBeUndefined();
+  });
 });
