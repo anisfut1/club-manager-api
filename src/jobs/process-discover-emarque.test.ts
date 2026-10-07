@@ -17,13 +17,22 @@ vi.mock("../integrations/fbi/browser-client.js", () => ({
     detachSession = closeSessionMock;
     exportSessionState = exportSessionStateMock;
     lastTrace = null;
+    get lastSeasonOption() {
+      return lastSeasonOptionValue;
+    }
   },
 }));
+
+let lastSeasonOptionValue: { label: string; value: string } | null = null;
 
 const exportSessionStateMock = vi.fn(async () => "{\"cookies\":[]}");
 const saveFbiSavedSessionMock = vi.fn();
 const saveFbiSessionTraceMock = vi.fn();
+const loadFbiSeasonIdMock = vi.fn(async (): Promise<string | null> => null);
+const saveFbiSeasonIdMock = vi.fn();
 vi.mock("../integrations/fbi/fbi-diagnostics.js", () => ({
+  loadFbiSeasonId: loadFbiSeasonIdMock,
+  saveFbiSeasonId: saveFbiSeasonIdMock,
   loadFbiSavedSession: vi.fn(async () => null),
   saveFbiSavedSession: saveFbiSavedSessionMock,
   saveFbiSessionTrace: saveFbiSessionTraceMock,
@@ -163,6 +172,8 @@ function makeFakeSupabase(options: {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  lastSeasonOptionValue = null;
+  loadFbiSeasonIdMock.mockResolvedValue(null);
 });
 
 describe("processDiscoverEmarqueJob", () => {
@@ -355,6 +366,51 @@ describe("processDiscoverEmarqueJob", () => {
     expect(saveFbiSessionTraceMock).toHaveBeenLastCalledWith(supabase, expect.objectContaining({ clubId: "club-1", via: "direct", outcome: expect.stringContaining("1 pas encore disponible") }));
     expect(closeSessionMock).toHaveBeenCalledOnce();
     expect(saveFbiSavedSessionMock).not.toHaveBeenCalled();
+  });
+
+  describe("identifiant de saison FBI en cache (2026-10-07 : moins de 8 s entre connexion et téléchargement)", () => {
+    const playedMatch = { id: "match-1", club_id: "club-1", numero: "2813", match_datetime: "2026-10-03T18:00:00.000Z" };
+
+    it("passe l'identifiant en cache à la recherche, sans le réenregistrer", async () => {
+      getFbiCredentialsMock.mockResolvedValue({ username: "clubxxxx", password: "correct" });
+      loginMock.mockResolvedValue({ context: {}, page: {} });
+      loadFbiSeasonIdMock.mockResolvedValue("42");
+      findEmarqueDocumentsMock.mockResolvedValue({ documents: [], diagnostic: "[info, pas une erreur] Rencontre 2813 trouvée sur FBI mais sans e-Marque téléchargeable pour l'instant (colonne EM vide)." });
+      const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [] };
+
+      await processDiscoverEmarqueJob(makeFakeSupabase({ match: playedMatch, recorders }), baseJob());
+
+      expect(loadFbiSeasonIdMock).toHaveBeenCalledWith(expect.anything(), "2026-2027");
+      expect(findEmarqueDocumentsMock).toHaveBeenCalledWith(expect.anything(), "2813", "2026-2027", null, "42");
+      expect(saveFbiSeasonIdMock).not.toHaveBeenCalled();
+    });
+
+    it("enregistre l'identifiant lu sur FBI quand il n'était pas en cache", async () => {
+      getFbiCredentialsMock.mockResolvedValue({ username: "clubxxxx", password: "correct" });
+      loginMock.mockResolvedValue({ context: {}, page: {} });
+      findEmarqueDocumentsMock.mockImplementation(async () => {
+        lastSeasonOptionValue = { label: "2026-2027", value: "42" };
+        return { documents: [], diagnostic: null };
+      });
+      const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [] };
+
+      await processDiscoverEmarqueJob(makeFakeSupabase({ match: playedMatch, recorders }), baseJob());
+
+      expect(findEmarqueDocumentsMock).toHaveBeenCalledWith(expect.anything(), "2813", "2026-2027", null, null);
+      expect(saveFbiSeasonIdMock).toHaveBeenCalledWith(expect.anything(), "2026-2027", "42");
+    });
+
+    it("rencontre introuvable avec l'identifiant en cache : cache invalidé (relu sur FBI au passage suivant)", async () => {
+      getFbiCredentialsMock.mockResolvedValue({ username: "clubxxxx", password: "correct" });
+      loginMock.mockResolvedValue({ context: {}, page: {} });
+      loadFbiSeasonIdMock.mockResolvedValue("41");
+      findEmarqueDocumentsMock.mockResolvedValue({ documents: [], diagnostic: "aucune rencontre trouvée" });
+      const recorders: Recorders = { matchUpdates: [], jobUpdates: [], documentInserts: [], statusUpserts: [] };
+
+      await processDiscoverEmarqueJob(makeFakeSupabase({ match: playedMatch, recorders }), baseJob());
+
+      expect(saveFbiSeasonIdMock).toHaveBeenCalledWith(expect.anything(), "2026-2027", "");
+    });
   });
 
   describe("une seule connexion FBI pour plusieurs matchs du club (2026-10-06)", () => {

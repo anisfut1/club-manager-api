@@ -4,7 +4,7 @@ import type { FbiJobRow } from "../db/types.js";
 import { getFbiCredentials } from "../integrations/fbi/credentials-store.js";
 import { BrowserFbiClient, type BrowserFbiSession } from "../integrations/fbi/browser-client.js";
 import { fbiProxySettings, launchServerlessBrowser } from "../integrations/fbi/browser-launcher.js";
-import { saveFbiSessionTrace } from "../integrations/fbi/fbi-diagnostics.js";
+import { loadFbiSeasonId, saveFbiSeasonId, saveFbiSessionTrace } from "../integrations/fbi/fbi-diagnostics.js";
 import { classifyFbiLoginStatus, FbiError } from "../integrations/fbi/errors.js";
 import { inferMatchDocumentType, mimeTypeForFileName } from "../integrations/fbi/document-type.js";
 import { looksLikeZip } from "../integrations/fbi/emarque-search.js";
@@ -180,7 +180,15 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
   // était téléchargée 6,4 s après la connexion (14:21, succès) ; avec le
   // « rythme humain », la coupure arrivait avant la recherche (14:45, 17:48,
   // 19:07). `humanPacing` reste disponible mais désactivé.
-  const client = new BrowserFbiClient({ baseUrl: getEnv().FBI_BASE_URL, browser });
+  //
+  // Session « légère » (2026-10-07, trace 06:25 UTC) : après la connexion, les
+  // scripts de l'accueil lançaient 4 XHR (≈ 2 s chacune) et le téléchargement
+  // partait à 10,2 s — juste après la coupure. La recherche et le
+  // téléchargement n'ont besoin d'aucun script de FBI (requêtes `fetch` et
+  // navigation directe), et l'identifiant de saison vient du cache.
+  const client = new BrowserFbiClient({ baseUrl: getEnv().FBI_BASE_URL, browser, lightSession: true });
+  const seasonCache: SeasonCache = { label: resolveSeasonLabel(target.match.match_datetime), id: null };
+  seasonCache.id = await loadFbiSeasonId(supabase, seasonCache.label);
   let session: BrowserFbiSession;
 
   try {
@@ -224,7 +232,7 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
     const remainingMs = () => invocationStartedAt + (options.invocationBudgetMs ?? INVOCATION_BUDGET_MS) - Date.now();
 
     while (current) {
-      const outcome = await discoverWithDeadline(supabase, client, session, current.job, current.target, Math.max(1_000, Math.min(matchTimeoutMs, remainingMs())));
+      const outcome = await discoverWithDeadline(supabase, client, session, current.job, current.target, seasonCache, Math.max(1_000, Math.min(matchTimeoutMs, remainingMs())));
       tally[outcome] += 1;
       if (current.job.id === job.id) firstSucceeded = outcome === "succeeded";
       else options.onSessionJobDone?.(outcome === "succeeded");
@@ -256,6 +264,8 @@ export async function processDiscoverEmarqueJob(supabase: DbClient, job: FbiJobR
     // par FBI (constaté 18:38 UTC), la conserver n'apporte rien.
     await client.closeSession(session);
     await browser.close();
+    if (client.lastSeasonOption && client.lastSeasonOption.value !== seasonCache.id) await saveFbiSeasonId(supabase, client.lastSeasonOption.label, client.lastSeasonOption.value);
+    else if (seasonCache.invalidated) await saveFbiSeasonId(supabase, seasonCache.label, "");
     await saveFbiSessionTrace(supabase, {
       clubId: job.club_id,
       trace: client.lastTrace,
@@ -288,6 +298,18 @@ async function deferRemainingClubJobs(supabase: DbClient, clubId: string, option
 
 type DiscoverOutcome = "succeeded" | "not_yet" | "error";
 
+/**
+ * Identifiant FBI de la saison en cache (voir `loadFbiSeasonId`). Recherche
+ * sans résultat avec l'identifiant en cache → cache invalidé : le passage
+ * suivant relit la saison sur FBI (un identifiant périmé ne bloque jamais
+ * un match plus d'un passage).
+ */
+interface SeasonCache {
+  label: string;
+  id: string | null;
+  invalidated?: boolean;
+}
+
 /** `discoverWithSession` borné dans le temps : délai écoulé → créneau suivant, issue « error » (fin de session). */
 async function discoverWithDeadline(
   supabase: DbClient,
@@ -295,6 +317,7 @@ async function discoverWithDeadline(
   session: BrowserFbiSession,
   job: FbiJobRow,
   target: DiscoverTarget,
+  seasonCache: SeasonCache,
   timeoutMs: number,
 ): Promise<DiscoverOutcome> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -302,7 +325,7 @@ async function discoverWithDeadline(
     timer = setTimeout(() => resolve("timeout"), timeoutMs);
   });
   try {
-    const result = await Promise.race([discoverWithSession(supabase, client, session, job, target), timedOut]);
+    const result = await Promise.race([discoverWithSession(supabase, client, session, job, target, seasonCache), timedOut]);
     if (result !== "timeout") return result;
   } finally {
     clearTimeout(timer);
@@ -315,13 +338,23 @@ async function discoverWithDeadline(
 }
 
 /** Recherche + téléchargement d'UN match dans une session FBI déjà ouverte — gère lui-même son issue (succès, créneau suivant). */
-async function discoverWithSession(supabase: DbClient, client: BrowserFbiClient, session: BrowserFbiSession, job: FbiJobRow, target: DiscoverTarget): Promise<DiscoverOutcome> {
+async function discoverWithSession(
+  supabase: DbClient,
+  client: BrowserFbiClient,
+  session: BrowserFbiSession,
+  job: FbiJobRow,
+  target: DiscoverTarget,
+  seasonCache: SeasonCache,
+): Promise<DiscoverOutcome> {
   const { match, division } = target;
   try {
     const season = resolveSeasonLabel(match.match_datetime);
-    const { documents, diagnostic } = await client.findEmarqueDocuments(session, match.numero, season, division);
+    const seasonIdHint = season === seasonCache.label ? seasonCache.id : null;
+    const { documents, diagnostic } = await client.findEmarqueDocuments(session, match.numero, season, division, seasonIdHint);
 
     if (documents.length === 0) {
+      // « Trouvée sur FBI mais sans e-Marque » : l'identifiant de saison était bon.
+      if (seasonIdHint && !diagnostic?.includes("trouvée sur FBI")) seasonCache.invalidated = true;
       /**
        * Le diagnostic riche (trace/champs/HTML) est persisté dans
        * `last_error` MÊME si ce n'est pas une vraie erreur (§ "Vingt-

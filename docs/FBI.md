@@ -3934,3 +3934,18 @@ FBI laisse donc environ 8 s après chaque connexion avant de couper l'adresse. L
 Même sans pauses et depuis une adresse Vercel neuve (`connexion.fbi` en 200), l'adresse est coupée 0,4 s après `POST /fbi/identification.fbi`. Le premier fichier JS de l'accueil part déjà en `ERR_CONNECTION_TIMED_OUT`. Le délai avant coupure a diminué au fil de la journée : 6 à 9 s, puis 0,4 s. FBI semble réagir désormais immédiatement à toute connexion automatique de ce compte.
 
 Interrupteur général : `platform_settings.fbi_paused_until`, une date ISO lue par `fbiPausedUntil`. Avant cette date, ni `/internal/cron/fbi-jobs` ni `POST .../fbi/process-jobs` ne se connectent à FBI. Il est posé au 2026-10-07 06:00 UTC pour laisser retomber la protection.
+
+### Session « légère » + saison en cache (2026-10-07)
+
+Trace du 2026-10-07 06:25 UTC : connexion à 2,1 s, puis les scripts de
+l'accueil lancent 4 XHR (≈ 2 s chacune) ; la recherche ne part qu'après et le
+téléchargement (10,2 s) tombe juste après la coupure de FBI (≈ 8 s après la
+connexion). Correctifs, e-Marque uniquement :
+
+- `BrowserFbiClient({ lightSession: true })` : une fois sur `accueil.fbi`,
+  plus aucun script, style ni XHR de FBI (aborted). La recherche et le
+  téléchargement passent par `fetch` depuis la page (type `fetch`, non bloqué).
+- identifiant FBI de la saison en cache dans `platform_settings`
+  (`fbi_season_id:<saison>`) : plus de lecture de l'écran de recherche
+  (≈ 1,7 s). Rencontre introuvable avec l'identifiant en cache → cache vidé,
+  relu sur FBI au passage suivant.

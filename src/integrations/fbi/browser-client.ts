@@ -21,6 +21,15 @@ const FBI_IN_PAGE_DOWNLOAD_TIMEOUT_MS = 40_000;
 const FBI_NAVIGATION_DOWNLOAD_TIMEOUT_MS = 30_000;
 const FBI_NODE_REQUEST_TIMEOUT_MS = 20_000;
 const SKIPPED_RESOURCE_TYPES = new Set(["image", "font", "media"]);
+/**
+ * Session « légère » (récupération e-Marque, 2026-10-07) : une fois la page
+ * d'accueil atteinte, ses scripts, styles et XHR ne sont plus chargés. Trace
+ * du 07/10 06:25 : 4 XHR de l'accueil (≈ 2 s chacune) occupaient les
+ * connexions du navigateur et retardaient la recherche de 4 s — FBI coupe
+ * l'adresse ≈ 8 s après la connexion. Nos propres requêtes (type `fetch`)
+ * passent toujours.
+ */
+const SKIPPED_AFTER_LOGIN_TYPES = new Set(["script", "stylesheet", "xhr"]);
 
 /**
  * Identité du navigateur auprès de FBI (2026-10-06). Par défaut, Chrome sans
@@ -142,6 +151,8 @@ export interface BrowserFbiClientOptions {
   browser: Browser;
   /** Rythme humain (pauses, saisie caractère par caractère, souris) — voir `humanPause`. */
   humanPacing?: boolean;
+  /** Après la connexion, plus aucun script/style/XHR de FBI — voir `SKIPPED_AFTER_LOGIN_TYPES`. */
+  lightSession?: boolean;
   /** Délai après une action de navigation, avant de considérer la page stabilisée (ms). Les apps Java legacy type FBI n'utilisent pas toujours des transitions détectables par networkidle. */
   navigationSettleMs?: number;
   /**
@@ -253,8 +264,15 @@ export class BrowserFbiClient {
     await page.waitForTimeout(minMs + Math.random() * (maxMs - minMs));
   }
 
+  /** Voir `SKIPPED_AFTER_LOGIN_TYPES`. */
+  private readonly lightSession: boolean;
+
+  /** Saison FBI (libellé + identifiant) lue pendant la dernière recherche — mise en cache par l'appelant. */
+  lastSeasonOption: { label: string; value: string } | null = null;
+
   constructor(options: BrowserFbiClientOptions) {
     this.humanPacing = options.humanPacing ?? false;
+    this.lightSession = options.lightSession ?? false;
     this.baseUrl = options.baseUrl;
     this.browser = options.browser;
     this.navigationSettleMs = options.navigationSettleMs ?? 500;
@@ -408,9 +426,14 @@ export class BrowserFbiClient {
     // Moins de connexions vers FBI (2026-10-06 : FBI coupe au-delà d'un
     // certain volume) : images, polices et médias ne servent à rien ici.
     // Les feuilles de style restent chargées (visibilité des éléments).
-    await context.route("**/*", (route) =>
-      SKIPPED_RESOURCE_TYPES.has(route.request().resourceType()) ? route.abort() : route.continue(),
-    );
+    let landed = false;
+    await context.route("**/*", (route) => {
+      const request = route.request();
+      const type = request.resourceType();
+      if (type === "document" && /\/accueil\.fbi/.test(request.url())) landed = true;
+      const skip = SKIPPED_RESOURCE_TYPES.has(type) || (this.lightSession && landed && SKIPPED_AFTER_LOGIN_TYPES.has(type));
+      return skip ? route.abort() : route.continue();
+    });
     const page = await context.newPage();
 
     try {
@@ -535,6 +558,7 @@ export class BrowserFbiClient {
     matchNumber: string,
     season: string | null = null,
     division: string | null = null,
+    seasonIdHint: string | null = null,
   ): Promise<{ documents: { url: string; fileName: string }[]; diagnostic: string | null }> {
     const { page } = session;
 
@@ -547,7 +571,7 @@ export class BrowserFbiClient {
     // lu par `readSeasonOptions`. Le parcours historique reste le secours.
     await this.humanPause(page, 1500, 3000);
     let navigation = "écran de recherche non ouvert (recherche directe)";
-    let direct = await this.tryDirectEmarqueSearch(session, matchNumber, season, division);
+    let direct = await this.tryDirectEmarqueSearch(session, matchNumber, season, division, seasonIdHint);
     if (direct.kind === "unavailable") {
       const firstAttempt = direct.note;
       navigation = `${await this.tryNavigateToSearchScreen(page)} (recherche directe sans l'écran : ${firstAttempt})`;
@@ -771,14 +795,17 @@ export class BrowserFbiClient {
     matchNumber: string,
     season: string | null,
     division: string | null,
+    seasonIdHint: string | null = null,
   ): Promise<
     | { kind: "document"; document: { url: string; fileName: string }; note: string }
     | { kind: "no_emarque" | "not_found" | "unavailable"; note: string }
   > {
     const { page, context } = session;
     try {
-      const seasonOptions = await this.readSeasonOptions(page);
+      // Identifiant de saison déjà connu (mis en cache) : pas besoin de relire l'écran de recherche (≈ 1,7 s).
+      const seasonOptions = seasonIdHint && season ? [{ value: seasonIdHint, label: season, selected: true }] : await this.readSeasonOptions(page);
       const seasonOption = (season ? seasonOptions.find((o) => o.label.includes(season)) : undefined) ?? seasonOptions.find((o) => o.selected && o.value);
+      if (seasonOption?.value && !seasonIdHint) this.lastSeasonOption = { label: season ?? seasonOption.label, value: seasonOption.value };
       if (!seasonOption?.value) return { kind: "unavailable", note: `saison "${season ?? "?"}" introuvable dans le formulaire (${seasonOptions.length} options)` };
 
       const criteria = { seasonId: seasonOption.value, matchNumber };

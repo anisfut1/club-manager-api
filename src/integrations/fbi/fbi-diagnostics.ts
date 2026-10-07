@@ -169,3 +169,34 @@ export async function fbiPausedUntil(supabase: DbClient): Promise<Date | null> {
     return null;
   }
 }
+
+/**
+ * Identifiant FBI de la saison (2026-10-07), mis en cache dans
+ * `platform_settings` (`fbi_season_id:<libellé>`) : il ne change pas de la
+ * saison, et le relire sur l'écran de recherche coûte ≈ 1,7 s dans la courte
+ * fenêtre que FBI laisse après la connexion. Jamais bloquant : illisible =
+ * pas de cache (la saison est relue sur FBI).
+ */
+function seasonIdKey(seasonLabel: string): string {
+  return `fbi_season_id:${seasonLabel}`;
+}
+
+export async function loadFbiSeasonId(supabase: DbClient, seasonLabel: string | null): Promise<string | null> {
+  if (!seasonLabel) return null;
+  try {
+    const { data } = await supabase.from("platform_settings").select("value").eq("key", seasonIdKey(seasonLabel)).maybeSingle();
+    return data?.value ? data.value : null;
+  } catch {
+    return null;
+  }
+}
+
+/** `value` vide = cache invalidé (identifiant à relire sur FBI au prochain passage). */
+export async function saveFbiSeasonId(supabase: DbClient, seasonLabel: string, value: string): Promise<void> {
+  try {
+    const { error } = await supabase.from("platform_settings").upsert({ key: seasonIdKey(seasonLabel), value, updated_at: new Date().toISOString() }, { onConflict: "key" });
+    if (error) logError("Enregistrement de l'identifiant de saison FBI échoué", error, { seasonLabel });
+  } catch (error) {
+    logError("Enregistrement de l'identifiant de saison FBI échoué", error, { seasonLabel });
+  }
+}
