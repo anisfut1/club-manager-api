@@ -35,6 +35,11 @@ if (!existsSync(ENV_FILE)) {
   process.exit(1);
 }
 process.loadEnvFile(ENV_FILE);
+// Sans la clé de chiffrement (variable « Sensitive » sur Vercel, illisible) :
+// mot de passe FBI saisi au démarrage, gardé en mémoire le temps du processus.
+// Clé factice uniquement pour la validation de configuration (jamais utilisée).
+const ASK_PASSWORD = !process.env.FBI_CREDENTIALS_ENCRYPTION_KEY;
+if (ASK_PASSWORD) process.env.FBI_CREDENTIALS_ENCRYPTION_KEY = Buffer.alloc(32).toString("base64");
 process.env.BROWSER_FBI_ENABLED = "true";
 process.env.FBI_LOCAL_BROWSER = "1";
 // Requis par la validation de configuration de l'API, inutilisés ici.
@@ -56,6 +61,7 @@ const { getFbiCredentials } = await import("../../src/integrations/fbi/credentia
 const { launchServerlessBrowser } = await import("../../src/integrations/fbi/browser-launcher.js");
 const { BrowserFbiClient } = await import("../../src/integrations/fbi/browser-client.js");
 const selectors = await import("../../src/integrations/fbi/selectors.js");
+const { ask } = await import("../fbi-session-worker/prompt.js");
 type Session = Awaited<ReturnType<InstanceType<typeof BrowserFbiClient>["login"]>>;
 
 const supabase = createServiceSupabaseClient();
@@ -84,6 +90,15 @@ async function resolveClubId(): Promise<string> {
 }
 
 const clubId = await resolveClubId();
+
+let typedCredentials: { username: string; password: string } | null = null;
+if (ASK_PASSWORD) {
+  const { data } = await supabase.from("fbi_credentials").select("username").eq("club_id", clubId).maybeSingle();
+  const username = data?.username || (await ask("Identifiant FBI : ", false));
+  console.log(`Identifiant FBI : ${username}`);
+  const password = await ask("Mot de passe FBI (masqué, gardé en mémoire seulement) : ", true);
+  typedCredentials = { username, password };
+}
 const browser = await launchServerlessBrowser();
 const client = new BrowserFbiClient({ baseUrl: BASE_URL, browser, lightSession: true });
 let session: Session | null = null;
@@ -116,7 +131,7 @@ async function checkSession(): Promise<"authenticated" | "expired" | "network_er
 
 /** UNE connexion, sans nouvel essai. */
 async function loginOnce(): Promise<boolean> {
-  const credentials = await getFbiCredentials(supabase, clubId);
+  const credentials = typedCredentials ?? (await getFbiCredentials(supabase, clubId));
   if (!credentials) {
     record("login", { ok: false, error: "aucun identifiant FBI" }, "connexion impossible : aucun identifiant FBI en base");
     return false;

@@ -24,6 +24,12 @@ FBI_CREDENTIALS_ENCRYPTION_KEY=...
 Ces clés donnent accès à la base : elles restent sur ce poste, jamais dans un
 message ni un dépôt.
 
+`FBI_CREDENTIALS_ENCRYPTION_KEY` illisible (variable « Sensitive » sur Vercel) :
+ne pas la mettre. Le worker demande alors le mot de passe FBI au démarrage
+(masqué, gardé en mémoire le temps du processus, jamais écrit). L'identifiant
+est lu en base. `SUPABASE_SERVICE_ROLE_KEY` : Supabase → Project Settings → API
+Keys → `service_role` → Reveal.
+
 ## Lancer
 
 ```bash
