@@ -1,5 +1,5 @@
 import type { DocumentExtractor } from "../extractors/types.js";
-import { FEUILLEMATCH_PAGE1, FEUILLEMATCH_ROSTER, OFFICIALS_TABLE_PAGE2, ROSTER_HEADER_GAP_FRACTION_RANGE, ROSTER_TABLE_SCAN_ZONE, type RosterLayout } from "../layout/feuillematch-layout.js";
+import { FEUILLEMATCH_PAGE1, FEUILLEMATCH_ROSTER, OFFICIALS_TABLE_PAGE2, ROSTER_FIRST_ROW_FRACTION_RANGE, ROSTER_HEADER_GAP_FRACTION_RANGE, ROSTER_TABLE_SCAN_ZONE, type RosterLayout } from "../layout/feuillematch-layout.js";
 import { locateTeamTables } from "../layout/table-structure.js";
 import { parseFinalResultLine, parsePouleLabel, parseRencontreHeaderLine } from "../normalizers/header-fields.js";
 import { extractIsolatedLicenseNumber, extractJerseyNumber, extractLicenseNumber, findLicenseMatch, splitUppercaseAbbreviatedName } from "../normalizers/text-fields.js";
@@ -79,8 +79,10 @@ async function readTeamRosterAndCoaches(
 
     let licenseNumber: string | null = null;
     let rowLayout = layout ?? layouts[0]!;
+    const narrowTexts = new Map<RosterLayout, string>();
     for (const candidate of layout ? [layout] : layouts) {
       const licenseText = (await extractor.extractZone(1, candidate.cellZone(rowTop, rowBottom, "licenseNumber"))).text;
+      narrowTexts.set(candidate, licenseText);
       licenseNumber = extractIsolatedLicenseNumber(licenseText);
       if (licenseNumber) {
         rowLayout = candidate;
@@ -101,6 +103,27 @@ async function readTeamRosterAndCoaches(
     if (!licenseNumber && coachRoleMatch) {
       const wideLicenseText = (await extractor.extractZone(1, rowLayout.licenseNumberWideZone(rowTop, rowBottom))).text;
       licenseNumber = extractLicenseNumber(wideLicenseText);
+    }
+
+    // Repli joueur (2026-10-07, rencontres n°15, n°5, n°1...) : la cellule
+    // étroite double ou rogne un caractère (« BCI148595 », « 276838 ») alors
+    // que la zone élargie lit la licence entière (« BCI48595 », « VTO76838 »).
+    // Retenue seulement si son préfixe est lu directement en lettres ET si
+    // ses derniers chiffres concordent avec la cellule étroite — jamais une
+    // licence inventée à partir du bruit de la colonne voisine.
+    if (!licenseNumber && !coachRoleMatch) {
+      for (const candidate of layout ? [layout] : layouts) {
+        const wideText = (await extractor.extractZone(1, candidate.licenseNumberWideZone(rowTop, rowBottom))).text;
+        const wideLicense = extractIsolatedLicenseNumber(wideText, { requireLetterPrefix: true });
+        if (!wideLicense) continue;
+        const narrowDigits = (narrowTexts.get(candidate) ?? "").replace(/\D/g, "");
+        const tail = Math.min(5, narrowDigits.length);
+        if (tail < 4 || !wideLicense.endsWith(narrowDigits.slice(-tail))) continue;
+        licenseNumber = wideLicense;
+        rowLayout = candidate;
+        layout = candidate;
+        break;
+      }
     }
 
     if (!licenseNumber) continue;
@@ -201,7 +224,7 @@ export async function parseFeuillematch(extractor: DocumentExtractor): Promise<F
   // club, 2026-09-29 : la position de l'équipe B dépend du nombre de
   // lignes de l'équipe A au-dessus, qui varie d'un match à l'autre.
   const rosterLines = await extractor.detectHorizontalLines(1, ROSTER_TABLE_SCAN_ZONE);
-  const rosterTables = locateTeamTables(rosterLines, ROSTER_HEADER_GAP_FRACTION_RANGE);
+  const rosterTables = locateTeamTables(rosterLines, ROSTER_HEADER_GAP_FRACTION_RANGE, ROSTER_FIRST_ROW_FRACTION_RANGE);
 
   const { players: homeRoster, coaches: homeCoaches } = rosterTables[0]
     ? await readTeamRosterAndCoaches(extractor, "home", FEUILLEMATCH_ROSTER.teamA, rosterTables[0].rowBoundaries)

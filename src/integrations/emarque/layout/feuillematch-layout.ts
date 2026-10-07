@@ -144,6 +144,13 @@ const LAYOUT_TEAM_B = buildTeamRoster(ROSTER_TEAM_B);
  */
 export const ROSTER_HEADER_GAP_FRACTION_RANGE: readonly [number, number] = [120 / ROSTER_REF_HEIGHT, 170 / ROSTER_REF_HEIGHT];
 
+/**
+ * Hauteur (fraction de page) d'une ligne de joueur, juste sous l'en-tête :
+ * ~58 px mesurés (rencontres n°15, n°13, 2026-10-07) — marge large, jamais
+ * les 10-35 px des cases de score qui créaient un faux en-tête.
+ */
+export const ROSTER_FIRST_ROW_FRACTION_RANGE: readonly [number, number] = [40 / ROSTER_REF_HEIGHT, 80 / ROSTER_REF_HEIGHT];
+
 /** Zone couvrant les deux jeux de colonnes (équipe A et B réunies), page entière — pour `DocumentExtractor#detectHorizontalLines`. */
 export const ROSTER_TABLE_SCAN_ZONE: ZoneFraction = {
   xFrac: Math.min(ROSTER_COLUMNS_TEAM_A.licenseNumber[0], ROSTER_COLUMNS_TEAM_B.licenseNumber[0]) / ROSTER_REF_WIDTH,

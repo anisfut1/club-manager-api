@@ -7,7 +7,7 @@ import { computeOverallConfidence, computeQualityWarnings, computeStatsConsisten
 import { emarqueMatchDataSchema } from "../schemas/emarque-match-data.js";
 import type { EMarqueMatchData, EMarqueQualityWarning } from "../types.js";
 
-export const PARSER_VERSION = "2026.10.2";
+export const PARSER_VERSION = "2026.10.7";
 
 /**
  * Dernière barrière avant retour au code appelant (puis écriture en base) :

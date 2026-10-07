@@ -44,12 +44,22 @@ export interface DetectedTeamTable {
  * confirmé sur les deux échantillons réels utilisés pour calibrer cette
  * détection).
  */
-export function locateTeamTables(lines: number[], headerGapRange: readonly [number, number]): DetectedTeamTable[] {
+export function locateTeamTables(lines: number[], headerGapRange: readonly [number, number], firstRowRange?: readonly [number, number]): DetectedTeamTable[] {
   const headerStartIndices: number[] = [];
 
   for (let i = 0; i < lines.length - 1; i += 1) {
     const gap = lines[i + 1]! - lines[i]!;
-    if (gap >= headerGapRange[0] && gap <= headerGapRange[1]) headerStartIndices.push(i);
+    if (gap < headerGapRange[0] || gap > headerGapRange[1]) continue;
+    // `firstRowRange` (feuillematch, 2026-10-07) : un vrai en-tête d'équipe
+    // est suivi d'une ligne de joueur. Rencontres n°13 et n°9509 : un écart
+    // de même hauteur plus haut sur la page (cases de score, lignes de 11 et
+    // 32 px dessous) créait un faux premier tableau — le vrai tableau de
+    // l'équipe A était alors lu comme celui de l'équipe B.
+    if (firstRowRange) {
+      const firstRow = lines[i + 2] !== undefined ? lines[i + 2]! - lines[i + 1]! : null;
+      if (firstRow === null || firstRow < firstRowRange[0] || firstRow > firstRowRange[1]) continue;
+    }
+    headerStartIndices.push(i);
   }
 
   return headerStartIndices.map((headerIdx, i) => {

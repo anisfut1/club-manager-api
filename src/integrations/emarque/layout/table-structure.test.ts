@@ -39,3 +39,25 @@ describe("locateTeamTables", () => {
     expect(tables[0]!.rowBoundaries).toEqual([0.2, 0.2166, 0.2331]);
   });
 });
+
+describe("locateTeamTables — faux en-tête au-dessus du tableau (rencontres n°13 / n°9509, 2026-10-07)", () => {
+  const px = (v: number) => v / 3508;
+  // Faux en-tête (cases de score) : écart 140 px suivi de lignes de 11 et 32 px,
+  // puis le vrai en-tête équipe A (140 px) suivi de lignes de joueur (58 px),
+  // puis l'en-tête équipe B.
+  const lines = [498, 638, 649, 681, 821, 879, 937, 995, 1135, 1193, 1251].map(px);
+  const header: readonly [number, number] = [px(120), px(170)];
+
+  it("sans contrôle de la première ligne : le faux en-tête crée un premier tableau", () => {
+    const tables = locateTeamTables(lines, header);
+    expect(tables).toHaveLength(3);
+    expect(tables[0]!.rowBoundaries).toHaveLength(3);
+  });
+
+  it("avec contrôle : seuls les vrais tableaux A et B sont retenus, dans l'ordre", () => {
+    const tables = locateTeamTables(lines, header, [px(40), px(80)]);
+    expect(tables).toHaveLength(2);
+    expect(tables[0]!.rowBoundaries[0]).toBeCloseTo(px(821));
+    expect(tables[1]!.rowBoundaries[0]).toBeCloseTo(px(1135));
+  });
+});

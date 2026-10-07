@@ -60,7 +60,7 @@ export function extractLicenseNumber(rawText: string): string | null {
  * correspondance position->rôle (lettre/chiffre) de façon indétectable —
  * mieux vaut `null` qu'une correction appliquée au mauvais caractère.
  */
-export function extractIsolatedLicenseNumber(rawText: string): string | null {
+export function extractIsolatedLicenseNumber(rawText: string, options: { requireLetterPrefix?: boolean } = {}): string | null {
   // Retour du club, 2026-09-29 : "faut corriger les imports des stats car
   // ca marche pas" — sur la saison 2026-2027, cette fonction ne matchait
   // plus AUCUNE licence (0/40 joueurs sur les 4 premiers matchs traités),
@@ -74,6 +74,11 @@ export function extractIsolatedLicenseNumber(rawText: string): string | null {
   // pourrait faire partie d'un nom).
   const stripped = rawText.toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (stripped.length !== 8) return null;
+  // Zone élargie (repli, voir parse-feuillematch) : préfixe lu directement
+  // comme deux lettres, jamais « corrigé » depuis un chiffre — la colonne
+  // voisine y ajoute du bruit (« 8C143352 », « 50148158 » relevés le
+  // 2026-10-07 pour BC143352 / BC148158).
+  if (options.requireLetterPrefix && !/^[A-Z]{2}/.test(stripped)) return null;
 
   const corrected = stripped
     .split("")

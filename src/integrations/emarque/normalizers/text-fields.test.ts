@@ -182,3 +182,19 @@ describe("hasCheckMark", () => {
     expect(hasCheckMark("")).toBe(false);
   });
 });
+
+describe("extractIsolatedLicenseNumber — zone élargie (requireLetterPrefix, 2026-10-07)", () => {
+  it("lit une licence entière dont le préfixe est lu en lettres", () => {
+    expect(extractIsolatedLicenseNumber("—| BCI48595", { requireLetterPrefix: true })).toBe("BC148595");
+    expect(extractIsolatedLicenseNumber("VTO76838", { requireLetterPrefix: true })).toBe("VT076838");
+  });
+
+  it("refuse un préfixe lu en chiffres (bruit de la colonne voisine), jamais « corrigé »", () => {
+    expect(extractIsolatedLicenseNumber("—| 8C143352", { requireLetterPrefix: true })).toBeNull();
+    expect(extractIsolatedLicenseNumber("—| 50148158", { requireLetterPrefix: true })).toBeNull();
+  });
+
+  it("refuse une longueur différente de 8 caractères", () => {
+    expect(extractIsolatedLicenseNumber("BCI148595", { requireLetterPrefix: true })).toBeNull();
+  });
+});
