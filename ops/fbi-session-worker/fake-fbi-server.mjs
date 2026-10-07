@@ -1,5 +1,6 @@
 // Faux FBI minimal pour tester le worker sans toucher au vrai FBI (voir README.md, « Auto-test »).
 // /__invalidate vide les sessions côté serveur ; /__stats compte les connexions.
+/* global console */
 import http from "node:http";
 import { URL } from "node:url";
 import { randomBytes } from "node:crypto";
@@ -10,6 +11,7 @@ const loginForm = page(`<form method="post" action="/fbi/identification.fbi"><in
 const sid = (req) => /JSESSIONID=([a-f0-9]+)/.exec(req.headers.cookie ?? "")?.[1];
 http.createServer((req, res) => {
   const url = new URL(req.url, "http://x");
+  console.log(new Date().toISOString(), req.method, url.pathname, url.searchParams.get("action") ?? "", /HeadlessChrome|Chrome/.exec(req.headers["user-agent"] ?? "")?.[0] ?? (req.headers["user-agent"] ?? "").slice(0, 20));
   if (url.pathname === "/__invalidate") { sessions.clear(); res.end("ok"); return; }
   if (url.pathname === "/__stats") { res.end(JSON.stringify({ logins, sessions: sessions.size })); return; }
   if (url.pathname === "/fbi/connexion.fbi") { res.setHeader("content-type", "text/html"); res.end(loginForm); return; }

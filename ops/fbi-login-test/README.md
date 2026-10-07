@@ -28,6 +28,23 @@ l'IP de sortie).
 Différences avec la production : le binaire Chromium (Playwright au lieu de
 `@sparticuz/chromium` sur Vercel) et l'adresse IP.
 
+## Étapes suivantes, une à la fois
+
+```bash
+npm run fbi:login-test -- --search 6              # connexion + UNE recherche e-Marque
+npm run fbi:login-test -- --search 6 --download   # connexion + recherche + UN téléchargement
+```
+
+Fonctions de production (`findEmarqueDocuments`, avec l'identifiant de saison
+en cache comme la production ; `downloadDocument`), une seule fois chacune ;
+rien n'est enregistré (taille et signature ZIP seulement). La trace complète
+de la session (horodatage de chaque requête) est journalisée après fermeture.
+
+Note `tsx` : il insère un utilitaire `__name` dans le code passé à
+`page.evaluate`, inconnu du navigateur ; sans correctif, la recherche « dans la
+page » échouait et le moteur basculait sur son repli Node, qui n'est pas le
+chemin de la production. Le script le définit dans la page (no-op).
+
 ## Sur le Mac
 
 ```bash

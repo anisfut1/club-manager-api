@@ -19,6 +19,7 @@
  *      connexion (chemins seulement) et de chaque sonde.
  *
  * Usage : npm run fbi:login-test -- [--interval-min 5] [--duration-min 30] [--keep-session] [--headed]
+ *         [--search <numéro> [--download]] [--season-id 1037]
  * Identifiants saisis au clavier (mot de passe masqué), jamais écrits.
  */
 import { appendFileSync } from "node:fs";
@@ -36,6 +37,12 @@ const intervalMin = numberArg("--interval-min", 5);
 const durationMin = numberArg("--duration-min", 30);
 const keepSession = args.includes("--keep-session");
 const headed = args.includes("--headed");
+/** Étapes suivantes, une à la fois : `--search <numéro>` (recherche e-Marque seule), puis `--search <numéro> --download`. */
+const searchIndex = args.indexOf("--search");
+const searchMatch = searchIndex >= 0 ? (args[searchIndex + 1] ?? "") : "";
+const download = args.includes("--download");
+/** Identifiant FBI de la saison 2026-2027, comme la production (cache `fbi_season_id:2026-2027`). */
+const seasonId = String(numberArg("--season-id", 1037));
 // Surchargeables uniquement pour l'auto-test contre le faux FBI (ops/fbi-session-worker/fake-fbi-server.mjs).
 const BASE_URL = process.env.FBI_TEST_BASE_URL || "https://extranet.ffbb.com/fbi";
 const CONTROL_HOST = process.env.FBI_TEST_CONTROL_HOST || "resultats.ffbb.com";
@@ -109,7 +116,13 @@ async function probe(label: string): Promise<boolean> {
 
 async function main(): Promise<void> {
   console.log(`Journal : ${logFile}`);
-  log("test_started", { intervalMin, durationMin, keepSession, headed, node: process.version, platform: process.platform });
+  if (download && !searchMatch) {
+    console.log("--download nécessite --search <numéro>.");
+    return;
+  }
+  const plan = ["connexion", ...(searchMatch ? ["recherche"] : []), ...(download ? ["téléchargement"] : [])];
+  console.log(`Étapes : ${plan.join(" → ")}`);
+  log("test_started", { intervalMin, durationMin, keepSession, headed, steps: plan, searchMatch: searchMatch || null, seasonId: searchMatch ? seasonId : null, node: process.version, platform: process.platform });
 
   // 1. Avant tout : FBI joignable ?
   if (!(await probe("avant"))) {
@@ -137,6 +150,13 @@ async function main(): Promise<void> {
   const originalNewContext = browser.newContext.bind(browser);
   browser.newContext = async (options) => {
     const context = await originalNewContext(options);
+    // `tsx` (esbuild, keepNames) insère `__name(...)` dans les fonctions passées
+    // à `page.evaluate` ; inconnu du navigateur, il faisait échouer la
+    // recherche/le téléchargement « dans la page » et basculer le moteur sur
+    // son repli Node (`context.request`) — PAS le chemin de la production
+    // (code groupé sans cet utilitaire). Défini ici en no-op : même chemin
+    // que la production.
+    await context.addInitScript("globalThis.__name = globalThis.__name || ((target) => target);");
     context.on("response", async (response) => {
       if (response.request().method() !== "POST" || !/identification\.fbi/.test(response.url())) return;
       const html = await response.text().catch(() => "");
@@ -174,7 +194,36 @@ async function main(): Promise<void> {
     });
   }
 
-  // 4. Aucune recherche, aucun téléchargement.
+  // 4. Par défaut aucune recherche ni téléchargement. Avec `--search` /
+  // `--download` : les fonctions de PRODUCTION (`findEmarqueDocuments`,
+  // `downloadDocument`), une seule fois chacune, rien n'est enregistré.
+  if (session && searchMatch) {
+    const searchStartedAt = new Date().toISOString();
+    try {
+      const { documents, diagnostic } = await client.findEmarqueDocuments(session, searchMatch, "2026-2027", null, seasonId);
+      log("search_finished", { startedAt: searchStartedAt, documents: documents.map((d) => d.fileName), diagnostic: diagnostic?.slice(0, 300) ?? null });
+      console.log(`[${new Date().toISOString()}] recherche       : ${documents.length} document(s) ${documents.map((d) => d.fileName).join(", ")}`);
+      if (download && documents[0]) {
+        const downloadStartedAt = new Date().toISOString();
+        try {
+          const bytes = await client.downloadDocument(session, documents[0].url);
+          const zip = bytes.subarray(0, 2).toString("latin1") === "PK";
+          log("download_finished", { startedAt: downloadStartedAt, fileName: documents[0].fileName, bytes: bytes.length, zip });
+          console.log(`[${new Date().toISOString()}] téléchargement  : ${bytes.length} octets${zip ? " (ZIP)" : ""} — non enregistré`);
+        } catch (error) {
+          const message = error instanceof Error ? error.message.split("\n")[0] : String(error);
+          log("download_finished", { startedAt: downloadStartedAt, ok: false, error: message });
+          console.log(`[${new Date().toISOString()}] téléchargement  : ÉCHEC — ${message}`);
+        }
+      } else if (download) {
+        console.log(`[${new Date().toISOString()}] téléchargement  : aucun document à télécharger`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message.split("\n")[0] : String(error);
+      log("search_finished", { startedAt: searchStartedAt, ok: false, error: message });
+      console.log(`[${new Date().toISOString()}] recherche       : ÉCHEC — ${message}`);
+    }
+  }
   // 5. Fin de session.
   if (session && !keepSession) {
     await client.closeSession(session);
@@ -185,6 +234,15 @@ async function main(): Promise<void> {
     log("session_kept", { how: "session gardée ouverte, aucune requête jusqu'à la fin du test" });
   }
   if (!keepSession) await browser.close();
+  // Trace complète de la session (connexion, recherche, téléchargement, déconnexion), horodatée —
+  // relevée après la fermeture, comme la production, pour inclure les dernières réponses.
+  if (client.lastTrace) {
+    log("session_trace", {
+      traceStartedAt: client.lastTrace.startedAt,
+      events: client.lastTrace.events.filter((e) => !e.u.includes("/static/") && e.s !== "ignoré"),
+      dropped: client.lastTrace.dropped,
+    });
+  }
 
   // 6. Sondes : immédiatement, puis toutes les `intervalMin` minutes pendant `durationMin` minutes.
   const steps = Math.floor(durationMin / intervalMin);
