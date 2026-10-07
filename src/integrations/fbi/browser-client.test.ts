@@ -680,6 +680,49 @@ describe("BrowserFbiClient.fetchAllDerogations ('je veux un bouton global qui ch
 
     await client.closeSession(session);
   });
+
+  it("ne rouvre jamais le détail d'une dérogation déjà connue et inchangée (needsDetail) — 2026-10-07, ~85 pages de détail d'affilée puis plus de réponse FBI", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    const derogations = await client.fetchAllDerogations(session, { needsDetail: () => false });
+
+    // Toutes les dérogations restent lues (tableau), seul le détail est sauté.
+    expect(derogations.map((d) => d.numero).sort()).toEqual(["1", "1", "16", "9578", "9820"]);
+    for (const derogation of derogations) expect(derogation.motif).toBeNull();
+    expect(client.getLastDerogationDetailStats()).toMatchObject({ toFetch: 0, fetched: 0, skippedUnchanged: 5, stoppedEarly: null });
+
+    await client.closeSession(session);
+  });
+
+  it("lit le détail dans UN SEUL onglet réutilisé, avec une pause entre deux pages, et rend compte de la progression", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50, derogationDetailPauseMs: 20 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+    const progress: string[] = [];
+
+    const derogations = await client.fetchAllDerogations(session, { onDetailProgress: (done, total) => progress.push(`${done}/${total}`) });
+
+    expect(derogations.every((d) => d.motif === "Gymnase indisponible ce jour-là")).toBe(true);
+    const stats = client.getLastDerogationDetailStats()!;
+    expect(stats.fetched).toBe(stats.toFetch);
+    expect(progress.at(-1)).toBe(`${stats.toFetch}/${stats.toFetch}`);
+    expect(session.context.pages()).toHaveLength(1);
+
+    await client.closeSession(session);
+  });
+
+  it("s'arrête après 3 pages de détail sans réponse exploitable au lieu d'insister — le tableau reste intégralement lu", async () => {
+    server.setRoute({ path: "/afficherDerogation.fbi", contentType: "text/html", body: "<html><body>Service indisponible</body></html>" });
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    const derogations = await client.fetchAllDerogations(session);
+
+    expect(derogations).toHaveLength(5);
+    expect(client.getLastDerogationDetailStats()).toMatchObject({ failed: 3, fetched: 0, stoppedEarly: "fbi_ne_repond_plus" });
+
+    await client.closeSession(session);
+  });
 });
 
 describe("BrowserFbiClient.respondToDerogation (ÉCRIT réellement sur FBI — demande du club, 2026-09-27 : \"je veux le faire via loutil\")", () => {

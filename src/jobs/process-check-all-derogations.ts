@@ -81,8 +81,37 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
   }
 
   try {
-    const derogations = await client.fetchAllDerogations(session);
+    /**
+     * Ce qui est déjà connu en base, lu AVANT FBI (2026-10-07) : le détail
+     * d'une dérogation (page FBI dédiée) n'est rouvert que si elle est
+     * nouvelle, si son détail manque, ou si son état / sa date de
+     * dérogation a changé dans le tableau — un club qui démarre de zéro lit
+     * donc TOUT, un club à jour ne rouvre que ce qui a bougé.
+     */
+    const { data: existingChecks, error: existingChecksError } = await supabase
+      .from("fbi_derogation_checks")
+      .select("fbi_row_key, etat, date_derogation, demandeur, motif, date_rencontre_demandee, heure_demandee, adversaire, date_reponse, acceptation, motif_refus")
+      .eq("club_id", job.club_id);
+    if (existingChecksError) throw new Error(`Lecture du détail de dérogation déjà connu échouée : ${existingChecksError.message}`);
+    const existingByRowKey = new Map((existingChecks ?? []).map((c) => [c.fbi_row_key, c]));
+
+    const needsDetail = (row: { idDerogation: string | null; etat: string | null; dateDerogation: string | null }): boolean => {
+      const existing = row.idDerogation ? existingByRowKey.get(row.idDerogation) : undefined;
+      if (!existing) return true;
+      const detailKnown = Boolean(
+        existing.demandeur || existing.motif || existing.date_rencontre_demandee || existing.heure_demandee || existing.adversaire || existing.date_reponse || existing.acceptation || existing.motif_refus,
+      );
+      return !detailKnown || existing.etat !== row.etat || existing.date_derogation !== row.dateDerogation;
+    };
+
+    const derogations = await client.fetchAllDerogations(session, {
+      needsDetail,
+      onDetailProgress: (done, total) => {
+        if (done === total || done % 5 === 0) logInfo(`Dérogations : détail ${done}/${total}`, { clubId: job.club_id, jobId: job.id });
+      },
+    });
     const passDiagnostics = client.getLastDerogationPassDiagnostics();
+    const detailStats = client.getLastDerogationDetailStats();
 
     // Scopé à la saison EN COURS (même convention que `currentSeasonStart`
     // côté /v1/clubs/:clubId/issues) — `numero` n'est PAS unique sur toute
@@ -137,12 +166,6 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
      * `fbi_row_key` (une VRAIE dérogation), jamais `match_id` (plusieurs
      * lignes possibles par rencontre depuis le round "82 vs 51").
      */
-    const { data: existingChecks, error: existingChecksError } = await supabase
-      .from("fbi_derogation_checks")
-      .select("fbi_row_key, demandeur, motif, date_rencontre_demandee, heure_demandee, adversaire, date_reponse, acceptation, motif_refus")
-      .eq("club_id", job.club_id);
-    if (existingChecksError) throw new Error(`Lecture du détail de dérogation déjà connu échouée : ${existingChecksError.message}`);
-    const existingByRowKey = new Map((existingChecks ?? []).map((c) => [c.fbi_row_key, c]));
 
     // Aucune dérogation lue alors que le club en a déjà en base : lecture FBI
     // ratée, jamais un "succès" (constaté le 2026-10-07 : 3 lignes vides lues,
@@ -262,6 +285,7 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
       foundNumeros: derogations.map((d) => `${d.numero}@${d.division}`).sort(),
       matchKeysDisponibles: Array.from(matchIdByKey.keys()).sort(),
       passDiagnostics,
+      detailStats,
     };
     await supabase.from("fbi_jobs").update({ status: "succeeded", finished_at: now, result }).eq("id", job.id);
 

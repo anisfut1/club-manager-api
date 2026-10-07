@@ -176,6 +176,12 @@ export interface BrowserFbiClientOptions {
    * cet environnement (réseau FBI bloqué), donc volontairement généreux.
    */
   derogationDetailBudgetMs?: number;
+  /**
+   * Pause entre deux pages de détail de dérogation (2026-10-07 : ~85 pages
+   * de détail ouvertes d'affilée depuis le worker local, puis FBI n'a plus
+   * répondu à cette adresse). 0 par défaut (tests) ; le worker local la fixe.
+   */
+  derogationDetailPauseMs?: number;
 }
 
 /**
@@ -225,11 +231,26 @@ export interface DerogationPassDiagnostic {
   tables?: Array<{ id: string; className: string; headers: string[]; bodyRows: number }>;
 }
 
+export interface FetchAllDerogationsOptions {
+  /** Faux = détail déjà connu et dérogation inchangée : la page de détail n'est pas rouverte. Défaut : toujours vrai. */
+  needsDetail?: (row: FbiDerogationRow) => boolean;
+  onDetailProgress?: (done: number, total: number) => void;
+}
+
+export interface DerogationDetailStats {
+  toFetch: number;
+  fetched: number;
+  failed: number;
+  skippedUnchanged: number;
+  stoppedEarly: "budget" | "fbi_ne_repond_plus" | null;
+}
+
 export class BrowserFbiClient {
   private readonly baseUrl: string;
   private readonly browser: Browser;
   private readonly navigationSettleMs: number;
   private readonly derogationDetailBudgetMs: number;
+  private readonly derogationDetailPauseMs: number;
 
   /**
    * Diagnostic de la DERNIÈRE `fetchAllDerogations` — jamais fait partie
@@ -244,6 +265,7 @@ export class BrowserFbiClient {
    * jamais par un appelant `FbiAutomationClient` générique.
    */
   private lastDerogationPassDiagnostics: DerogationPassDiagnostic[] = [];
+  private lastDerogationDetailStats: DerogationDetailStats | null = null;
 
   /**
    * Trace de la DERNIÈRE session ouverte par `login` (2026-10-06, diagnostic
@@ -279,6 +301,7 @@ export class BrowserFbiClient {
     this.browser = options.browser;
     this.navigationSettleMs = options.navigationSettleMs ?? 500;
     this.derogationDetailBudgetMs = options.derogationDetailBudgetMs ?? 220_000;
+    this.derogationDetailPauseMs = options.derogationDetailPauseMs ?? 0;
   }
 
   getLastDerogationPassDiagnostics(): readonly DerogationPassDiagnostic[] {
@@ -1629,6 +1652,7 @@ export class BrowserFbiClient {
     page: Page,
     scope: Page | Locator,
     detailDeadlineAt: number,
+    options: FetchAllDerogationsOptions = {},
   ): Promise<{
     rows: FbiDerogationRow[];
     pageCount: number;
@@ -1707,11 +1731,47 @@ export class BrowserFbiClient {
     const detailPriority = (row: FbiDerogationRow): number => (row.etat === "En Cours" ? 0 : 1);
     const orderedForDetail = [...baseRows].sort((a, b) => detailPriority(a.row) - detailPriority(b.row));
 
+    /**
+     * Détail lu UNIQUEMENT pour les dérogations nouvelles ou modifiées
+     * (`options.needsDetail`, décidé par l'appelant à partir de ce qui est
+     * déjà en base) — un club qui démarre de zéro les lit toutes, un club
+     * déjà à jour ne rouvre que ce qui a bougé. Un seul onglet réutilisé,
+     * une pause entre deux pages, et arrêt immédiat si FBI cesse de
+     * répondre (2026-10-07 : ~85 onglets d'affilée, puis plus aucune
+     * réponse de FBI à cette adresse) — jamais d'insistance.
+     */
+    const needsDetail = options.needsDetail ?? (() => true);
+    const toFetch = orderedForDetail.filter(({ row, href }) => href && needsDetail(row));
+    const uniqueHrefs = Array.from(new Set(toFetch.map(({ href }) => href!)));
     const detailByHref = new Map<string, FbiDerogationDetailFields | null>();
-    for (const { href } of orderedForDetail) {
-      if (!href || detailByHref.has(href)) continue;
-      if (Date.now() >= detailDeadlineAt) break;
-      detailByHref.set(href, await this.fetchDerogationDetailByHref(page, href).catch(() => null));
+    let detailPage: Page | null = null;
+    let consecutiveFailures = 0;
+    this.lastDerogationDetailStats = { toFetch: uniqueHrefs.length, fetched: 0, failed: 0, skippedUnchanged: baseRows.length - toFetch.length, stoppedEarly: null };
+    try {
+      for (const [index, href] of uniqueHrefs.entries()) {
+        if (Date.now() >= detailDeadlineAt) {
+          this.lastDerogationDetailStats.stoppedEarly = "budget";
+          break;
+        }
+        if (index > 0 && this.derogationDetailPauseMs > 0) await new Promise((resolve) => setTimeout(resolve, this.derogationDetailPauseMs));
+        detailPage ??= await page.context().newPage();
+        const detail = await this.readDerogationDetail(detailPage, page.url(), href);
+        detailByHref.set(href, detail);
+        if (detail) {
+          this.lastDerogationDetailStats.fetched += 1;
+          consecutiveFailures = 0;
+        } else {
+          this.lastDerogationDetailStats.failed += 1;
+          consecutiveFailures += 1;
+        }
+        options.onDetailProgress?.(index + 1, uniqueHrefs.length);
+        if (consecutiveFailures >= 3) {
+          this.lastDerogationDetailStats.stoppedEarly = "fbi_ne_repond_plus";
+          break;
+        }
+      }
+    } finally {
+      if (detailPage) await detailPage.close().catch(() => {});
     }
 
     const collected = baseRows.map(({ row, href }) => {
@@ -1979,7 +2039,7 @@ export class BrowserFbiClient {
    * restant — jamais un nombre de lignes supposé à l'avance, voir sa doc
    * pour le détail du compromis.
    */
-  async fetchAllDerogations(session: BrowserFbiSession): Promise<FbiDerogationRow[]> {
+  async fetchAllDerogations(session: BrowserFbiSession, options: FetchAllDerogationsOptions = {}): Promise<FbiDerogationRow[]> {
     const { page } = session;
     this.lastDerogationPassDiagnostics = [];
 
@@ -2058,7 +2118,7 @@ export class BrowserFbiClient {
     const tableDiagnostic = await this.describeTables(page);
 
     const detailDeadlineAt = Date.now() + this.derogationDetailBudgetMs;
-    const { rows: normalized, pageCount, rawRowCount, lengthSelect, rawRowSample, pageTitleAtFirstRead } = await this.collectAllDerogationPages(page, scope, detailDeadlineAt);
+    const { rows: normalized, pageCount, rawRowCount, lengthSelect, rawRowSample, pageTitleAtFirstRead } = await this.collectAllDerogationPages(page, scope, detailDeadlineAt, options);
     // `collectAllDerogationPages` filtre déjà la ligne fantôme DataTables
     // ("Aucune donnée disponible dans le tableau", voir docs/FBI.md) —
     // une VRAIE dérogation a toujours un numéro de rencontre, jamais `null`.
@@ -2154,6 +2214,21 @@ export class BrowserFbiClient {
    * principale (son URL, son tableau, sa pagination) n'est JAMAIS touchée
    * par cette méthode, qu'elle réussisse ou échoue.
    */
+  /** Lit le détail d'une dérogation dans l'onglet de détail RÉUTILISÉ (voir `collectAllDerogationPages`), délai court : jamais d'attente prolongée sur un FBI muet. */
+  private async readDerogationDetail(detailPage: Page, baseUrl: string, href: string): Promise<FbiDerogationDetailFields | null> {
+    try {
+      await detailPage.goto(new URL(href, baseUrl).toString(), { waitUntil: "domcontentloaded", timeout: 30_000 });
+      await this.settle(detailPage);
+      return await selectors.derogationDetailFields(detailPage).catch(() => null);
+    } catch {
+      return null;
+    }
+  }
+
+  getLastDerogationDetailStats(): DerogationDetailStats | null {
+    return this.lastDerogationDetailStats;
+  }
+
   private async fetchDerogationDetailByHref(page: Page, href: string): Promise<FbiDerogationDetailFields | null> {
     let detailPage: Page | null = null;
     try {
