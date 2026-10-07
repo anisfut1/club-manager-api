@@ -1,6 +1,5 @@
 {
   "framework": null,
-  "regions": ["cdg1"],
   "rewrites": [{ "source": "/(.*)", "destination": "/api" }],
   "functions": {
     "api/index.ts": {

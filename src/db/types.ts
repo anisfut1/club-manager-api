@@ -639,8 +639,8 @@ export interface Database {
       >;
 
       fbi_reachability_checks: Table<
-        { id: number; checked_at: string; via: "proxy" | "direct"; ok: boolean; http_status: number | null; elapsed_ms: number; error: string | null },
-        { id?: number; checked_at?: string; via: "proxy" | "direct"; ok: boolean; http_status?: number | null; elapsed_ms: number; error?: string | null }
+        { id: number; checked_at: string; via: "proxy" | "direct"; ok: boolean; http_status: number | null; elapsed_ms: number; error: string | null; egress_ip: string | null },
+        { id?: number; checked_at?: string; via: "proxy" | "direct"; ok: boolean; http_status?: number | null; elapsed_ms: number; error?: string | null; egress_ip?: string | null }
       >;
       fbi_session_traces: Table<
         { id: string; club_id: string; started_at: string; finished_at: string; via: "proxy" | "direct"; outcome: string; request_count: number; failed_count: number; events: unknown; fingerprint: unknown },

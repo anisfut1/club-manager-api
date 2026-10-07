@@ -3949,3 +3949,20 @@ connexion). Correctifs, e-Marque uniquement :
   (`fbi_season_id:<saison>`) : plus de lecture de l'écran de recherche
   (≈ 1,7 s). Rencontre introuvable avec l'identifiant en cache → cache vidé,
   relu sur FBI au passage suivant.
+
+### Région Vercel : retour au fonctionnement d'avant le 30/09 (2026-10-07)
+
+Historique `fbi_jobs` : jusqu'au 30/09 midi, 30+ connexions FBI par jour
+(dérogations, calendrier, e-Marque) sans aucune coupure — les fonctions
+tournaient alors sans région fixée (cle1/sfo1, États-Unis). Le 30/09 à
+13:58, `vercel.json` a fixé la région sur Paris (`cdg1`) ; dès le 02/10, les
+coupures `ETIMEDOUT` sont devenues systématiques. Même constat avec l'IP fixe
+du VPS : FBI coupe une ADRESSE après une connexion automatisée, et une
+adresse réutilisée d'un passage à l'autre reste coupée. Le 07/10 07:35, le
+passage a réussi (feuille téléchargée 2,7 s après la connexion) mais l'appel
+suivant, quelques secondes plus tard, trouvait déjà FBI coupé.
+
+Correctif : région Paris retirée de `vercel.json` (fonctionnement d'avant).
+Contrôle : l'IP de sortie est enregistrée à chaque contrôle de joignabilité
+(`fbi_reachability_checks.egress_ip`) et dans chaque trace
+(`fbi_session_traces.fingerprint.egressIp`).

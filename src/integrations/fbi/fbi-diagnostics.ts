@@ -97,8 +97,25 @@ export function checkFbiReachability(proxy: FbiProxySettings | undefined): Promi
   });
 }
 
+/**
+ * Adresse IP publique de sortie de cette fonction (2026-10-07) — pour
+ * vérifier si FBI coupe une ADRESSE (réutilisée d'un passage à l'autre) ou
+ * autre chose. Jamais bloquant : `null` si le service ne répond pas.
+ */
+export async function fetchEgressIp(): Promise<string | null> {
+  try {
+    const response = await fetch("https://checkip.amazonaws.com/", { signal: AbortSignal.timeout(3_000) });
+    if (!response.ok) return null;
+    const ip = (await response.text()).trim();
+    return /^[0-9a-f.:]{3,45}$/i.test(ip) ? ip : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function recordFbiReachability(supabase: DbClient, check: FbiReachability): Promise<void> {
   const { error } = await supabase.from("fbi_reachability_checks").insert({
+    egress_ip: check.via === "direct" ? await fetchEgressIp() : null,
     via: check.via,
     ok: check.ok,
     http_status: check.httpStatus,
@@ -123,7 +140,7 @@ export async function saveFbiSessionTrace(
     request_count: events.length + input.trace.dropped,
     failed_count: failed,
     events,
-    fingerprint: input.trace.fingerprint,
+    fingerprint: { ...(input.trace.fingerprint ?? {}), egressIp: input.via === "direct" ? await fetchEgressIp() : null },
   });
   if (error) logError("Enregistrement de la trace de session FBI échoué", error, { clubId: input.clubId });
 }
