@@ -59,6 +59,7 @@ const BASE_URL = process.env.FBI_BASE_URL || "https://extranet.ffbb.com/fbi";
 const { createServiceSupabaseClient } = await import("../../src/db/client.js");
 const { claimNextJobForClub } = await import("../../src/jobs/claim.js");
 const { enqueueEmarqueDiscoveryJobsForClub } = await import("../../src/jobs/enqueue-emarque.js");
+const { enqueueFbiVerificationJobsForClub } = await import("../../src/jobs/enqueue-fbi-verifications.js");
 const { processReconcileScheduleJob } = await import("../../src/jobs/process-reconcile-schedule.js");
 const { processCheckAllDerogationsJob } = await import("../../src/jobs/process-check-all-derogations.js");
 const { processCheckDerogationJob } = await import("../../src/jobs/process-check-derogation.js");
@@ -171,6 +172,12 @@ async function pass(): Promise<void> {
   // créée dès cette passe, sans attendre le planificateur de l'API (base seule).
   const enqueued = await enqueueEmarqueDiscoveryJobsForClub(supabase, clubId).catch(() => null);
   if (enqueued?.jobsCreated) record("enqueued", { jobsCreated: enqueued.jobsCreated }, `${enqueued.jobsCreated} nouvelle(s) feuille(s) e-Marque à chercher`);
+  // Dérogations + calendrier : une fois par jour (idempotent, base seule),
+  // même sans aucun match à traiter.
+  const verifications = await enqueueFbiVerificationJobsForClub(supabase, clubId).catch(() => null);
+  if (verifications?.checkAllDerogationsCreated || verifications?.reconcileScheduleCreated) {
+    record("enqueued", { verifications }, "vérification quotidienne des dérogations et du calendrier planifiée");
+  }
 
   const { data: due, error } = await supabase
     .from("fbi_jobs")

@@ -41,6 +41,10 @@ npm run fbi:local-worker
   connexion tant qu'elle est authentifiée, aucune déconnexion.
 - Chaque passe (5 min, `FBI_LOCAL_INTERVAL_MIN`) : nouveaux matchs joués → recherche de feuille créée ; FBI joignable ? → session encore authentifiée (page
   d'accueil) ? → jusqu'à 10 jobs FBI traités dans cette session, 5 s entre deux (`FBI_LOCAL_MAX_JOBS_PER_PASS`, `FBI_LOCAL_PAUSE_MS`). Sans job, la passe vérifie seulement la session.
+- Recherches e-Marque uniquement pour les matchs joués de la saison sans
+  feuille, aux créneaux fixes (15 min pendant 6 h, puis 1 h jusqu'à 48 h, puis
+  6 h jusqu'à 7 jours) : aucun match → aucune recherche. Dérogations et
+  calendrier : planifiés par le worker une fois par jour, matchs ou pas.
 - Session renvoyée vers l'identification : expiration journalisée (preuves),
   traitements de la passe arrêtés ; UNE nouvelle connexion au plus tôt à la
   passe suivante (et 12 min après la précédente). `FBI_LOCAL_RELOGIN=never`
