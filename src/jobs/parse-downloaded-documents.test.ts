@@ -89,7 +89,12 @@ function makeFakeSupabase(options: {
           update: (patch: unknown) => ({
             eq: (_col: string, id: string) => {
               options.documentUpdates.push({ id, patch });
-              return Promise.resolve({ error: null });
+              const chain = {
+                eq: () => chain,
+                select: () => Promise.resolve({ data: [{ id }], error: null }),
+                then: (onFulfilled: (value: { error: null }) => unknown) => Promise.resolve({ error: null }).then(onFulfilled),
+              };
+              return chain;
             },
           }),
         };

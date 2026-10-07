@@ -47,15 +47,18 @@ process.env.FBI_LOCAL_BROWSER = "1";
 process.env.CRON_SECRET ||= "worker-local-non-utilise";
 process.env.FRONTEND_ORIGINS ||= "http://localhost";
 
-const INTERVAL_MIN = Number(process.env.FBI_LOCAL_INTERVAL_MIN || 15);
-const MAX_JOBS_PER_PASS = Number(process.env.FBI_LOCAL_MAX_JOBS_PER_PASS || 3);
-const PAUSE_BETWEEN_JOBS_MS = 20_000;
+// Cadence (2026-10-07, après les premières passes : ~3 s de travail réel par
+// feuille, la pause de 20 s dominait) — même session, aucune connexion en plus.
+const INTERVAL_MIN = Number(process.env.FBI_LOCAL_INTERVAL_MIN || 5);
+const MAX_JOBS_PER_PASS = Number(process.env.FBI_LOCAL_MAX_JOBS_PER_PASS || 10);
+const PAUSE_BETWEEN_JOBS_MS = Number(process.env.FBI_LOCAL_PAUSE_MS || 5_000);
 const RELOGIN = process.env.FBI_LOCAL_RELOGIN !== "never";
 const LEASE_MIN = 30;
 const BASE_URL = process.env.FBI_BASE_URL || "https://extranet.ffbb.com/fbi";
 
 const { createServiceSupabaseClient } = await import("../../src/db/client.js");
 const { claimNextJobForClub } = await import("../../src/jobs/claim.js");
+const { enqueueEmarqueDiscoveryJobsForClub } = await import("../../src/jobs/enqueue-emarque.js");
 const { processReconcileScheduleJob } = await import("../../src/jobs/process-reconcile-schedule.js");
 const { processCheckAllDerogationsJob } = await import("../../src/jobs/process-check-all-derogations.js");
 const { processCheckDerogationJob } = await import("../../src/jobs/process-check-derogation.js");
@@ -163,6 +166,11 @@ async function dropSession(): Promise<void> {
 
 async function pass(): Promise<void> {
   await setLease(new Date(Date.now() + LEASE_MIN * 60_000));
+
+  // Matchs tout juste passés « joués » (synchro FFBB) : recherche de feuille
+  // créée dès cette passe, sans attendre le planificateur de l'API (base seule).
+  const enqueued = await enqueueEmarqueDiscoveryJobsForClub(supabase, clubId).catch(() => null);
+  if (enqueued?.jobsCreated) record("enqueued", { jobsCreated: enqueued.jobsCreated }, `${enqueued.jobsCreated} nouvelle(s) feuille(s) e-Marque à chercher`);
 
   const { data: due, error } = await supabase
     .from("fbi_jobs")

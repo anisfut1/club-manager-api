@@ -127,7 +127,16 @@ export async function parseDownloadedEmarqueDocuments(supabase: DbClient, option
   result.candidatesExamined = pendingDocs.length;
 
   for (const doc of pendingDocs) {
-    await supabase.from("match_documents").update({ status: "parsing", updated_at: new Date().toISOString() }).eq("id", doc.id);
+    // Réservation atomique (2026-10-07) : l'API (Vercel) et le worker local
+    // peuvent lire en même temps — une feuille déjà prise par l'autre est
+    // sautée, jamais lue deux fois en parallèle.
+    const { data: claimed, error: claimError } = await supabase
+      .from("match_documents")
+      .update({ status: "parsing", updated_at: new Date().toISOString() })
+      .eq("id", doc.id)
+      .eq("status", "downloaded")
+      .select("id");
+    if (claimError || !claimed || claimed.length === 0) continue;
     await supabase.from("matches").update({ emarque_status: "parsing" }).eq("id", doc.match_id);
 
     try {
