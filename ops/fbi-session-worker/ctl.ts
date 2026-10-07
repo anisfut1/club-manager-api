@@ -7,36 +7,9 @@
  *             jamais écrits sur disque. Refusée si la session est valide.
  */
 import { createConnection } from "node:net";
+import { ask } from "./prompt.js";
 
 const socketPath = process.env.FBI_WORKER_SOCKET || "/run/fbi-session-worker/ctl.sock";
-
-function ask(question: string, hidden: boolean): Promise<string> {
-  return new Promise((resolve) => {
-    process.stdout.write(question);
-    const stdin = process.stdin;
-    let value = "";
-    if (hidden && stdin.isTTY) stdin.setRawMode(true);
-    stdin.resume();
-    stdin.setEncoding("utf8");
-    const onData = (chunk: string) => {
-      for (const char of chunk) {
-        if (char === "\r" || char === "\n") {
-          stdin.removeListener("data", onData);
-          if (hidden && stdin.isTTY) stdin.setRawMode(false);
-          stdin.pause();
-          process.stdout.write("\n");
-          resolve(value);
-          return;
-        }
-        if (char === "\u0003") process.exit(130);
-        if (char === "\u007f") value = value.slice(0, -1);
-        else value += char;
-        if (!hidden) process.stdout.write(char);
-      }
-    };
-    stdin.on("data", onData);
-  });
-}
 
 function send(request: Record<string, string>): Promise<string> {
   return new Promise((resolve, reject) => {
