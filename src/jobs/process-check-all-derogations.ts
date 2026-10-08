@@ -90,7 +90,7 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
      */
     const { data: existingChecks, error: existingChecksError } = await supabase
       .from("fbi_derogation_checks")
-      .select("fbi_row_key, etat, date_derogation, demandeur, motif, date_rencontre_demandee, heure_demandee, adversaire, date_reponse, acceptation, motif_refus, modifier_date, modifier_horaire, modifier_salle, salle_demandee, inverser_rencontre, inverser_equipe, changes_read_at")
+      .select("fbi_row_key, etat, date_depot, date_derogation, demandeur, motif, date_rencontre_demandee, heure_demandee, adversaire, date_reponse, acceptation, motif_refus, modifier_date, modifier_horaire, modifier_salle, salle_demandee, inverser_rencontre, inverser_equipe, changes_read_at")
       .eq("club_id", job.club_id);
     if (existingChecksError) throw new Error(`Lecture du détail de dérogation déjà connu échouée : ${existingChecksError.message}`);
     const existingByRowKey = new Map((existingChecks ?? []).map((c) => [c.fbi_row_key, c]));
@@ -215,7 +215,7 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
           id_derogation: derogation.idDerogation,
           numero: derogation.numero,
           etat: derogation.etat,
-          date_depot: derogation.dateDepot,
+          date_depot: derogation.dateDepot ?? derogation.dateDepotDetail ?? existing?.date_depot ?? null,
           date_derogation: derogation.dateDerogation,
           date_rencontre: derogation.dateRencontre,
           heure: derogation.heure,

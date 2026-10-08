@@ -17,7 +17,9 @@ const HEADER_ALIASES: Record<Exclude<keyof FbiDerogationRow, "raw" | "idDerogati
   visiteur: ["Visiteur"],
   dateRencontre: ["Date rencontre", "Date de rencontre"],
   heure: ["Heure"],
-  dateDepot: ["Date de dépôt", "Date depot"],
+  // "Date de dépot" (sans accent sur le o) : intitulé RÉEL du tableau FBI,
+  // relevé le 2026-10-08 (diagnostic `tables`) — jamais lu jusqu'ici.
+  dateDepot: ["Date de dépot", "Date de dépôt", "Date depot"],
   dateDerogation: ["Date déro", "Date dérogation", "Date de dérogation"],
   etat: ["Etat de la dérogation", "État de la dérogation", "Etat"],
 };

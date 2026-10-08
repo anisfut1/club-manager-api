@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { compareDerogationDateDepot, normalizeDerogationRow } from "./derogation-row.js";
 
 describe("normalizeDerogationRow", () => {
+  it("lit la date de dépôt sous l'intitulé RÉEL du tableau FBI, « Date de dépot » sans accent (relevé du 2026-10-08)", () => {
+    expect(normalizeDerogationRow({ "Date de dépot": "11/09/2026 16:38", "N° Renc": "2" }).dateDepot).toBe("11/09/2026 16:38");
+  });
+
   it("extrait les champs connus par libellé d'en-tête (colonnes confirmées par capture d'écran, voir docs/FBI.md)", () => {
     const raw = {
       "Date de dépôt": "",

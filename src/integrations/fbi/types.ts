@@ -71,6 +71,8 @@ export interface FbiDerogationDetailFields {
    * club, 2026-10-08. `null`/absent : case introuvable sur la page, jamais
    * supposée décochée.
    */
+  /** "Date de dépot" lue sur la page de la dérogation (`input#dateDepot`), repli si le tableau ne la donne pas. */
+  dateDepotDetail?: string | null;
   modifierDate?: boolean | null;
   modifierHoraire?: boolean | null;
   modifierSalle?: boolean | null;

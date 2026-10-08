@@ -746,6 +746,7 @@ export async function derogationDetailFields(page: Page): Promise<FbiDerogationD
     dateReponse: await readValue("input#reponseAdversaireDate"),
     acceptation: await readValue("input#acceptation"),
     motifRefus: await readValue("textarea#motifRefus"),
+    dateDepotDetail: await readValue("input#dateDepot"),
     modifierDate: await readChecked(page, "modifierDate"),
     modifierHoraire: await readChecked(page, "modifierHoraire"),
     modifierSalle: await readChecked(page, "modifierSalle"),
