@@ -7,8 +7,11 @@ const base = { clubName: "SC Sète <Basket>", clubLogoUrl: null, accentColor: "#
 describe("buildPersonalLinkEmail", () => {
   it("contient le bouton et le lien, échappe toute donnée injectée", () => {
     const { subject, html, text } = buildPersonalLinkEmail(base);
-    expect(subject).toBe("Ton lien personnel — SC Sète <Basket>");
-    expect(html).toContain("Ouvrir mon espace");
+    expect(subject).toBe("Ton accès à l'espace SC Sète <Basket>");
+    expect(html).toContain("Ouvrir l'espace du club");
+    // Pas d'emoji ni de formule « agir en ton nom » (filtres anti-hameçonnage).
+    expect(html).not.toMatch(/\p{Extended_Pictographic}/u);
+    expect(html).not.toContain("en ton nom");
     expect(html).toContain('href="https://app.example/public/sc/tables?token=abc&amp;x=1"');
     expect(html).toContain("SC Sète &lt;Basket&gt;");
     expect(html).not.toContain("<Basket>");

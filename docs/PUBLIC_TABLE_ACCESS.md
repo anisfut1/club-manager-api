@@ -231,3 +231,23 @@ Côté admin authentifié (sous `/v1/clubs/:clubId/table-assignments`) :
 - Le flux public **n'expose jamais** la bascule "pas besoin d'arbitre"
   (`referee-status`) — décision organisationnelle réservée à l'admin, voir
   `docs/TABLE_ASSIGNMENTS.md`.
+
+## Délivrabilité (emails en indésirables)
+
+Retour du club, 2026-10-08 : « le lien part dans les indésirables chez
+certaines personnes ». Le classement dépend surtout du domaine d'envoi, pas
+du code :
+
+1. **Domaine vérifié sur Resend** avec les 3 enregistrements DNS au vert
+   (SPF `send.<domaine>`, DKIM `resend._domainkey.<domaine>`, MX `send.<domaine>`).
+2. **DMARC** sur le domaine : `_dmarc.<domaine>` TXT
+   `v=DMARC1; p=none; rua=mailto:<boîte lue>` (Gmail/Yahoo l'exigent).
+3. **Suivi des clics/ouvertures désactivé** sur le domaine dans Resend : il
+   réécrit les liens vers un autre domaine, signal classique d'hameçonnage.
+4. **Lien du même domaine que l'expéditeur** : `PUBLIC_APP_URL` (prioritaire
+   sur l'origine de la requête depuis 2026-10-08) doit pointer vers le
+   domaine personnalisé du frontend, jamais une URL `*.vercel.app`.
+5. **`RESEND_REPLY_TO`** vers une boîte réellement lue.
+
+Côté contenu (src/email/personal-link-email.ts) : version texte jointe, pas
+d'emoji, raison de l'envoi explicite, aucune formule alarmante.

@@ -61,6 +61,7 @@ export async function sendEmail(message: EmailMessage, fetchImpl: typeof fetch =
         subject: message.subject,
         html: message.html,
         text: message.text,
+        ...(env.RESEND_REPLY_TO ? { reply_to: env.RESEND_REPLY_TO } : {}),
       }),
     });
   } catch {

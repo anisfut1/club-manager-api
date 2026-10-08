@@ -47,7 +47,7 @@ export function buildPersonalLinkEmail(input: PersonalLinkEmailInput): { subject
       ? `<img src="${escapeHtml(input.clubLogoUrl)}" width="56" height="56" alt="${club}" style="display:block;width:56px;height:56px;border-radius:14px;object-fit:contain;background:#ffffff;border:1px solid #e5e7eb;margin:0 auto 16px;" />`
       : "";
 
-  const subject = `Ton lien personnel — ${input.clubName}`;
+  const subject = `Ton accès à l'espace ${input.clubName}`;
 
   const html = `<!doctype html>
 <html lang="fr">
@@ -58,7 +58,7 @@ export function buildPersonalLinkEmail(input: PersonalLinkEmailInput): { subject
 <title>${escapeHtml(subject)}</title>
 </head>
 <body style="margin:0;padding:0;background:#f4f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#111827;">
-<span style="display:none;max-height:0;overflow:hidden;opacity:0;">Ouvre ton espace ${club} en un clic.</span>
+<span style="display:none;max-height:0;overflow:hidden;opacity:0;">Ton accès aux matchs et tables de marque de ${club}.</span>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f5f7;">
   <tr>
     <td align="center" style="padding:32px 16px;">
@@ -68,12 +68,12 @@ export function buildPersonalLinkEmail(input: PersonalLinkEmailInput): { subject
           <td style="padding:32px 32px 8px;text-align:center;">
             ${logo}
             <p style="margin:0 0 4px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#6b7280;font-weight:600;">${club}</p>
-            <h1 style="margin:0;font-size:22px;line-height:1.3;color:#111827;">Bonjour ${firstName} 👋</h1>
+            <h1 style="margin:0;font-size:22px;line-height:1.3;color:#111827;">Bonjour ${firstName}</h1>
           </td>
         </tr>
         <tr>
           <td style="padding:12px 32px 0;text-align:center;font-size:15px;line-height:1.6;color:#374151;">
-            Voici ton lien personnel pour accéder à l'espace du club : matchs, tables de marque et, selon ton rôle, dérogations.
+            Tu as demandé à accéder à l'espace ${club} : matchs, tables de marque et, selon ton rôle, dérogations. Clique sur le bouton ci-dessous pour l'ouvrir.
           </td>
         </tr>
         <tr>
@@ -81,7 +81,7 @@ export function buildPersonalLinkEmail(input: PersonalLinkEmailInput): { subject
             <table role="presentation" cellpadding="0" cellspacing="0" border="0">
               <tr>
                 <td align="center" bgcolor="${accent}" style="border-radius:12px;">
-                  <a href="${link}" target="_blank" rel="noopener" style="display:inline-block;padding:14px 28px;font-size:16px;font-weight:600;color:${ink};text-decoration:none;border-radius:12px;">Ouvrir mon espace</a>
+                  <a href="${link}" target="_blank" rel="noopener" style="display:inline-block;padding:14px 28px;font-size:16px;font-weight:600;color:${ink};text-decoration:none;border-radius:12px;">Ouvrir l'espace du club</a>
                 </td>
               </tr>
             </table>
@@ -95,8 +95,9 @@ export function buildPersonalLinkEmail(input: PersonalLinkEmailInput): { subject
         </tr>
         <tr>
           <td style="padding:16px 32px 28px;border-top:1px solid #f0f1f3;font-size:12px;line-height:1.6;color:#9ca3af;">
-            Ce lien est personnel&nbsp;: ne le partage pas, il permet d'agir en ton nom. Chaque nouvelle demande remplace l'ancien lien.
-            Si tu n'es pas à l'origine de cette demande, ignore simplement cet email.
+            Tu reçois cet email parce que ton nom a été choisi sur la page publique de ${club} et que cette adresse a été indiquée.
+            Ce lien t'est réservé, garde-le pour toi&nbsp;; une nouvelle demande remplace l'ancien.
+            Si ce n'est pas toi, ignore simplement cet email&nbsp;: rien ne sera fait sans clic sur le lien.
           </td>
         </tr>
       </table>
@@ -109,11 +110,12 @@ export function buildPersonalLinkEmail(input: PersonalLinkEmailInput): { subject
   const text = [
     `Bonjour ${input.firstName},`,
     "",
-    `Voici ton lien personnel pour accéder à l'espace ${input.clubName} :`,
+    `Tu as demandé à accéder à l'espace ${input.clubName} (matchs, tables de marque). Ouvre ce lien :`,
     input.link,
     "",
-    "Ce lien est personnel : ne le partage pas. Chaque nouvelle demande remplace l'ancien lien.",
-    "Si tu n'es pas à l'origine de cette demande, ignore simplement cet email.",
+    `Tu reçois cet email parce que ton nom a été choisi sur la page publique de ${input.clubName} et que cette adresse a été indiquée.`,
+    "Ce lien t'est réservé, garde-le pour toi ; une nouvelle demande remplace l'ancien.",
+    "Si ce n'est pas toi, ignore simplement cet email : rien ne sera fait sans clic sur le lien.",
   ].join("\n");
 
   return { subject, html, text };

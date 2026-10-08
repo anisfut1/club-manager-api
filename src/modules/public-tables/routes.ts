@@ -123,8 +123,12 @@ publicTablesRouter.get("/licencies", async (c) => {
 export function resolvePublicAppBaseUrl(requestOrigin: string | undefined): string {
   const env = getEnv();
   const allowed = env.FRONTEND_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean);
-  if (requestOrigin && allowed.includes(requestOrigin)) return requestOrigin;
+  // PUBLIC_APP_URL d'abord : les liens envoyés par email pointent toujours vers
+  // le domaine officiel (idéalement le même que l'expéditeur), jamais vers une
+  // URL *.vercel.app d'où la demande serait partie — un lien vers un domaine
+  // différent de l'expéditeur fait classer l'email en indésirable.
   if (env.PUBLIC_APP_URL) return env.PUBLIC_APP_URL.replace(/\/+$/, "");
+  if (requestOrigin && allowed.includes(requestOrigin)) return requestOrigin;
   return allowed.find((o) => o.startsWith("https://")) ?? allowed[0] ?? "";
 }
 

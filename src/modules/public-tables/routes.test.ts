@@ -177,7 +177,7 @@ describe("POST .../licencies/:licencieId/request-link — retour du club : \"il 
     expect(sentEmails).toHaveLength(1);
     expect(sentEmails[0]!.to).toEqual(["thomas@example.test"]);
     expect(sentEmails[0]!.from).toBe("Club A Basket <onboarding@resend.dev>");
-    expect(sentEmails[0]!.html).toContain("Ouvrir mon espace");
+    expect(sentEmails[0]!.html).toContain("Ouvrir l'espace du club");
     expect(sentEmails[0]!.text).toContain("http://localhost:3000/public/club-a/derogations?token=");
 
     const token = tokenFromLastEmail();
