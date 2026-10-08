@@ -750,15 +750,19 @@ export async function derogationDetailFields(page: Page): Promise<FbiDerogationD
     modifierDate: await readChecked(page, "modifierDate"),
     modifierHoraire: await readChecked(page, "modifierHoraire"),
     modifierSalle: await readChecked(page, "modifierSalle"),
-    salleDemandee: await readValue("input#nomSalle"),
+    salleDemandee: await readValue('input#nomSalle, input[name$=".libelleSalle"], input[id$="_libelleSalle"], input[id$="_nomSalle"]'),
     inverserRencontre: await readChecked(page, "inverserRencontre"),
     inverserEquipe: await readChecked(page, "inverserEquipe"),
   };
 }
 
 /** État d'une case du formulaire de dérogation (id réel), `null` si la case n'existe pas sur la page. */
-async function readChecked(page: Page, id: string): Promise<boolean | null> {
-  const box = page.locator(`input[type="checkbox"]#${id}`).first();
+async function readChecked(page: Page, field: string): Promise<boolean | null> {
+  // Page de CONSULTATION (relevé réel du 2026-10-08) : ids générés par FBI
+  // ("afficherDerogation_derogationForm_derogationDemandeBean_<champ>"),
+  // seul "modifierSalle" garde un id court — le `name` du champ
+  // ("derogationForm.derogationDemandeBean.<champ>") est commun aux pages.
+  const box = page.locator(`input[type="checkbox"][name$=".${field}"], input[type="checkbox"]#${field}, input[type="checkbox"][id$="_${field}"]`).first();
   if ((await box.count().catch(() => 0)) === 0) return null;
   return await box.isChecked().catch(() => null);
 }
@@ -768,13 +772,35 @@ async function readChecked(page: Page, id: string): Promise<boolean | null> {
  * présentes (id + état) et présence du champ salle — jamais de valeur
  * saisie, uniquement des identifiants de champs et des booléens.
  */
-export async function derogationDetailShape(page: Page): Promise<{ checkboxes: Array<{ id: string; checked: boolean }>; hasNomSalle: boolean }> {
+export async function derogationDetailShape(page: Page): Promise<DerogationDetailShape> {
   const boxes = page.locator('input[type="checkbox"]');
   const count = Math.min(await boxes.count().catch(() => 0), 20);
-  const checkboxes: Array<{ id: string; checked: boolean }> = [];
+  const checkboxes: DerogationDetailShape["checkboxes"] = [];
   for (let i = 0; i < count; i += 1) {
     const box = boxes.nth(i);
-    checkboxes.push({ id: ((await box.getAttribute("id").catch(() => null)) ?? "").slice(0, 40), checked: await box.isChecked().catch(() => false) });
+    checkboxes.push({
+      id: ((await box.getAttribute("id").catch(() => null)) ?? "").slice(0, 120),
+      name: ((await box.getAttribute("name").catch(() => null)) ?? "").slice(0, 120),
+      checked: await box.isChecked().catch(() => false),
+    });
   }
-  return { checkboxes, hasNomSalle: (await page.locator("input#nomSalle").count().catch(() => 0)) > 0 };
+  // Champs dont l'id ou le name évoque la salle : identifiants + présence d'une valeur (jamais la valeur).
+  const salleInputs = page.locator('input[id*="alle"], input[name*="alle"], select[id*="alle"], select[name*="alle"]');
+  const salleCount = Math.min(await salleInputs.count().catch(() => 0), 10);
+  const salleFields: DerogationDetailShape["salleFields"] = [];
+  for (let i = 0; i < salleCount; i += 1) {
+    const field = salleInputs.nth(i);
+    salleFields.push({
+      id: ((await field.getAttribute("id").catch(() => null)) ?? "").slice(0, 120),
+      name: ((await field.getAttribute("name").catch(() => null)) ?? "").slice(0, 120),
+      hasValue: Boolean((await field.inputValue().catch(() => "")).trim()),
+    });
+  }
+  return { checkboxes, salleFields, hasNomSalle: (await page.locator("input#nomSalle").count().catch(() => 0)) > 0 };
+}
+
+export interface DerogationDetailShape {
+  checkboxes: Array<{ id: string; name: string; checked: boolean }>;
+  salleFields: Array<{ id: string; name: string; hasValue: boolean }>;
+  hasNomSalle: boolean;
 }

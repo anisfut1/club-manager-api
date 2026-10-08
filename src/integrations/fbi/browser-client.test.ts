@@ -711,6 +711,31 @@ describe("BrowserFbiClient.fetchAllDerogations ('je veux un bouton global qui ch
     await client.closeSession(session);
   });
 
+  it("lit les cases de la page de CONSULTATION par leur name (ids générés par FBI, relevé réel du 2026-10-08)", async () => {
+    const box = (field: string, checked: boolean, id = `afficherDerogation_derogationForm_derogationDemandeBean_${field}`) =>
+      `<input type="checkbox" name="derogationForm.derogationDemandeBean.${field}" id="${id}" value="true" disabled="disabled"${checked ? ' checked="checked"' : ""} />`;
+    server.setRoute({
+      path: "/afficherDerogation.fbi",
+      contentType: "text/html",
+      body: `<html><body><form id="afficherDerogation">
+        <input type="text" id="demandeurLibelle" value="Domicile" disabled="disabled" />
+        <input type="text" id="dateDepot" value="21/09/2026 13:49" disabled="disabled" />
+        ${box("modifierDate", false)}${box("modifierHoraire", true)}${box("modifierSalle", false, "modifierSalle")}${box("inverserRencontre", false)}${box("inverserEquipe", false)}
+        <input type="text" id="horaireHour" value="17:30" disabled="disabled" />
+        <textarea id="motif" readonly="readonly">Organisation journée. Merci</textarea>
+      </form></body></html>`,
+    });
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+
+    const [first] = await client.fetchAllDerogations(session);
+
+    expect(first).toMatchObject({ modifierDate: false, modifierHoraire: true, modifierSalle: false, inverserRencontre: false, inverserEquipe: false, heureDemandee: "17:30", dateDepotDetail: "21/09/2026 13:49" });
+    expect(client.getLastDerogationDetailStats()?.pageShape?.checkboxes.map((c) => c.name)).toContain("derogationForm.derogationDemandeBean.modifierHoraire");
+
+    await client.closeSession(session);
+  });
+
   it("s'arrête après 3 pages de détail sans réponse exploitable au lieu d'insister — le tableau reste intégralement lu", async () => {
     server.setRoute({ path: "/afficherDerogation.fbi", contentType: "text/html", body: "<html><body>Service indisponible</body></html>" });
     const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });

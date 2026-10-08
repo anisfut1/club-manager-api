@@ -244,7 +244,7 @@ export interface DerogationDetailStats {
   skippedUnchanged: number;
   stoppedEarly: "budget" | "fbi_ne_repond_plus" | null;
   /** Forme de la première page de détail lue (voir `selectors.derogationDetailShape`). */
-  pageShape?: { checkboxes: Array<{ id: string; checked: boolean }>; hasNomSalle: boolean } | null;
+  pageShape?: selectors.DerogationDetailShape | null;
 }
 
 export class BrowserFbiClient {
