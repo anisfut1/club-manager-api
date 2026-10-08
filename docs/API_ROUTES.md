@@ -1,7 +1,7 @@
 # Inventaire des routes de l'API
 
 > Fichier **généré** par `npm run docs:routes` (ops/docs/generate-routes-doc.ts) — ne pas modifier à la main.
-> 117 routes montées dans le code, 110 décrites dans le contrat OpenAPI (`/openapi.json`, `/docs`).
+> 119 routes montées dans le code, 112 décrites dans le contrat OpenAPI (`/openapi.json`, `/docs`).
 
 Accès : **Compte connecté** = JWT Supabase (`Authorization: Bearer`), droits vérifiés par club ; **Public** = sans compte ; **Public (lien perso si action)** = lecture libre, écriture avec le jeton du lien personnel ; **Secret cron** = `CRON_SECRET`.
 
@@ -192,6 +192,12 @@ Accès : **Compte connecté** = JWT Supabase (`Authorization: Bearer`), droits v
 | POST | `/v1/platform/maintenance/purge-emarque-documents` | Compte connecté | Purge terminée (idempotente, jamais destructive pour les stats déjà en base) |
 | POST | `/v1/platform/maintenance/retry-failed-emarque-imports` | Compte connecté | Nouvelle tentative terminée (réutilise le fichier déjà en Storage, jamais un nouveau téléchargement FBI) |
 
+## Public — access-requests
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| POST | `/v1/public/clubs/:clubSlug/access-requests` | Public (lien perso si action) | Demande transmise au club |
+
 ## Public — club
 
 | Méthode | Route | Accès | Description |
@@ -231,8 +237,9 @@ Accès : **Compte connecté** = JWT Supabase (`Authorization: Bearer`), droits v
 
 | Méthode | Route | Accès | Description |
 |---|---|---|---|
-| GET | `/v1/public/clubs/:clubSlug/licencies` | Public (lien perso si action) | Roster pour choisir son nom (`claimed` seulement, jamais qui) |
+| GET | `/v1/public/clubs/:clubSlug/licencies` | Public (lien perso si action) | Introuvable |
 | POST | `/v1/public/clubs/:clubSlug/licencies/:licencieId/request-link` | Public (lien perso si action) | Lien personnel envoyé par email (adresse masquée) |
+| POST | `/v1/public/clubs/:clubSlug/licencies/search` | Public (lien perso si action) | Au plus 5 fiches : prénom et initiale du nom |
 
 ## Public — matches
 

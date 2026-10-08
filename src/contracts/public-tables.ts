@@ -35,6 +35,22 @@ export const PublicLicencieDtoSchema = z
 
 export const PublicLicenciesListDtoSchema = z.object({ licencies: z.array(PublicLicencieDtoSchema) }).openapi("PublicLicenciesListDto");
 
+/** Recherche de son nom (prénom + nom, ordre libre) — remplace l'annuaire complet (2026-10-08). */
+export const LicencieSearchDtoSchema = z.object({ q: z.string().max(80) }).openapi("LicencieSearchDto");
+export const LicencieSearchResultDtoSchema = z
+  .object({ licencies: z.array(z.object({ id: z.string().uuid(), firstName: z.string(), lastInitial: z.string() })).max(5) })
+  .openapi("LicencieSearchResultDto");
+
+/** « Je ne trouve pas mon nom » : prévient les administrateurs du club. */
+export const AccessRequestDtoSchema = z
+  .object({
+    fullName: z.string().trim().min(3, "Indique ton prénom et ton nom.").max(80),
+    email: z.string().trim().email("Adresse email invalide."),
+    message: z.string().max(500).optional(),
+  })
+  .strict()
+  .openapi("AccessRequestDto");
+
 /** Page du frontend public vers laquelle le bouton de l'email ramène (le lien porte toujours `?token=`). */
 export const PublicLinkTargetSchema = z.enum(["accueil", "matchs", "tables", "derogations"]).openapi("PublicLinkTarget");
 

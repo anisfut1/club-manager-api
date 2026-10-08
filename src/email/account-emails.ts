@@ -62,3 +62,28 @@ export function buildPasswordResetEmail(input: { link: string }) {
   });
   return { subject, html, text };
 }
+
+/**
+ * « Je ne trouve pas mon nom » (espace public, retour du club 2026-10-08) :
+ * prévient les administrateurs du club. « Répondre » écrit directement à la
+ * personne (Reply-To = son adresse).
+ */
+export function buildAccessRequestEmail(input: { club: ClubBranding; fullName: string; email: string; message: string | null; link: string }) {
+  const subject = `${input.fullName} ne trouve pas son nom — ${input.club.name}`;
+  const { html, text } = renderEmail({
+    preheader: `Demande d'accès à l'espace public de ${input.club.name}.`,
+    eyebrow: input.club.name,
+    title: "Demande d'accès",
+    paragraphs: [
+      `${input.fullName} n'a pas trouvé son nom dans la liste des licenciés de l'espace public.`,
+      `Adresse indiquée : ${input.email}`,
+      ...(input.message ? [`Son message : « ${input.message} »`] : []),
+      "Ajoute ou corrige sa fiche (nom, prénom, email) dans la liste des joueurs, puis réponds-lui : « Répondre » écrit directement à son adresse.",
+    ],
+    button: { label: "Ouvrir la liste des joueurs", href: input.link },
+    footer: [`Tu reçois cet email parce que tu es administrateur de ${input.club.name} sur ${PLATFORM_NAME}.`],
+    accentColor: input.club.accentColor,
+    logoUrl: input.club.logoUrl,
+  });
+  return { subject, html, text };
+}

@@ -10,6 +10,12 @@ import {
 } from "../../contracts/public-tables.js";
 import { assignTableRole, buildTableSuggestions, loadHomeMatchOrThrow, loadTableAssignmentsList, removeTableRole, setRefereeNotNeeded } from "../tables/shared.js";
 import { loadTableLeaderboard } from "../tables/leaderboard.js";
+import { checkQuery, searchRoster } from "./name-search.js";
+import { clientIp, hitRateLimit } from "../../security/rate-limit.js";
+import { buildAccessRequestEmail } from "../../email/account-emails.js";
+import { PLATFORM_NAME } from "../../email/layout.js";
+import { AccessRequestDtoSchema } from "../../contracts/public-tables.js";
+import { logError } from "../../logger.js";
 import { PutRefereeStatusDtoSchema } from "../../contracts/tables.js";
 import { generatePublicToken, hashPublicToken } from "./token.js";
 import { encryptPublicToken } from "./personal-link.js";
@@ -96,21 +102,91 @@ publicTablesRouter.get("/", (c) => {
   return c.json({ slug: club.slug, name: club.name, logoUrl: club.logoUrl, accentColor: club.accentColor, timezone: club.timezone });
 });
 
-/** GET /v1/public/clubs/:clubSlug/licencies — roster pour choisir son nom. `claimed` seulement (jamais qui/quand, aucune PII d'un tiers). */
-publicTablesRouter.get("/licencies", async (c) => {
-  const supabase = c.get("supabase");
+/**
+ * GET /v1/public/clubs/:clubSlug/licencies — FERMÉE (410) depuis le
+ * 2026-10-08 : elle exposait la liste complète des licenciés sans compte
+ * (risque R-013). Remplacée par `POST …/licencies/search` (prénom + nom).
+ */
+publicTablesRouter.get("/licencies", (c) => c.json({ error: { code: "ENDPOINT_GONE", message: "Cette liste n'est plus disponible : recherche ton prénom et ton nom." } }, 410));
+
+/**
+ * POST /v1/public/clubs/:clubSlug/licencies/search — `{ q }` = prénom et
+ * nom, ordre libre, fautes tolérées (voir name-search.ts). Au plus 5 fiches,
+ * `{ id, firstName, lastInitial }` uniquement. Le nom tapé voyage dans le
+ * corps (jamais dans l'URL, donc jamais dans les journaux d'accès) et n'est
+ * jamais journalisé. 30 recherches par minute et par IP.
+ */
+publicTablesRouter.post("/licencies/search", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { q?: unknown } | null;
+  const check = checkQuery(typeof body?.q === "string" ? body.q : "");
+  if (!check.ok) {
+    throw badRequest(check.code === "QUERY_TOO_SHORT" ? "Indique ton prénom et ton nom." : "Recherche invalide : prénom et nom seulement.", check.code);
+  }
+  if (!hitRateLimit(`search:${clientIp(c.req.header("x-forwarded-for"))}`, 30, 60_000)) {
+    c.header("Retry-After", "60");
+    return c.json({ error: { code: "RATE_LIMITED", message: "Trop de recherches d'affilée. Réessaie dans une minute." } }, 429);
+  }
+
   const club = c.get("publicClub");
+  const { data: roster } = await c.get("supabase").from("licencies").select("id, first_name, last_name").eq("club_id", club.id).eq("active", true);
+  const matches = searchRoster(
+    check.words,
+    (roster ?? []).map((l) => ({ id: l.id, firstName: l.first_name, lastName: l.last_name })),
+  );
+  c.header("Cache-Control", "no-store");
+  return c.json({ licencies: matches.map((m) => ({ id: m.id, firstName: m.firstName, lastInitial: m.lastInitial })) });
+});
 
-  const [{ data: licencies }, { data: claims }] = await Promise.all([
-    supabase.from("licencies").select("id, first_name, last_name").eq("club_id", club.id).eq("active", true).order("last_name").order("first_name"),
-    supabase.from("licencie_public_tokens").select("licencie_id").eq("club_id", club.id).is("revoked_at", null),
-  ]);
+/**
+ * POST /v1/public/clubs/:clubSlug/access-requests — « je ne trouve pas mon
+ * nom » : email aux administrateurs du club (Reply-To = la personne). Réponse
+ * identique dans tous les cas ; 3 demandes par heure et par IP, 20 par heure
+ * et par club.
+ */
+publicTablesRouter.post("/access-requests", async (c) => {
+  const parsed = AccessRequestDtoSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) throw badRequest(parsed.error.issues.map((i) => i.message).join(" "));
+  const club = c.get("publicClub");
+  const ip = clientIp(c.req.header("x-forwarded-for"));
+  if (!hitRateLimit(`access:${ip}`, 3, 3_600_000) || !hitRateLimit(`access-club:${club.id}`, 20, 3_600_000)) {
+    c.header("Retry-After", "3600");
+    return c.json({ error: { code: "RATE_LIMITED", message: "Ta demande a déjà été envoyée. Le club te répondra par email." } }, 429);
+  }
 
-  const claimedIds = new Set((claims ?? []).map((row) => row.licencie_id));
+  const supabase = c.get("supabase");
+  const { data: memberships } = await supabase.from("club_memberships").select("id, user_id").eq("club_id", club.id).eq("status", "active");
+  const membershipIds = (memberships ?? []).map((m) => m.id);
+  const { data: adminRoles } = membershipIds.length
+    ? await supabase.from("membership_roles").select("membership_id").eq("role", "club_admin").in("membership_id", membershipIds)
+    : { data: [] as { membership_id: string }[] };
+  const adminIds = new Set((adminRoles ?? []).map((r) => r.membership_id));
+  const adminUserIds = (memberships ?? []).filter((m) => adminIds.has(m.id)).map((m) => m.user_id);
+  const emails = (
+    await Promise.all(
+      adminUserIds.map(async (id) => {
+        try {
+          const { data } = await supabase.auth.admin.getUserById(id);
+          return data.user?.email ?? null;
+        } catch {
+          return null;
+        }
+      }),
+    )
+  ).filter((e): e is string => Boolean(e));
 
-  return c.json({
-    licencies: (licencies ?? []).map((l) => ({ id: l.id, firstName: l.first_name, lastName: l.last_name, claimed: claimedIds.has(l.id) })),
-  });
+  if (emails.length === 0) {
+    logError("Demande d'accès sans administrateur joignable", null, { clubId: club.id });
+  } else {
+    const message = buildAccessRequestEmail({
+      club: { name: club.name, logoUrl: club.logoUrl, accentColor: club.accentColor },
+      fullName: parsed.data.fullName.replace(/\s+/g, " "),
+      email: parsed.data.email,
+      message: parsed.data.message?.trim() || null,
+      link: `${resolvePublicAppBaseUrl(c.req.header("origin"))}/c/${encodeURIComponent(club.slug)}/joueurs`,
+    });
+    await Promise.all(emails.map((to) => sendEmail({ to, fromName: PLATFORM_NAME, replyTo: parsed.data.email, ...message }).catch((error) => logError("Envoi de la demande d'accès échoué", error, { clubId: club.id }))));
+  }
+  return c.json({ sent: true as const }, 202);
 });
 
 /**

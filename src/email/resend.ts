@@ -22,6 +22,8 @@ export interface EmailMessage {
   text: string;
   /** Nom d'expéditeur affiché (ex: le club) — l'adresse reste celle de RESEND_FROM. */
   fromName?: string;
+  /** Adresse de réponse propre à ce message (sinon RESEND_REPLY_TO). */
+  replyTo?: string;
 }
 
 export function isEmailConfigured(): boolean {
@@ -61,7 +63,7 @@ export async function sendEmail(message: EmailMessage, fetchImpl: typeof fetch =
         subject: message.subject,
         html: message.html,
         text: message.text,
-        ...(env.RESEND_REPLY_TO ? { reply_to: env.RESEND_REPLY_TO } : {}),
+        ...((message.replyTo ?? env.RESEND_REPLY_TO) ? { reply_to: message.replyTo ?? env.RESEND_REPLY_TO } : {}),
       }),
     });
   } catch {

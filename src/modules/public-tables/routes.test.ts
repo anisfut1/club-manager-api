@@ -11,14 +11,22 @@ const fbiWrites = vi.hoisted(() => ({
 vi.mock("../derogations/create-derogation.js", () => ({ createDerogationForClub: fbiWrites.create }));
 vi.mock("../derogations/respond-derogation.js", () => ({ respondToDerogationForClub: fbiWrites.respond }));
 
+/** Comptes Auth (pour retrouver l'email des administrateurs du club). */
+let authEmails: Record<string, string> = {};
+const withAuth = () =>
+  Object.assign(buildFakeClubSupabase(state), {
+    auth: { admin: { getUserById: async (id: string) => ({ data: { user: authEmails[id] ? { id, email: authEmails[id] } : null }, error: null }) } },
+  });
+
 vi.mock("../../db/client.js", () => ({
-  createServiceSupabaseClient: () => buildFakeClubSupabase(state),
-  createUserSupabaseClient: () => buildFakeClubSupabase(state),
+  createServiceSupabaseClient: () => withAuth(),
+  createUserSupabaseClient: () => withAuth(),
   createAnonSupabaseClient: () => ({}),
 }));
 
 const { app } = await import("../../app.js");
 const { resetEnvCacheForTests } = await import("../../config/env.js");
+const { resetRateLimits } = await import("../../security/rate-limit.js");
 
 /** Appels interceptés vers l'API Resend — jamais un vrai envoi en test. */
 let sentEmails: { to: string[]; subject: string; html: string; text: string; from: string }[];
@@ -152,17 +160,69 @@ describe("GET /v1/public/clubs/:clubSlug — pas de compte requis", () => {
   });
 });
 
-describe("GET /v1/public/clubs/:clubSlug/licencies — roster pour choisir son nom", () => {
-  it("liste les licenciés actifs avec `claimed`, jamais qui a revendiqué quoi", async () => {
-    await claim(THOMAS.id);
+describe("annuaire public fermé, recherche par prénom + nom (2026-10-08)", () => {
+  const search = (q: unknown, ip = "1.1.1.1") =>
+    request("/licencies/search", { method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": ip }, body: JSON.stringify({ q }) });
+
+  beforeEach(() => resetRateLimits());
+
+  it("GET …/licencies ne renvoie plus la liste (410)", async () => {
     const res = await request("/licencies");
-    const body = (await res.json()) as { licencies: { id: string; claimed: boolean }[] };
-    expect(body.licencies).toEqual(
-      expect.arrayContaining([
-        { id: THOMAS.id, firstName: "Thomas", lastName: "Martin", claimed: true },
-        { id: LEA.id, firstName: "Léa", lastName: "Fontaine", claimed: false },
-      ]),
-    );
+    expect(res.status).toBe(410);
+    expect(JSON.stringify(await res.json())).not.toContain("Fontaine");
+  });
+
+  it("retrouve malgré l'ordre et les fautes, renvoie prénom + initiale seulement", async () => {
+    const res = await search("fontiane lea");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ licencies: [{ id: LEA.id, firstName: "Léa", lastInitial: "F" }] });
+  });
+
+  it("prénom seul refusé (400), rien trouvé = liste vide", async () => {
+    expect((await search("lea")).status).toBe(400);
+    expect(await (await search("lea dupont")).json()).toEqual({ licencies: [] });
+  });
+
+  it("30 recherches par minute et par IP, puis 429", async () => {
+    for (let i = 0; i < 30; i++) expect((await search("lea fontaine", "2.2.2.2")).status).toBe(200);
+    expect((await search("lea fontaine", "2.2.2.2")).status).toBe(429);
+    expect((await search("lea fontaine", "3.3.3.3")).status).toBe(200);
+  });
+});
+
+describe("POST …/access-requests — « je ne trouve pas mon nom »", () => {
+  const ask = (body: unknown, ip = "4.4.4.4") =>
+    request("/access-requests", { method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": ip, origin: "http://localhost:3000" }, body: JSON.stringify(body) });
+
+  beforeEach(() => {
+    resetRateLimits();
+    state.memberships = [
+      { id: "m-admin", club_id: CLUB_A.id, user_id: "u-admin", status: "active" },
+      { id: "m-coach", club_id: CLUB_A.id, user_id: "u-coach", status: "active" },
+    ] as never;
+    state.roles = [
+      { membership_id: "m-admin", role: "club_admin", scope_team_id: null },
+      { membership_id: "m-coach", role: "coach", scope_team_id: null },
+    ] as never;
+    authEmails = { "u-admin": "admin@club-a.test", "u-coach": "coach@club-a.test" };
+  });
+
+  it("prévient les administrateurs du club (et eux seuls), Reply-To = la personne", async () => {
+    const res = await ask({ fullName: "Anis Abed", email: "anis@example.test", message: "Je joue en U18" });
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ sent: true });
+    expect(sentEmails).toHaveLength(1);
+    expect(sentEmails[0]!.to).toEqual(["admin@club-a.test"]);
+    expect(sentEmails[0]!.subject).toBe("Anis Abed ne trouve pas son nom — Club A Basket");
+    expect((sentEmails[0] as unknown as { reply_to: string }).reply_to).toBe("anis@example.test");
+    expect(sentEmails[0]!.text).toContain("Je joue en U18");
+    expect(sentEmails[0]!.text).toContain("/c/club-a/joueurs");
+  });
+
+  it("adresse invalide refusée ; 3 demandes par heure et par IP", async () => {
+    expect((await ask({ fullName: "Anis Abed", email: "pas-un-email" })).status).toBe(400);
+    for (let i = 0; i < 3; i++) expect((await ask({ fullName: "Anis Abed", email: "anis@example.test" }, "5.5.5.5")).status).toBe(202);
+    expect((await ask({ fullName: "Anis Abed", email: "anis@example.test" }, "5.5.5.5")).status).toBe(429);
   });
 });
 

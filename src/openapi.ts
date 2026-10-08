@@ -57,7 +57,6 @@ import {
 } from "./contracts/tables.js";
 import {
   PublicClubDtoSchema,
-  PublicLicenciesListDtoSchema,
   PublicMeDtoSchema,
   RequestPersonalLinkDtoSchema,
   RequestPersonalLinkResultDtoSchema,
@@ -68,6 +67,9 @@ import {
   PublicAssignTableBodyDtoSchema,
   PublicAccessListDtoSchema,
   PublicAccessResetResultDtoSchema,
+  LicencieSearchDtoSchema,
+  LicencieSearchResultDtoSchema,
+  AccessRequestDtoSchema,
 } from "./contracts/public-tables.js";
 import {
   CreateDerogationRequestDtoSchema,
@@ -482,7 +484,8 @@ registry.registerPath({
   method: "get",
   path: "/v1/public/clubs/{clubSlug}/licencies",
   request: { params: clubSlugParam },
-  responses: { 200: jsonResponse("Roster pour choisir son nom (`claimed` seulement, jamais qui)", PublicLicenciesListDtoSchema), 404: jsonResponse("Introuvable", ErrorEnvelopeSchema) },
+  // Fermée le 2026-10-08 (annuaire complet sans compte, risque R-013) : voir …/licencies/search.
+  responses: { 410: jsonResponse("Fermée : utiliser POST …/licencies/search", ErrorEnvelopeSchema), 404: jsonResponse("Introuvable", ErrorEnvelopeSchema) },
 });
 
 registry.registerPath({
@@ -638,6 +641,22 @@ registry.registerPath({
   // Classements FFBB des poules où le club est engagé — retour du club, 2026-10-01.
   request: { params: clubSlugParam },
   responses: { 200: jsonResponse("Classements FFBB (copiés à chaque synchronisation)", PoolStandingsListDtoSchema), 404: jsonResponse("Introuvable", ErrorEnvelopeSchema) },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/public/clubs/{clubSlug}/licencies/search",
+  // Recherche de son nom (prénom + nom, ordre libre, fautes tolérées) — remplace l'annuaire complet, 2026-10-08.
+  request: { params: clubSlugParam, body: { content: { "application/json": { schema: LicencieSearchDtoSchema } } } },
+  responses: { 200: jsonResponse("Au plus 5 fiches : prénom et initiale du nom", LicencieSearchResultDtoSchema), 429: jsonResponse("Trop de recherches", ErrorEnvelopeSchema), ...validationResponses },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/public/clubs/{clubSlug}/access-requests",
+  // « Je ne trouve pas mon nom » : email aux administrateurs du club — 2026-10-08.
+  request: { params: clubSlugParam, body: { content: { "application/json": { schema: AccessRequestDtoSchema } } } },
+  responses: { 202: jsonResponse("Demande transmise au club", z.object({ sent: z.literal(true) })), 429: jsonResponse("Demande déjà envoyée", ErrorEnvelopeSchema), ...validationResponses },
 });
 
 registry.registerPath({
