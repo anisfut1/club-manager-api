@@ -19,6 +19,7 @@ import {
 import { rejectedFieldsFor, resolveLicencieEditPermission } from "./profile-fields.js";
 import { requireClubRole } from "../../auth/middleware.js";
 import { autoAssignTeamsForClub } from "./auto-assign-teams.js";
+import { LICENCIE_PHOTO_TYPES, MAX_LICENCIE_PHOTO_BYTES, removeStoredLicenciePhoto, uploadLicenciePhoto, type LicenciePhotoType } from "../../storage/licencie-photos.js";
 
 export const licenciesRouter = new Hono<AppEnv>();
 
@@ -278,6 +279,56 @@ licenciesRouter.patch("/:licencieId/profile", async (c) => {
 
   return c.json(mapLicencieRow(data));
 });
+
+/**
+ * POST /v1/clubs/:clubId/licencies/:licencieId/photo — photo de la fiche,
+ * DÉJÀ compressée par le navigateur (WebP 512 px), envoyée en base64
+ * (retour du club, 2026-10-08). Mêmes droits que `photoUrl` du PATCH
+ * profil (admin du club, ou le joueur lui-même). Remplace et supprime
+ * l'ancienne photo stockée ; une URL externe saisie à la main n'est jamais
+ * supprimée du web, seulement remplacée sur la fiche.
+ */
+licenciesRouter.post("/:licencieId/photo", async (c) => {
+  const { club, licencie, serviceSupabase } = await photoEditContext(c);
+  const body = (await c.req.json().catch(() => null)) as { contentType?: unknown; data?: unknown } | null;
+  const contentType = body?.contentType;
+  if (typeof contentType !== "string" || !(contentType in LICENCIE_PHOTO_TYPES)) throw badRequest("Format de photo non pris en charge (WebP, JPEG ou PNG).");
+  if (typeof body?.data !== "string" || body.data.length === 0) throw badRequest("Photo manquante.");
+  const content = Buffer.from(body.data, "base64");
+  if (content.length === 0) throw badRequest("Photo illisible.");
+  if (content.length > MAX_LICENCIE_PHOTO_BYTES) throw badRequest("Photo trop lourde (512 Ko maximum après compression).");
+
+  const url = await uploadLicenciePhoto(serviceSupabase, club.id, licencie.id, content, contentType as LicenciePhotoType);
+  const { data, error } = await serviceSupabase.from("licencies").update({ photo_url: url }).eq("id", licencie.id).eq("club_id", club.id).select(LICENCIE_COLUMNS).single();
+  if (error) throw new Error(`Mise à jour de la photo échouée : ${error.message}`);
+  await removeStoredLicenciePhoto(serviceSupabase, licencie.photo_url, club.id).catch(() => undefined);
+  return c.json(mapLicencieRow(data));
+});
+
+/** DELETE /v1/clubs/:clubId/licencies/:licencieId/photo — retire la photo de la fiche (et le fichier stocké s'il vient de nous). */
+licenciesRouter.delete("/:licencieId/photo", async (c) => {
+  const { club, licencie, serviceSupabase } = await photoEditContext(c);
+  const { data, error } = await serviceSupabase.from("licencies").update({ photo_url: null }).eq("id", licencie.id).eq("club_id", club.id).select(LICENCIE_COLUMNS).single();
+  if (error) throw new Error(`Suppression de la photo échouée : ${error.message}`);
+  await removeStoredLicenciePhoto(serviceSupabase, licencie.photo_url, club.id).catch(() => undefined);
+  return c.json(mapLicencieRow(data));
+});
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function photoEditContext(c: any) {
+  const { club, roles } = c.get("club");
+  const user = c.get("user");
+  const supabase = c.get("supabase");
+  const licencieId = c.req.param("licencieId") as string | undefined;
+  if (!licencieId) throw badRequest("Paramètre de route :licencieId manquant.");
+  const ownLicencieId = await getOwnLicencieId(supabase, club.id, user.id);
+  const { canEdit, allowedFields } = resolveLicencieEditPermission(isClubAdmin(roles), ownLicencieId === licencieId);
+  if (!canEdit || !(allowedFields as readonly string[]).includes("photoUrl")) throw forbidden("Vous ne pouvez pas modifier la photo de ce profil.");
+  const serviceSupabase = createServiceSupabaseClient();
+  const { data: licencie } = await serviceSupabase.from("licencies").select("id, photo_url").eq("id", licencieId).eq("club_id", club.id).maybeSingle();
+  if (!licencie) throw notFound("Licencié introuvable.");
+  return { club, licencie, serviceSupabase };
+}
 
 /**
  * POST /v1/clubs/:clubId/licencies — ajout MANUEL d'une personne

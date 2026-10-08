@@ -738,6 +738,7 @@ registry.registerPath({
   },
 });
 
+const UploadLicenciePhotoDtoSchema = z.object({ contentType: z.enum(["image/webp", "image/jpeg", "image/png"]), data: z.string().min(1) }).openapi("UploadLicenciePhotoDto");
 const clubAndLicencieParams = clubIdParam.extend({ licencieId: z.string().uuid() });
 
 registry.registerPath({
@@ -766,6 +767,23 @@ registry.registerPath({
     ...errorResponses,
     ...validationResponses,
   },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/clubs/{clubId}/licencies/{licencieId}/photo",
+  security: bearerAuth,
+  // Photo déjà compressée par le navigateur (WebP 512 px), en base64 ; 512 Ko max. Admin du club ou le licencié lui-même.
+  request: { params: clubAndLicencieParams, body: { content: { "application/json": { schema: UploadLicenciePhotoDtoSchema } } } },
+  responses: { 200: jsonResponse("Photo enregistrée, fiche à jour", LicencieDtoSchema), ...errorResponses, ...validationResponses },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/v1/clubs/{clubId}/licencies/{licencieId}/photo",
+  security: bearerAuth,
+  request: { params: clubAndLicencieParams },
+  responses: { 200: jsonResponse("Photo retirée", LicencieDtoSchema), ...errorResponses },
 });
 
 registry.registerPath({
