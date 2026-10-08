@@ -285,6 +285,10 @@ export const LicenceImportStatusDtoSchema = z
         createdAt: z.string(),
         finishedAt: z.string().nullable(),
         error: z.string().nullable(),
+        /** Tentatives déjà faites (une tentative échouée laisse le job en attente d'un nouvel essai). */
+        attempts: z.number(),
+        /** Prochain essai prévu (job en attente). */
+        nextAttemptAt: z.string().nullable(),
       })
       .nullable(),
   })

@@ -2735,9 +2735,17 @@ export class BrowserFbiClient {
   async downloadValidatedLicencesExport(session: BrowserFbiSession): Promise<{ buffer: Buffer; fileName: string }> {
     const { page } = session;
     await this.humanPause(page, 1200, 2500);
-    const response = await page.goto(`${this.baseUrl}/rechercherLicence.fbi`, { waitUntil: "domcontentloaded", timeout: 45_000 }).catch((error: unknown) => {
-      throw new FbiError(`Écran « Gestion des licences » injoignable (${error instanceof Error ? error.message.split("\n")[0] : String(error)}).`, "NAVIGATION_FAILED", error);
-    });
+    // 3 essais rapprochés sur une erreur réseau ou un délai dépassé (même principe que `tryNavigateToSearchScreen`), jamais sur une vraie réponse HTTP.
+    let response: Awaited<ReturnType<Page["goto"]>> = null;
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        response = await page.goto(`${this.baseUrl}/rechercherLicence.fbi`, { waitUntil: "domcontentloaded", timeout: 45_000 });
+        break;
+      } catch (error) {
+        if (attempt >= 3) throw new FbiError(`Écran « Gestion des licences » injoignable après ${attempt} essais (${error instanceof Error ? error.message.split("\n")[0] : String(error)}).`, "NAVIGATION_FAILED", error);
+        await page.waitForTimeout(3000 * attempt);
+      }
+    }
     if (response && !response.ok()) throw new FbiError(`Écran « Gestion des licences » : réponse HTTP ${response.status()}.`, "NAVIGATION_FAILED");
     if (await selectors.looksLikeLoginPage(page)) throw new FbiError("Session FBI expirée : page d'identification affichée.", "SESSION_EXPIRED");
     if ((await page.locator("#statutValidationComite").count()) === 0 || (await page.locator("#rechercher").count()) === 0) {

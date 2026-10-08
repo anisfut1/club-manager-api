@@ -524,7 +524,7 @@ licenciesRouter.get("/import/status", requireClubRole("club_admin"), async (c) =
   const [{ data: status }, { data: runs }, { data: jobs }] = await Promise.all([
     serviceSupabase.from("fbi_integration_status").select("configured").eq("club_id", club.id).maybeSingle(),
     serviceSupabase.from("licence_import_runs").select("source, created_at, total, inserted, updated, reactivated, unchanged, not_in_export").eq("club_id", club.id).order("created_at", { ascending: false }).limit(1),
-    serviceSupabase.from("fbi_jobs").select("id, status, created_at, finished_at, last_error").eq("club_id", club.id).eq("type", "import_licences").order("created_at", { ascending: false }).limit(1),
+    serviceSupabase.from("fbi_jobs").select("id, status, created_at, finished_at, last_error, attempt_count, scheduled_at").eq("club_id", club.id).eq("type", "import_licences").order("created_at", { ascending: false }).limit(1),
   ]);
 
   const run = runs?.[0];
@@ -534,7 +534,17 @@ licenciesRouter.get("/import/status", requireClubRole("club_admin"), async (c) =
     lastRun: run
       ? { source: run.source, at: run.created_at, total: run.total, inserted: run.inserted, updated: run.updated, reactivated: run.reactivated, unchanged: run.unchanged, notInExport: run.not_in_export }
       : null,
-    job: job ? { id: job.id, status: job.status, createdAt: job.created_at, finishedAt: job.finished_at, error: job.status === "succeeded" ? null : job.last_error } : null,
+    job: job
+      ? {
+          id: job.id,
+          status: job.status,
+          createdAt: job.created_at,
+          finishedAt: job.finished_at,
+          error: job.status === "succeeded" ? null : job.last_error,
+          attempts: job.attempt_count ?? 0,
+          nextAttemptAt: job.status === "pending" ? job.scheduled_at : null,
+        }
+      : null,
   };
   return c.json(dto);
 });
