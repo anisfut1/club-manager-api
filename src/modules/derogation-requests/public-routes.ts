@@ -3,7 +3,8 @@ import type { DbClient } from "../../db/client.js";
 import { badRequest, forbidden } from "../../api-error.js";
 import { resolvePublicClub, type PublicClub } from "../public/club-resolver.js";
 import { licencieFromToken } from "../public-tables/routes.js";
-import { handleAction, handleAvailability, handleContext, handleCreate, handleGet, handleList, handleMessage, handleOfficial, handlePropose, handleSlotCheck, type Ctx } from "./routes.js";
+import { handleAction,
+  handleDelete, handleAvailability, handleContext, handleCreate, handleGet, handleList, handleMessage, handleOfficial, handlePropose, handleSlotCheck, type Ctx } from "./routes.js";
 import { hasDerogationRole, loadLicencieActor } from "./service.js";
 
 /**
@@ -56,5 +57,6 @@ publicDerogationRequestsRouter.get("/:requestId", async (c) => c.json(await hand
 publicDerogationRequestsRouter.post("/", async (c) => c.json(await handleCreate(await publicContext(c), await body(c)), 201));
 publicDerogationRequestsRouter.post("/:requestId/messages", async (c) => c.json(await handleMessage(await publicContext(c), c.req.param("requestId"), await body(c))));
 publicDerogationRequestsRouter.post("/:requestId/actions", async (c) => c.json(await handleAction(await publicContext(c), c.req.param("requestId"), await body(c))));
+publicDerogationRequestsRouter.delete("/:requestId", async (c) => c.json(await handleDelete(await publicContext(c), c.req.param("requestId"))));
 publicDerogationRequestsRouter.post("/:requestId/proposals", async (c) => c.json(await handlePropose(await publicContext(c), c.req.param("requestId"), await body(c))));
 publicDerogationRequestsRouter.post("/:requestId/official", async (c) => c.json(await handleOfficial(await publicContext(c), c.req.param("requestId"), await body(c))));

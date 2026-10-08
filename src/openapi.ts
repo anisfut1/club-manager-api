@@ -883,6 +883,7 @@ registry.registerPath({
  * 2026-10-01. Aucune de ces routes n'écrit sur FFBB/FBI ni ne modifie un
  * match : workflow interne (demande + statut + conversation).
  */
+const DeletedDerogationRequestDtoSchema = z.object({ deleted: z.literal(true), id: z.string().uuid() }).openapi("DeletedDerogationRequestDto");
 const clubAndRequestParams = clubIdParam.extend({ requestId: z.string().uuid() });
 const unprocessable = { 422: jsonResponse("Règle métier non respectée (ex. MESSAGE_REQUIRED)", ErrorEnvelopeSchema) };
 
@@ -940,6 +941,15 @@ registry.registerPath({
 });
 
 registry.registerPath({
+  method: "delete",
+  path: "/v1/clubs/{clubId}/derogation-requests/{requestId}",
+  security: bearerAuth,
+  // Coordinateur / administrateur : supprime une demande TERMINÉE ou ANNULÉE (messages inclus). Jamais la dérogation FBI.
+  request: { params: clubAndRequestParams },
+  responses: { 200: jsonResponse("Demande supprimée", DeletedDerogationRequestDtoSchema), ...errorResponses },
+});
+
+registry.registerPath({
   method: "post",
   path: "/v1/clubs/{clubId}/derogation-requests/{requestId}/proposals",
   security: bearerAuth,
@@ -985,6 +995,7 @@ registry.registerPath({ method: "get", path: "/v1/public/clubs/{clubSlug}/deroga
 registry.registerPath({ method: "get", path: "/v1/public/clubs/{clubSlug}/derogation-requests/{requestId}", request: { params: publicRequestParams, query: publicTokenQuery }, responses: { 200: jsonResponse("Demande + conversation (espace public)", DerogationRequestDetailDtoSchema), ...publicDerogationErrors } });
 registry.registerPath({ method: "post", path: "/v1/public/clubs/{clubSlug}/derogation-requests/{requestId}/messages", request: { params: publicRequestParams, query: publicTokenQuery, body: { content: { "application/json": { schema: PostDerogationMessageDtoSchema } } } }, responses: { 200: jsonResponse("Message ajouté", DerogationRequestDetailDtoSchema), ...publicDerogationErrors } });
 registry.registerPath({ method: "post", path: "/v1/public/clubs/{clubSlug}/derogation-requests/{requestId}/actions", request: { params: publicRequestParams, query: publicTokenQuery, body: { content: { "application/json": { schema: DerogationActionDtoSchema } } } }, responses: { 200: jsonResponse("Statut mis à jour", DerogationRequestDetailDtoSchema), ...publicDerogationErrors, ...unprocessable } });
+registry.registerPath({ method: "delete", path: "/v1/public/clubs/{clubSlug}/derogation-requests/{requestId}", request: { params: publicRequestParams, query: publicTokenQuery }, responses: { 200: jsonResponse("Demande supprimée (espace public)", DeletedDerogationRequestDtoSchema), ...publicDerogationErrors } });
 registry.registerPath({ method: "post", path: "/v1/public/clubs/{clubSlug}/derogation-requests/{requestId}/proposals", request: { params: publicRequestParams, query: publicTokenQuery, body: { content: { "application/json": { schema: ProposeDerogationSlotDtoSchema } } } }, responses: { 200: jsonResponse("Nouveau créneau proposé", DerogationRequestDetailDtoSchema), ...publicDerogationErrors } });
 
 registry.registerPath({

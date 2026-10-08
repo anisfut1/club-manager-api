@@ -372,6 +372,24 @@ export async function handleAction(ctx: Ctx, requestId: string, rawBody: unknown
   return buildDetail(ctx.db, fresh, ctx.actor, await loadClubVenues(ctx.db, ctx.clubId));
 }
 
+/**
+ * Supprime DÉFINITIVEMENT une demande interne terminée ou annulée (retour
+ * du club, 2026-10-08 : "les demandes de dérogations terminées, faut les
+ * archiver voire supprimer avec bouton supprimer"). Coordinateur /
+ * administrateur seulement ; jamais une demande encore ouverte. Messages et
+ * créneaux proposés supprimés avec (cascade). La dérogation OFFICIELLE
+ * FBI n'est jamais touchée.
+ */
+export async function handleDelete(ctx: Ctx, requestId: string) {
+  const row = await readableRequestOrThrow(ctx, requestId);
+  if (!canManageRequests(ctx.actor)) throw forbidden("Seul le coordinateur peut supprimer une demande.", "DEROGATION_FORBIDDEN");
+  if (row.status !== "COMPLETED" && row.status !== "CANCELLED") throw conflict("Seule une demande terminée ou annulée peut être supprimée.", "INVALID_TRANSITION");
+  const { data, error } = await ctx.db.from("derogation_requests").delete().eq("id", row.id).eq("club_id", ctx.clubId).eq("status", row.status).select("id");
+  if (error) throw new Error(`Suppression de la demande échouée : ${error.message}`);
+  if (!data || data.length === 0) throw conflict("La demande a été modifiée entre-temps, recharge la page.", "INVALID_TRANSITION");
+  return { deleted: true as const, id: row.id };
+}
+
 /** Reproposer un créneau (historique conservé, retour en « Demande envoyée »). */
 export async function handlePropose(ctx: Ctx, requestId: string, rawBody: unknown) {
   const body = ProposeDerogationSlotDtoSchema.safeParse(rawBody);
@@ -522,6 +540,7 @@ derogationRequestsRouter.post("/", async (c) => {
 derogationRequestsRouter.post("/:requestId/messages", async (c) => c.json(await handleMessage(await context(c), c.req.param("requestId"), await c.req.json().catch(() => ({})))));
 derogationRequestsRouter.post("/:requestId/actions", async (c) => c.json(await handleAction(await context(c), c.req.param("requestId"), await c.req.json().catch(() => ({})))));
 derogationRequestsRouter.post("/:requestId/official", async (c) => c.json(await handleOfficial(await context(c), c.req.param("requestId"), await c.req.json().catch(() => ({})))));
+derogationRequestsRouter.delete("/:requestId", async (c) => c.json(await handleDelete(await context(c), c.req.param("requestId"))));
 derogationRequestsRouter.post("/:requestId/proposals", async (c) => c.json(await handlePropose(await context(c), c.req.param("requestId"), await c.req.json().catch(() => ({})))));
 
 // ---------------------------------------------------------------------------

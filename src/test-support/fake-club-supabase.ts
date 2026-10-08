@@ -400,6 +400,12 @@ function mutableTable(getRows: () => FakeRow[], setRows: (rows: FakeRow[]) => vo
           filters.push({ col, value, op: "eq" });
           return api;
         },
+        // `.select()` après delete : renvoie les lignes supprimées (comme PostgREST).
+        select: () => {
+          const removed = getRows().filter((row) => match(row, filters));
+          setRows(getRows().filter((row) => !match(row, filters)));
+          return Promise.resolve({ data: removed, error: null });
+        },
         then: (onFulfilled: (value: { error: null }) => unknown) => {
           setRows(getRows().filter((row) => !match(row, filters)));
           return Promise.resolve({ error: null }).then(onFulfilled);

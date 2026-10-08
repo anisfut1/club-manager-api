@@ -271,6 +271,21 @@ describe("conversation et statuts (scénario complet du critère final)", () => 
     expect((await request(`/derogation-requests/${created.id}/messages`, { method: "POST", body: { message: "?" } })).status).toBe(409);
   });
 
+  it("suppression : refusée tant que la demande est ouverte, refusée au coach, permise au coordinateur une fois annulée", async () => {
+    const created = await json<Detail>(await createRequest());
+    as("coord");
+    const open = await request(`/derogation-requests/${created.id}`, { method: "DELETE" });
+    expect(open.status).toBe(409);
+    as("coach-u15");
+    await request(`/derogation-requests/${created.id}/actions`, { method: "POST", body: { action: "CANCEL" } });
+    expect((await request(`/derogation-requests/${created.id}`, { method: "DELETE" })).status).toBe(403);
+    as("coord");
+    const deleted = await request(`/derogation-requests/${created.id}`, { method: "DELETE" });
+    expect(deleted.status).toBe(200);
+    expect(await json<{ deleted: boolean }>(deleted)).toMatchObject({ deleted: true, id: created.id });
+    expect((await request(`/derogation-requests/${created.id}`)).status).toBe(404);
+  });
+
   it("message vide refusé ; message > 3000 caractères refusé ; retours à la ligne conservés", async () => {
     const created = await json<Detail>(await createRequest());
     const path = `/derogation-requests/${created.id}/messages`;
