@@ -96,6 +96,12 @@ export const PlayerMatchStatsDtoSchema = z
     lastName: z.string().nullable(),
     /** Vers la fiche joueur (`GET /v1/clubs/:clubId/licencies/:licencieId`, voir docs/LICENCIES.md) — `null` si ce participant n'a pas encore de licencié rattaché. */
     licencieId: z.string().uuid().nullable(),
+    /**
+     * Photo de la fiche joueur (retour du club, 2026-10-08 : stats en cartes
+     * avec photo). Espace club uniquement — toujours `null` côté public
+     * (joueurs souvent mineurs), et `null` sans photo renseignée.
+     */
+    photoUrl: z.string().nullable(),
     secondsPlayed: z.number().nullable(),
     points: z.number().nullable(),
     threePointsMade: z.number().nullable(),

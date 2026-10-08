@@ -32,7 +32,7 @@ matchesRouter.get("/:matchId", async (c) => {
   const matchId = c.req.param("matchId");
   if (!matchId) throw badRequest("Paramètre de route :matchId manquant.");
 
-  const dto = await loadMatchDetails(c.get("supabase"), c.get("club").club, matchId);
+  const dto = await loadMatchDetails(c.get("supabase"), c.get("club").club, matchId, { includePhotos: true });
   return c.json(dto);
 });
 

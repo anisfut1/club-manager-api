@@ -157,7 +157,7 @@ export async function listMatchesForClub(supabase: DbClient, club: ClubRef, quer
 }
 
 /** Détail complet d'un match — throw `notFound` si absent ou hors de ce club (jamais de distinction, §9 de la demande). */
-export async function loadMatchDetails(supabase: DbClient, club: ClubRef, matchId: string): Promise<MatchDetailsDto> {
+export async function loadMatchDetails(supabase: DbClient, club: ClubRef, matchId: string, options: { includePhotos?: boolean } = {}): Promise<MatchDetailsDto> {
   const { data: match } = await supabase
     .from("matches")
     .select(
@@ -201,6 +201,17 @@ export async function loadMatchDetails(supabase: DbClient, club: ClubRef, matchI
         .limit(1)
         .maybeSingle(),
     ]);
+
+  // Photos des fiches joueurs, espace club uniquement (voir PlayerMatchStatsDto.photoUrl).
+  const photoByLicencieId = new Map<string, string>();
+  if (options.includePhotos) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ids = Array.from(new Set((stats ?? []).map((row) => (row as any).match_participants?.licencie_id).filter((id): id is string => Boolean(id))));
+    if (ids.length > 0) {
+      const { data: photos } = await supabase.from("licencies").select("id, photo_url").eq("club_id", club.id).in("id", ids);
+      for (const p of photos ?? []) if (p.photo_url) photoByLicencieId.set(p.id, p.photo_url);
+    }
+  }
 
   return {
     id: match.id,
@@ -249,6 +260,8 @@ export async function loadMatchDetails(supabase: DbClient, club: ClubRef, matchI
     tableOfficials: (tableOfficials ?? []).map((o) => ({ role: o.role, firstName: o.first_name, lastName: o.last_name, licencieId: o.licencie_id })),
     stats: (stats ?? []).map((row) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const licencieId: string | null = (row as any).match_participants?.licencie_id ?? null;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const participant = (row as any).match_participants;
       return {
         participantId: row.participant_id,
@@ -257,6 +270,7 @@ export async function loadMatchDetails(supabase: DbClient, club: ClubRef, matchI
         firstName: participant?.first_name ?? null,
         lastName: participant?.last_name ?? null,
         licencieId: participant?.licencie_id ?? null,
+        photoUrl: licencieId ? (photoByLicencieId.get(licencieId) ?? null) : null,
         secondsPlayed: row.seconds_played,
         points: row.points,
         threePointsMade: row.three_points_made,
