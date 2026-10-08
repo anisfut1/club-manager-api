@@ -9,6 +9,7 @@ import {
   RequestPersonalLinkDtoSchema,
 } from "../../contracts/public-tables.js";
 import { assignTableRole, buildTableSuggestions, loadHomeMatchOrThrow, loadTableAssignmentsList, removeTableRole, setRefereeNotNeeded } from "../tables/shared.js";
+import { loadTableLeaderboard } from "../tables/leaderboard.js";
 import { PutRefereeStatusDtoSchema } from "../../contracts/tables.js";
 import { generatePublicToken, hashPublicToken } from "./token.js";
 import { encryptPublicToken } from "./personal-link.js";
@@ -365,6 +366,11 @@ publicTablesRouter.post("/matches/:matchId/derogation/create", async (c) => {
     submittedBy: null,
   });
   return c.json(result);
+});
+
+/** GET /v1/public/clubs/:clubSlug/table-leaderboard — classement de la saison, visible de tous (aucun jeton, retour du club 2026-10-08). */
+publicTablesRouter.get("/table-leaderboard", async (c) => {
+  return c.json(await loadTableLeaderboard(c.get("supabase"), c.get("publicClub").id));
 });
 
 /** GET /v1/public/clubs/:clubSlug/table-assignments?token=&from=&to= — même contenu que la vue admin, `me` en plus. */

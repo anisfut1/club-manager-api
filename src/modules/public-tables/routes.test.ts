@@ -554,3 +554,24 @@ describe("Coordinateur — retour du club, 2026-10-02 : mêmes droits qu'un admi
     expect(fbiWrites.respond).not.toHaveBeenCalled();
   });
 });
+
+describe("GET /v1/public/clubs/:clubSlug/table-leaderboard — visible de tous", () => {
+  it("sans jeton, uniquement ce club, avec la photo", async () => {
+    const past = { ...TARGET_MATCH, id: "match-past", match_datetime: new Date(Date.now() - 86_400_000).toISOString() };
+    state.matches = [past, { ...past, id: "match-b", club_id: CLUB_B.id }];
+    state.licencies = [{ ...THOMAS, photo_url: "https://example.test/t.webp" }, { ...LEA }];
+    state.tableAssignments = [
+      { id: "t1", club_id: CLUB_A.id, match_id: past.id, licencie_id: THOMAS.id, role: "SCORER", created_by: null },
+      { id: "t2", club_id: CLUB_B.id, match_id: "match-b", licencie_id: LEA.id, role: "SCORER", created_by: null },
+    ];
+
+    const res = await request("/table-leaderboard");
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.totalDone).toBe(1);
+    expect(body.entries).toEqual([
+      { rank: 1, licencie: { id: THOMAS.id, firstName: "Thomas", lastName: "Martin", photoUrl: "https://example.test/t.webp" }, done: 1, upcoming: 0, byRole: [{ role: "SCORER", count: 1 }] },
+    ]);
+  });
+});

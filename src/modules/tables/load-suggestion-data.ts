@@ -24,6 +24,8 @@ export interface ClubDayContext {
   existingTableAssignments: ExistingAssignmentOccurrence[];
   seasonAssignmentCountByLicencieId: Map<string, number>;
   todayAssignmentCountByLicencieId: Map<string, number>;
+  /** Photo de la fiche joueur (affichée dans le rond des affectations/suggestions, retour du club 2026-10-08). */
+  photoByLicencieId: Map<string, string>;
 }
 
 export async function loadClubDayContext(supabase: DbClient, clubId: string, targetMatchDatetime: Date, clubTimezone: string): Promise<ClubDayContext> {
@@ -34,7 +36,7 @@ export async function loadClubDayContext(supabase: DbClient, clubId: string, tar
     // Licenciés ACTIFS uniquement (§16 : un·e licencié·e ayant quitté le
     // club n'a pas à être suggéré·e) — contrairement à `GET .../licencies`
     // (liste admin, qui montre aussi les inactifs pour archivage).
-    supabase.from("licencies").select("id, first_name, last_name, team_id").eq("club_id", clubId).eq("active", true),
+    supabase.from("licencies").select("id, first_name, last_name, team_id, photo_url").eq("club_id", clubId).eq("active", true),
     supabase.from("teams").select("id, name, sexe").eq("club_id", clubId),
     supabase
       .from("matches")
@@ -109,5 +111,8 @@ export async function loadClubDayContext(supabase: DbClient, clubId: string, tar
     seasonAssignmentCountByLicencieId.set(a.licencie_id, (seasonAssignmentCountByLicencieId.get(a.licencie_id) ?? 0) + 1);
   }
 
-  return { candidates, teamMatches, existingTableAssignments, seasonAssignmentCountByLicencieId, todayAssignmentCountByLicencieId };
+  const photoByLicencieId = new Map<string, string>();
+  for (const l of licencies ?? []) if (l.photo_url) photoByLicencieId.set(l.id, l.photo_url);
+
+  return { candidates, teamMatches, existingTableAssignments, seasonAssignmentCountByLicencieId, todayAssignmentCountByLicencieId, photoByLicencieId };
 }

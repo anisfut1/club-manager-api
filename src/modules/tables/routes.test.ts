@@ -160,7 +160,7 @@ describe("GET .../table-suggestions — §50 : match extérieur qui chevauche re
     const res = await request(`/matches/${TARGET_MATCH.id}/table-suggestions?role=SCORER`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { unavailable: { licencie: { id: string }; reasonCode: string }[] };
-    expect(body.unavailable).toEqual([expect.objectContaining({ licencie: { id: "sarah", firstName: "Sarah", lastName: "Martin" }, reasonCode: "MATCH_CONFLICT" })]);
+    expect(body.unavailable).toEqual([expect.objectContaining({ licencie: { id: "sarah", firstName: "Sarah", lastName: "Martin", photoUrl: null }, reasonCode: "MATCH_CONFLICT" })]);
   });
 });
 

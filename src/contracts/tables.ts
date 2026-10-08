@@ -9,7 +9,10 @@ import { z } from "./zod.js";
 export const TableAssignmentRoleSchema = z.enum(["SCORER", "TIMEKEEPER", "CLUB_DELEGATE", "REFEREE"]).openapi("TableAssignmentRole");
 export type TableAssignmentRoleDto = z.infer<typeof TableAssignmentRoleSchema>;
 
-export const LicencieRefDtoSchema = z.object({ id: z.string().uuid(), firstName: z.string(), lastName: z.string() }).openapi("TableLicencieRefDto");
+/** `photoUrl` : photo de la fiche joueur quand elle est connue (affectations, suggestions, classement) — absente ailleurs. */
+export const LicencieRefDtoSchema = z
+  .object({ id: z.string().uuid(), firstName: z.string(), lastName: z.string(), photoUrl: z.string().nullable().optional() })
+  .openapi("TableLicencieRefDto");
 
 export const TeamRefDtoSchema = z.object({ id: z.string().uuid(), name: z.string() }).openapi("TableTeamRefDto");
 
@@ -147,3 +150,29 @@ export const TableAssignmentResultDtoSchema = z.object({ assignment: TableAssign
 export const PutRefereeStatusDtoSchema = z.object({ noRefereeNeeded: z.boolean() }).openapi("PutRefereeStatusDto");
 
 export const RefereeStatusResultDtoSchema = z.object({ refereeNotNeeded: z.boolean() }).openapi("RefereeStatusResultDto");
+
+/**
+ * Classement des tables de marque de la saison (retour du club,
+ * 2026-10-08 : « le tableau classement des tables visible de tous, top 3 en
+ * surbrillance avec leur tête »). Tables TENUES (match passé) uniquement ;
+ * ex æquo = même rang.
+ */
+export const TableLeaderboardEntryDtoSchema = z
+  .object({
+    rank: z.number().int(),
+    licencie: LicencieRefDtoSchema,
+    done: z.number().int(),
+    upcoming: z.number().int(),
+    byRole: z.array(z.object({ role: TableAssignmentRoleSchema, count: z.number().int() })),
+  })
+  .openapi("TableLeaderboardEntryDto");
+
+export const TableLeaderboardDtoSchema = z
+  .object({
+    seasonStart: z.string(),
+    totalDone: z.number().int(),
+    entries: z.array(TableLeaderboardEntryDtoSchema),
+  })
+  .openapi("TableLeaderboardDto");
+
+export type TableLeaderboardDto = z.infer<typeof TableLeaderboardDtoSchema>;

@@ -55,7 +55,7 @@ export async function loadHomeMatchOrThrow(supabase: DbClient, clubId: string, m
 
 export interface AssignmentSlotDto {
   id: string;
-  licencie: { id: string; firstName: string; lastName: string };
+  licencie: { id: string; firstName: string; lastName: string; photoUrl: string | null };
   teams: { id: string; name: string }[];
   hasConflict: boolean;
   conflictReason: string | null;
@@ -89,7 +89,7 @@ export function buildAssignmentSlot(
 
   return {
     id: `${match.id}:${role}`,
-    licencie: { id: candidateInput.licencieId, firstName: candidateInput.firstName, lastName: candidateInput.lastName },
+    licencie: { id: candidateInput.licencieId, firstName: candidateInput.firstName, lastName: candidateInput.lastName, photoUrl: context.photoByLicencieId.get(candidateInput.licencieId) ?? null },
     teams: candidateTeamsDto(candidateInput),
     hasConflict: conflictResult !== null,
     conflictReason: conflictResult?.reason ?? null,
@@ -254,7 +254,7 @@ export async function assignTableRole(params: AssignTableRoleParams): Promise<As
 
   return {
     id: saved.id,
-    licencie: { id: params.licencie.id, firstName: params.licencie.firstName, lastName: params.licencie.lastName },
+    licencie: { id: params.licencie.id, firstName: params.licencie.firstName, lastName: params.licencie.lastName, photoUrl: context.photoByLicencieId.get(params.licencie.id) ?? null },
     teams: candidateTeamsDto(candidateInput),
     hasConflict: acceptedMatchConflict,
     conflictReason: acceptedMatchConflict ? conflictResult!.reason : null,
@@ -286,7 +286,7 @@ export async function removeTableRole(clubId: string, matchId: string, role: Tab
 function mapRankedCandidateToDto(candidate: RankedCandidate, context: ClubDayContext) {
   const teamNames = findTeamNames(context, candidate.licencieId);
   return {
-    licencie: { id: candidate.licencieId, firstName: candidate.firstName, lastName: candidate.lastName },
+    licencie: { id: candidate.licencieId, firstName: candidate.firstName, lastName: candidate.lastName, photoUrl: context.photoByLicencieId.get(candidate.licencieId) ?? null },
     teams: candidateTeamsDto({ teamIds: candidate.teamIds, teamNames }),
     eligibility: candidate.eligibility,
     priorityTier: candidate.priorityTier,
@@ -301,7 +301,7 @@ function mapRankedCandidateToDto(candidate: RankedCandidate, context: ClubDayCon
 function mapUnavailableCandidateToDto(candidate: UnavailableCandidate, context: ClubDayContext) {
   const teamNames = findTeamNames(context, candidate.licencieId);
   return {
-    licencie: { id: candidate.licencieId, firstName: candidate.firstName, lastName: candidate.lastName },
+    licencie: { id: candidate.licencieId, firstName: candidate.firstName, lastName: candidate.lastName, photoUrl: context.photoByLicencieId.get(candidate.licencieId) ?? null },
     teams: candidateTeamsDto({ teamIds: candidate.teamIds, teamNames }),
     eligibility: candidate.eligibility,
     reasonCode: candidate.reasonCode,

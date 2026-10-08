@@ -86,6 +86,7 @@ import {
 } from "./contracts/derogation-requests.js";
 import { PublicHomeDtoSchema } from "./contracts/public-home.js";
 import { PublicPlayerProfileDtoSchema } from "./contracts/public-players.js";
+import { TableLeaderboardDtoSchema } from "./contracts/tables.js";
 import { ClubMemberListDtoSchema, InviteMemberDtoSchema, SetMemberRolesDtoSchema } from "./contracts/members.js";
 import { ClubVenueAdminDtoSchema, ClubVenueListDtoSchema, UpdateClubVenueDtoSchema } from "./contracts/club-venues.js";
 import { PoolStandingsListDtoSchema } from "./contracts/standings.js";
@@ -636,6 +637,14 @@ registry.registerPath({
   // Classements FFBB des poules où le club est engagé — retour du club, 2026-10-01.
   request: { params: clubSlugParam },
   responses: { 200: jsonResponse("Classements FFBB (copiés à chaque synchronisation)", PoolStandingsListDtoSchema), 404: jsonResponse("Introuvable", ErrorEnvelopeSchema) },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/public/clubs/{clubSlug}/table-leaderboard",
+  // Classement des tables de marque, visible de tous — retour du club, 2026-10-08.
+  request: { params: clubSlugParam },
+  responses: { 200: jsonResponse("Classement des tables tenues cette saison (ex æquo = même rang)", TableLeaderboardDtoSchema), 404: jsonResponse("Introuvable", ErrorEnvelopeSchema) },
 });
 
 registry.registerPath({
