@@ -238,3 +238,35 @@ Jamais un archivage déguisé : pour un·e licencié·e qui a quitté le club
 mais dont on veut garder la fiche/l'historique, `PATCH .../profile` avec
 `active: false` (déjà existant) reste le bon geste — la suppression est
 pour une fiche créée par erreur/en double, jamais pour "désactiver".
+
+## Import automatique depuis FBI (2026-10-08)
+
+Retour du club : *« faire un système qui importe automatiquement les
+licenciés, c'est une galère de le faire manuellement, faut être technique,
+et faut que tout soit pour les nuls »*.
+
+- **Chaque jour** (job `import_licences`, empilé avec le calendrier et les
+  dérogations par `enqueueFbiVerificationJobsForClub`) et **sur demande**
+  (`POST /v1/clubs/:clubId/licencies/import/fbi`, bouton de la page
+  Joueurs) : dans la session FBI du club, écran « Gestion des licences »
+  (`rechercherLicence.fbi`), filtre « Validation : Validé », RECHERCHER,
+  puis bouton Excel ; le fichier est lu en mémoire, jamais stocké
+  (`BrowserFbiClient.downloadValidatedLicencesExport`,
+  `jobs/process-import-licences.ts`).
+- **Secours sans FBI** : l'admin dépose le fichier Excel téléchargé
+  lui-même (`POST …/licencies/import/file`, multipart `file`). Même
+  traitement.
+- Lecture : `modules/licencies/fbi-licence-export.ts` (en-têtes réels :
+  N° national, Numéro, Nom, Prénom, Né(e) le, Catégorie, Sexe…).
+- Mise à jour : `modules/licencies/sync-from-fbi.ts`. Rapprochement par
+  N° national, sinon par numéro de licence pour une fiche créée sans
+  N° national. Catégorie, sexe et numéro suivent FBI ; date de naissance
+  seulement si absente ; **nom, prénom, email, téléphone, photo, équipe et
+  rôles jamais modifiés**. Fiche désactivée qui réapparaît : réactivée.
+  Fiche absente de l'export : comptée (`notInExport`), **jamais désactivée
+  automatiquement**.
+- Historique : `licence_import_runs` (compteurs seulement), lu par
+  `GET …/licencies/import/status` pour « Dernière mise à jour ».
+- Simulation sur la base réelle avant mise en service (fichier du club du
+  2026-10-08, 190 licences validées) : 9 nouveaux, 1 fiche rattachée par
+  numéro de licence, 180 inchangés, 0 absent.

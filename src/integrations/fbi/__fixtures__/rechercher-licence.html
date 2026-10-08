@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<!--
+  Écran « Gestion des licences » SYNTHÉTIQUE : reprend uniquement les
+  éléments de la vraie page rechercherLicence.fbi fournie par le club le
+  2026-10-08 (formulaire #rechercherLicence, liste #statutValidationComite
+  options ""/"1"/"2", bouton #rechercher → rechercherLicenceAjax() qui POSTe
+  rechercherLicence.fbi?action=controleRecherche, tableau #tableauResultats
+  masqué jusqu'à la recherche, lien .boutonExcelNew → exportExcel()). Aucune
+  donnée réelle. L'export n'est servi QUE si la recherche a été lancée avec
+  « Validé » — le test vérifie ainsi que le filtre est bien appliqué.
+-->
+<html>
+  <head><title>FBI - Rechercher une licence</title></head>
+  <body>
+    <form id="rechercherLicence" name="rechercherLicence" action="/fbi/rechercherLicence.fbi" method="post">
+      <input type="text" name="rechercheLicenceForm.rechercheLicenceBean.lbNom" id="lbNom" />
+      <select name="rechercheLicenceForm.rechercheLicenceBean.statutValidationComite" id="statutValidationComite" style="display: none">
+        <option value="">Validation</option>
+        <option value="1">Validé</option>
+        <option value="2">Non validé</option>
+      </select>
+      <button id="rechercher" type="button" onclick="rechercherLicenceAjax()">RECHERCHER</button>
+      <div id="tableauResultats" style="display: none">
+        <a href="#" class="boutonExcelNew" onclick="return exportExcel();">Excel</a>
+        <table id="getTableauLicence"></table>
+      </div>
+    </form>
+    <script>
+      var searchedWith = null;
+      function rechercherLicenceAjax() {
+        var body = new URLSearchParams(new FormData(document.getElementById("rechercherLicence"))).toString();
+        fetch("rechercherLicence.fbi?action=controleRecherche", { method: "POST", body: body, headers: { "content-type": "application/x-www-form-urlencoded" } }).then(function () {
+          searchedWith = document.getElementById("statutValidationComite").value;
+          document.getElementById("tableauResultats").style.display = "block";
+        });
+      }
+      function exportExcel() {
+        if (searchedWith === "1") window.location.href = "exportLicence.fbi";
+        return false;
+      }
+    </script>
+  </body>
+</html>

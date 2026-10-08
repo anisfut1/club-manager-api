@@ -58,6 +58,9 @@ export async function processJobBatch(
       } else if (job.type === "check_derogation") {
         const { processCheckDerogationJob } = await import("./process-check-derogation.js");
         jobSucceeded = await processCheckDerogationJob(supabase, job);
+      } else if (job.type === "import_licences") {
+        const { processImportLicencesJob } = await import("./process-import-licences.js");
+        jobSucceeded = await processImportLicencesJob(supabase, job);
       } else if (job.type === "check_all_derogations") {
         const { processCheckAllDerogationsJob } = await import("./process-check-all-derogations.js");
         jobSucceeded = await processCheckAllDerogationsJob(supabase, job);

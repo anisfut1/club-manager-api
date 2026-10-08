@@ -41,6 +41,8 @@ import {
   ImportLicenciesDtoSchema,
   CreateLicencieDtoSchema,
   ImportLicenciesResultDtoSchema,
+  LicenceSyncResultDtoSchema,
+  LicenceImportStatusDtoSchema,
   AutoAssignTeamsResultDtoSchema,
   DeleteLicencieResultDtoSchema,
 } from "./contracts/licencies.js";
@@ -885,6 +887,39 @@ registry.registerPath({
   // doc de la route (routes.ts) pour le dédoublonnage par ffbbLicenceId.
   request: { params: clubIdParam, body: { content: { "application/json": { schema: ImportLicenciesDtoSchema } } } },
   responses: { 200: jsonResponse("Import terminé (total/inserted/skipped)", ImportLicenciesResultDtoSchema), ...errorResponses, ...validationResponses },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/clubs/{clubId}/licencies/import/file",
+  security: bearerAuth,
+  // club_admin : fichier Excel FBI « Rechercher une licence » (filtre Validé) déposé tel quel (multipart, champ `file`). Jamais stocké.
+  request: {
+    params: clubIdParam,
+    body: { content: { "multipart/form-data": { schema: z.object({ file: z.any().openapi({ type: "string", format: "binary" }) }) } } },
+  },
+  responses: { 200: jsonResponse("Licenciés mis à jour (compteurs)", LicenceSyncResultDtoSchema), ...errorResponses, ...validationResponses },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/clubs/{clubId}/licencies/import/fbi",
+  security: bearerAuth,
+  // club_admin : demande une mise à jour depuis FBI maintenant (job `import_licences`, aussi lancé chaque jour).
+  request: { params: clubIdParam },
+  responses: {
+    202: jsonResponse("Mise à jour demandée", z.object({ jobId: z.string().nullable(), alreadyQueued: z.boolean() })),
+    409: jsonResponse("Identifiants FBI non enregistrés (FBI_NOT_CONFIGURED)", ErrorEnvelopeSchema),
+    ...errorResponses,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/clubs/{clubId}/licencies/import/status",
+  security: bearerAuth,
+  request: { params: clubIdParam },
+  responses: { 200: jsonResponse("Dernière mise à jour des licenciés et demande FBI en cours", LicenceImportStatusDtoSchema), ...errorResponses },
 });
 
 registry.registerPath({

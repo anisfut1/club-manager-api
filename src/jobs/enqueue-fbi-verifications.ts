@@ -16,6 +16,8 @@ export interface EnqueueFbiVerificationJobsResult {
   reconcileScheduleAlreadyQueued: boolean;
   checkAllDerogationsCreated: boolean;
   checkAllDerogationsAlreadyQueued: boolean;
+  importLicencesCreated: boolean;
+  importLicencesAlreadyQueued: boolean;
   skippedNotConfigured: boolean;
 }
 
@@ -56,6 +58,8 @@ export async function enqueueFbiVerificationJobsForClub(supabase: DbClient, club
     reconcileScheduleAlreadyQueued: false,
     checkAllDerogationsCreated: false,
     checkAllDerogationsAlreadyQueued: false,
+    importLicencesCreated: false,
+    importLicencesAlreadyQueued: false,
     skippedNotConfigured: false,
   };
 
@@ -96,11 +100,25 @@ export async function enqueueFbiVerificationJobsForClub(supabase: DbClient, club
     }
   }
 
+  // Licences validées (retour du club, 2026-10-08 : « importe automatiquement les licenciés ») : une fois par jour aussi.
+  if (await hasRecentJob(supabase, clubId, "import_licences")) {
+    result.importLicencesAlreadyQueued = true;
+  } else {
+    const { error: licencesError } = await supabase.from("fbi_jobs").insert({ club_id: clubId, type: "import_licences" });
+    if (!licencesError) {
+      result.importLicencesCreated = true;
+    } else if (licencesError.code === UNIQUE_VIOLATION) {
+      result.importLicencesAlreadyQueued = true;
+    } else {
+      logError("Création du job d'import des licences échouée (cron)", licencesError, { clubId });
+    }
+  }
+
   return result;
 }
 
 /** Un job de ce type a-t-il déjà été créé pour ce club dans la fenêtre "aujourd'hui" (tous statuts confondus) ? */
-async function hasRecentJob(supabase: DbClient, clubId: string, type: "reconcile_schedule" | "check_all_derogations"): Promise<boolean> {
+async function hasRecentJob(supabase: DbClient, clubId: string, type: "reconcile_schedule" | "check_all_derogations" | "import_licences"): Promise<boolean> {
   const since = new Date(Date.now() - ALREADY_RAN_TODAY_WINDOW_MS).toISOString();
   const { data, error } = await supabase.from("fbi_jobs").select("id").eq("club_id", clubId).eq("type", type).gte("created_at", since).limit(1);
 

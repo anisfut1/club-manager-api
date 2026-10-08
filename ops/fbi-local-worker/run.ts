@@ -63,6 +63,7 @@ const { enqueueFbiVerificationJobsForClub } = await import("../../src/jobs/enque
 const { processReconcileScheduleJob } = await import("../../src/jobs/process-reconcile-schedule.js");
 const { processCheckAllDerogationsJob } = await import("../../src/jobs/process-check-all-derogations.js");
 const { processCheckDerogationJob } = await import("../../src/jobs/process-check-derogation.js");
+const { processImportLicencesJob } = await import("../../src/jobs/process-import-licences.js");
 const { processDiscoverEmarqueJobInSession } = await import("../../src/jobs/process-discover-emarque.js");
 const { checkFbiReachability, recordFbiReachability, recentFbiCredentialLogin } = await import("../../src/integrations/fbi/fbi-diagnostics.js");
 const { getFbiCredentials } = await import("../../src/integrations/fbi/credentials-store.js");
@@ -238,6 +239,7 @@ const JOB_LABELS: Record<string, string> = {
   reconcile_schedule: "calendrier FBI",
   check_all_derogations: "dérogations (toutes)",
   check_derogation: "dérogation",
+  import_licences: "licences validées",
   test_connection: "test de connexion",
 };
 
@@ -255,6 +257,8 @@ async function runJob(job: Awaited<ReturnType<typeof claimNextJobForClub>> & obj
       return (await processCheckAllDerogationsJob(supabase, job, shared)) ? "dérogations vérifiées" : "erreur (nouvel essai planifié)";
     case "check_derogation":
       return (await processCheckDerogationJob(supabase, job, shared)) ? "dérogation vérifiée" : "erreur (nouvel essai planifié)";
+    case "import_licences":
+      return (await processImportLicencesJob(supabase, job, shared)) ? "licenciés mis à jour" : "erreur (nouvel essai planifié)";
     case "test_connection": {
       // La session gardée vient d'être vérifiée authentifiée en début de passe.
       const now = new Date().toISOString();

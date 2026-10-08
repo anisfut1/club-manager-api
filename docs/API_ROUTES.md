@@ -1,7 +1,7 @@
 # Inventaire des routes de l'API
 
 > Fichier **généré** par `npm run docs:routes` (ops/docs/generate-routes-doc.ts) — ne pas modifier à la main.
-> 122 routes montées dans le code, 115 décrites dans le contrat OpenAPI (`/openapi.json`, `/docs`).
+> 125 routes montées dans le code, 118 décrites dans le contrat OpenAPI (`/openapi.json`, `/docs`).
 
 Accès : **Compte connecté** = JWT Supabase (`Authorization: Bearer`), droits vérifiés par club ; **Public** = sans compte ; **Public (lien perso si action)** = lecture libre, écriture avec le jeton du lien personnel ; **Secret cron** = `CRON_SECRET`.
 
@@ -88,6 +88,9 @@ Accès : **Compte connecté** = JWT Supabase (`Authorization: Bearer`), droits v
 | PATCH | `/v1/clubs/:clubId/licencies/:licencieId/profile` | Compte connecté | Profil mis à jour (champs admin, ou contact/photo si le licencié lui-même) |
 | POST | `/v1/clubs/:clubId/licencies/auto-assign-teams` | Compte connecté | Répartition terminée (total/assigned/skipped) |
 | POST | `/v1/clubs/:clubId/licencies/import` | Compte connecté | Import terminé (total/inserted/skipped) |
+| POST | `/v1/clubs/:clubId/licencies/import/fbi` | Compte connecté | Mise à jour demandée |
+| POST | `/v1/clubs/:clubId/licencies/import/file` | Compte connecté | Licenciés mis à jour (compteurs) |
+| GET | `/v1/clubs/:clubId/licencies/import/status` | Compte connecté | Dernière mise à jour des licenciés et demande FBI en cours |
 
 ## Club — matches
 

@@ -15,7 +15,11 @@ import {
   type ImportLicenciesResultDto,
   type AutoAssignTeamsResultDto,
   type DeleteLicencieResultDto,
+  type LicenceImportStatusDto,
+  type LicenceSyncResultDto,
 } from "../../contracts/licencies.js";
+import { LicenceExportError, MAX_EXPORT_BYTES, parseFbiLicenceExport } from "./fbi-licence-export.js";
+import { recordLicenceImportRun, syncLicenciesFromFbi } from "./sync-from-fbi.js";
 import { rejectedFieldsFor, resolveLicencieEditPermission } from "./profile-fields.js";
 import { requireClubRole } from "../../auth/middleware.js";
 import { autoAssignTeamsForClub } from "./auto-assign-teams.js";
@@ -454,6 +458,85 @@ licenciesRouter.post("/import", requireClubRole("club_admin"), async (c) => {
     skipped: body.data.licencies.length - toInsert.length,
   };
   return c.json(result);
+});
+
+/**
+ * POST /v1/clubs/:clubId/licencies/import/file — l'admin dépose le fichier
+ * Excel téléchargé depuis FBI (« Gestion des licences », filtre Validé,
+ * bouton Excel), tel quel : aucun copier-coller, aucune colonne à préparer
+ * (retour du club, 2026-10-08 : « faut que tout soit pour les nuls »). Même
+ * traitement que la mise à jour automatique (`syncLicenciesFromFbi`). Le
+ * fichier n'est jamais stocké.
+ */
+licenciesRouter.post("/import/file", requireClubRole("club_admin"), async (c) => {
+  const { club } = c.get("club");
+  const user = c.get("user");
+
+  const body = await c.req.parseBody().catch(() => null);
+  const file = body?.file;
+  if (!file || typeof file === "string") throw badRequest("Ajoute le fichier Excel téléchargé depuis FBI.", "FILE_REQUIRED");
+  if (file.size > MAX_EXPORT_BYTES) throw badRequest("Fichier trop volumineux pour un export de licences FBI.", "NOT_A_LICENCE_EXPORT");
+
+  let parsed;
+  try {
+    parsed = await parseFbiLicenceExport(new Uint8Array(await file.arrayBuffer()));
+  } catch (error) {
+    if (error instanceof LicenceExportError) throw badRequest(error.message, error.code);
+    throw error;
+  }
+
+  const serviceSupabase = createServiceSupabaseClient();
+  const result = await syncLicenciesFromFbi(serviceSupabase, club.id, parsed.rows);
+  await recordLicenceImportRun(serviceSupabase, club.id, "file", result, user.id);
+  return c.json(result satisfies LicenceSyncResultDto);
+});
+
+/**
+ * POST /v1/clubs/:clubId/licencies/import/fbi — « Mettre à jour depuis FBI
+ * maintenant » : empile un job `import_licences` (un seul à la fois par
+ * club), traité dans la session FBI du club. Le même job part aussi tout
+ * seul une fois par jour (`enqueueFbiVerificationJobsForClub`).
+ */
+licenciesRouter.post("/import/fbi", requireClubRole("club_admin"), async (c) => {
+  const { club } = c.get("club");
+  const serviceSupabase = createServiceSupabaseClient();
+
+  const { data: status } = await serviceSupabase.from("fbi_integration_status").select("configured").eq("club_id", club.id).maybeSingle();
+  if (!status?.configured) throw conflict("Enregistre d'abord les identifiants FBI du club (Intégrations → FBI), ou dépose le fichier Excel.", "FBI_NOT_CONFIGURED");
+
+  const { data: active } = await serviceSupabase.from("fbi_jobs").select("id").eq("club_id", club.id).eq("type", "import_licences").in("status", ["pending", "claimed", "running"]).limit(1);
+  if (active?.[0]) return c.json({ jobId: active[0].id, alreadyQueued: true }, 202);
+
+  const { data: job, error } = await serviceSupabase.from("fbi_jobs").insert({ club_id: club.id, type: "import_licences" }).select("id").single();
+  if (error?.code === "23505") {
+    const { data: again } = await serviceSupabase.from("fbi_jobs").select("id").eq("club_id", club.id).eq("type", "import_licences").in("status", ["pending", "claimed", "running"]).limit(1);
+    return c.json({ jobId: again?.[0]?.id ?? null, alreadyQueued: true }, 202);
+  }
+  if (error || !job) throw new Error(`Demande de mise à jour FBI échouée : ${error?.message}`);
+  return c.json({ jobId: job.id, alreadyQueued: false }, 202);
+});
+
+/** GET /v1/clubs/:clubId/licencies/import/status — dernière mise à jour et demande FBI en cours, pour l'écran Joueurs. */
+licenciesRouter.get("/import/status", requireClubRole("club_admin"), async (c) => {
+  const { club } = c.get("club");
+  const serviceSupabase = createServiceSupabaseClient();
+
+  const [{ data: status }, { data: runs }, { data: jobs }] = await Promise.all([
+    serviceSupabase.from("fbi_integration_status").select("configured").eq("club_id", club.id).maybeSingle(),
+    serviceSupabase.from("licence_import_runs").select("source, created_at, total, inserted, updated, reactivated, unchanged, not_in_export").eq("club_id", club.id).order("created_at", { ascending: false }).limit(1),
+    serviceSupabase.from("fbi_jobs").select("id, status, created_at, finished_at, last_error").eq("club_id", club.id).eq("type", "import_licences").order("created_at", { ascending: false }).limit(1),
+  ]);
+
+  const run = runs?.[0];
+  const job = jobs?.[0];
+  const dto: LicenceImportStatusDto = {
+    fbiConfigured: Boolean(status?.configured),
+    lastRun: run
+      ? { source: run.source, at: run.created_at, total: run.total, inserted: run.inserted, updated: run.updated, reactivated: run.reactivated, unchanged: run.unchanged, notInExport: run.not_in_export }
+      : null,
+    job: job ? { id: job.id, status: job.status, createdAt: job.created_at, finishedAt: job.finished_at, error: job.status === "succeeded" ? null : job.last_error } : null,
+  };
+  return c.json(dto);
 });
 
 /**

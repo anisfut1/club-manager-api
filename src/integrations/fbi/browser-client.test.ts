@@ -973,3 +973,39 @@ describe("BrowserFbiClient.downloadDocument", () => {
     await client.closeSession(session);
   });
 });
+
+describe("BrowserFbiClient.downloadValidatedLicencesExport — « Gestion des licences », filtre Validé, bouton Excel", () => {
+  beforeEach(() => {
+    server.setRoute({ path: "/rechercherLicence.fbi", contentType: "text/html", body: fixture("rechercher-licence.html") });
+    server.setRoute({ path: "/rechercherLicence.fbi", method: "POST", action: "controleRecherche", contentType: "text/html", body: "<table></table>" });
+    server.setRoute({
+      path: "/exportLicence.fbi",
+      contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      headers: { "content-disposition": 'attachment; filename="rechercherLicence.xlsx"' },
+      body: Buffer.from("contenu-xlsx-synthetique"),
+    });
+  });
+
+  it("choisit « Validé », lance la recherche, puis récupère le fichier du bouton Excel", async () => {
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+    try {
+      const { buffer, fileName } = await client.downloadValidatedLicencesExport(session);
+      expect(buffer.toString("utf8")).toBe("contenu-xlsx-synthetique");
+      expect(fileName).toBe("rechercherLicence.xlsx");
+    } finally {
+      await client.closeSession(session);
+    }
+  });
+
+  it("écran non reconnu : erreur claire, aucun téléchargement", async () => {
+    server.setRoute({ path: "/rechercherLicence.fbi", contentType: "text/html", body: "<html><body><p>Maintenance</p></body></html>" });
+    const client = new BrowserFbiClient({ baseUrl: server.baseUrl, browser, navigationSettleMs: 50 });
+    const session = await client.login({ username: "club1234", password: "secret" });
+    try {
+      await expect(client.downloadValidatedLicencesExport(session)).rejects.toMatchObject({ code: "NAVIGATION_FAILED" });
+    } finally {
+      await client.closeSession(session);
+    }
+  });
+});

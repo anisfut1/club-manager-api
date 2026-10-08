@@ -63,12 +63,14 @@ describe("enqueueFbiVerificationJobsForClub (cron daily, voir docs/FBI.md)", () 
       reconcileScheduleAlreadyQueued: false,
       checkAllDerogationsCreated: false,
       checkAllDerogationsAlreadyQueued: false,
+      importLicencesCreated: false,
+      importLicencesAlreadyQueued: false,
       skippedNotConfigured: true,
     });
     expect(insertedRows).toHaveLength(0);
   });
 
-  it("empile UN job reconcile_schedule ET UN job check_all_derogations quand FBI est configuré", async () => {
+  it("empile UN job reconcile_schedule, UN check_all_derogations et UN import_licences (licences validées) quand FBI est configuré", async () => {
     const insertedRows: Array<{ club_id: string; type: string }> = [];
     const supabase = makeFakeSupabase({ fbiStatus: { configured: true }, insertedRows });
 
@@ -79,11 +81,14 @@ describe("enqueueFbiVerificationJobsForClub (cron daily, voir docs/FBI.md)", () 
       reconcileScheduleAlreadyQueued: false,
       checkAllDerogationsCreated: true,
       checkAllDerogationsAlreadyQueued: false,
+      importLicencesCreated: true,
+      importLicencesAlreadyQueued: false,
       skippedNotConfigured: false,
     });
     expect(insertedRows).toEqual([
       { club_id: CLUB_ID, type: "reconcile_schedule" },
       { club_id: CLUB_ID, type: "check_all_derogations" },
+      { club_id: CLUB_ID, type: "import_licences" },
     ]);
   });
 
@@ -91,7 +96,7 @@ describe("enqueueFbiVerificationJobsForClub (cron daily, voir docs/FBI.md)", () 
     const insertedRows: Array<{ club_id: string; type: string }> = [];
     const supabase = makeFakeSupabase({
       fbiStatus: { configured: true },
-      alreadyQueuedTypes: ["reconcile_schedule", "check_all_derogations"],
+      alreadyQueuedTypes: ["reconcile_schedule", "check_all_derogations", "import_licences"],
       insertedRows,
     });
 
@@ -102,6 +107,8 @@ describe("enqueueFbiVerificationJobsForClub (cron daily, voir docs/FBI.md)", () 
       reconcileScheduleAlreadyQueued: true,
       checkAllDerogationsCreated: false,
       checkAllDerogationsAlreadyQueued: true,
+      importLicencesCreated: false,
+      importLicencesAlreadyQueued: true,
       skippedNotConfigured: false,
     });
     expect(insertedRows).toHaveLength(0);
@@ -111,7 +118,7 @@ describe("enqueueFbiVerificationJobsForClub (cron daily, voir docs/FBI.md)", () 
     const insertedRows: Array<{ club_id: string; type: string }> = [];
     const supabase = makeFakeSupabase({
       fbiStatus: { configured: true },
-      recentTypes: ["reconcile_schedule", "check_all_derogations"],
+      recentTypes: ["reconcile_schedule", "check_all_derogations", "import_licences"],
       insertedRows,
     });
 
@@ -122,6 +129,8 @@ describe("enqueueFbiVerificationJobsForClub (cron daily, voir docs/FBI.md)", () 
       reconcileScheduleAlreadyQueued: true,
       checkAllDerogationsCreated: false,
       checkAllDerogationsAlreadyQueued: true,
+      importLicencesCreated: false,
+      importLicencesAlreadyQueued: true,
       skippedNotConfigured: false,
     });
     expect(insertedRows).toHaveLength(0);

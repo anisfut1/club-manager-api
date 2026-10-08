@@ -2721,6 +2721,68 @@ export class BrowserFbiClient {
    * lien "Déconnexion" à cliquer — best-effort strict : jamais bloquer la
    * fermeture du contexte local si la déconnexion serveur échoue.
    */
+  /**
+   * Export Excel des licences VALIDÉES du club (retour du club, 2026-10-08 :
+   * « tu as le chemin pour récupérer les licences, filtre Validé, ensuite
+   * avec l'excel téléchargé ça s'exploite »). Écran « Gestion des licences »
+   * (`rechercherLicence.fbi`, page fournie par le club) : liste
+   * `#statutValidationComite` sur « Validé » (`1`), bouton RECHERCHER
+   * (`rechercherLicenceAjax()`), puis le bouton Excel du tableau de
+   * résultats (`.boutonExcelNew`, `exportExcel()`) — le fichier est récupéré
+   * par l'événement de téléchargement du navigateur, sans deviner l'URL
+   * d'export. Lecture seule : aucune donnée modifiée côté FBI.
+   */
+  async downloadValidatedLicencesExport(session: BrowserFbiSession): Promise<{ buffer: Buffer; fileName: string }> {
+    const { page } = session;
+    await this.humanPause(page, 1200, 2500);
+    const response = await page.goto(`${this.baseUrl}/rechercherLicence.fbi`, { waitUntil: "domcontentloaded", timeout: 45_000 }).catch((error: unknown) => {
+      throw new FbiError(`Écran « Gestion des licences » injoignable (${error instanceof Error ? error.message.split("\n")[0] : String(error)}).`, "NAVIGATION_FAILED", error);
+    });
+    if (response && !response.ok()) throw new FbiError(`Écran « Gestion des licences » : réponse HTTP ${response.status()}.`, "NAVIGATION_FAILED");
+    if (await selectors.looksLikeLoginPage(page)) throw new FbiError("Session FBI expirée : page d'identification affichée.", "SESSION_EXPIRED");
+    if ((await page.locator("#statutValidationComite").count()) === 0 || (await page.locator("#rechercher").count()) === 0) {
+      throw new FbiError("Écran « Gestion des licences » non reconnu (filtre Validation ou bouton RECHERCHER introuvable).", "NAVIGATION_FAILED");
+    }
+    await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => undefined);
+    await this.humanPause(page, 800, 1800);
+
+    // Liste native masquée par bootstrap-select : on règle la valeur puis on rafraîchit l'affichage du plugin.
+    const applied = await page.evaluate(() => {
+      const select = document.getElementById("statutValidationComite") as HTMLSelectElement | null;
+      if (!select) return null;
+      select.value = "1";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      const jq = (window as unknown as { jQuery?: (el: Element) => { selectpicker?: (action: string) => void } }).jQuery;
+      try {
+        jq?.(select).selectpicker?.("refresh");
+      } catch {
+        // Affichage seulement : la valeur envoyée vient de la liste native.
+      }
+      return select.value;
+    });
+    if (applied !== "1") throw new FbiError("Impossible de choisir « Validé » dans le filtre Validation.", "NAVIGATION_FAILED");
+
+    const searchDone = page.waitForResponse((r) => r.url().includes("rechercherLicence.fbi") && r.request().method() === "POST", { timeout: 90_000 }).catch(() => null);
+    await page.locator("#rechercher").click();
+    if (!(await searchDone)) throw new FbiError("La recherche des licences validées n'a pas répondu à temps.", "REQUEST_FAILED");
+    await page.locator("#tableauResultats").waitFor({ state: "visible", timeout: 30_000 }).catch(() => undefined);
+    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => undefined);
+    await this.settle(page);
+    await this.humanPause(page, 1500, 3000);
+
+    const downloadPromise = page.waitForEvent("download", { timeout: 120_000 }).catch(() => null);
+    const excelButton = page.locator("#tableauResultats .boutonExcelNew, #rechercherLicence .boutonExcelNew").first();
+    if ((await excelButton.count()) > 0 && (await excelButton.isVisible().catch(() => false))) await excelButton.click();
+    else await page.evaluate(() => (window as unknown as { exportExcel?: () => unknown }).exportExcel?.());
+    const download = await downloadPromise;
+    if (!download) throw new FbiError("L'export Excel des licences n'a déclenché aucun téléchargement.", "REQUEST_FAILED");
+    const failure = await download.failure();
+    if (failure) throw new FbiError(`Téléchargement de l'export des licences interrompu (${failure}).`, "REQUEST_FAILED");
+    const buffer = await readFile(await download.path());
+    await download.delete().catch(() => undefined);
+    return { buffer, fileName: download.suggestedFilename() };
+  }
+
   /** Cookies de la session, pour la reprendre au passage suivant (chiffrés avant stockage). */
   async exportSessionState(session: BrowserFbiSession): Promise<string | null> {
     return session.context

@@ -254,3 +254,41 @@ export const DeleteLicencieResultDtoSchema = z
   .openapi("DeleteLicencieResultDto");
 
 export type DeleteLicencieResultDto = z.infer<typeof DeleteLicencieResultDtoSchema>;
+
+/**
+ * Import automatique des licenciés depuis FBI (retour du club, 2026-10-08) :
+ * compteurs d'un import (export « licences validées »), jamais de nom.
+ */
+export const LicenceSyncResultDtoSchema = z
+  .object({
+    total: z.number(),
+    inserted: z.number(),
+    updated: z.number(),
+    reactivated: z.number(),
+    unchanged: z.number(),
+    notInExport: z.number(),
+  })
+  .openapi("LicenceSyncResultDto");
+
+export type LicenceSyncResultDto = z.infer<typeof LicenceSyncResultDtoSchema>;
+
+export const LicenceImportStatusDtoSchema = z
+  .object({
+    /** Identifiants FBI enregistrés : la mise à jour automatique est possible. */
+    fbiConfigured: z.boolean(),
+    lastRun: LicenceSyncResultDtoSchema.extend({ source: z.enum(["fbi", "file"]), at: z.string() }).nullable(),
+    /** Demande de mise à jour depuis FBI en cours (ou dernière en échec, avec son message). */
+    job: z
+      .object({
+        id: z.string(),
+        status: z.enum(["pending", "claimed", "running", "succeeded", "failed"]),
+        createdAt: z.string(),
+        finishedAt: z.string().nullable(),
+        error: z.string().nullable(),
+      })
+      .nullable(),
+  })
+  .openapi("LicenceImportStatusDto");
+
+export type LicenceImportStatusDto = z.infer<typeof LicenceImportStatusDtoSchema>;
+

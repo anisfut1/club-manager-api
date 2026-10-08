@@ -51,7 +51,9 @@ npm run fbi:local-worker
   dans `.env.fbi-local` pour l'interdire.
 - Tous les jobs FBI du club passent par cette session : feuilles e-Marque,
   calendrier (`reconcile_schedule`), dérogations (`check_all_derogations`,
-  `check_derogation`) et test de connexion.
+  `check_derogation`), licences validées (`import_licences` : export Excel de
+  « Gestion des licences », filtre Validé, une fois par jour ou sur demande
+  depuis la page Joueurs) et test de connexion.
   Restent sur Vercel : les actions déclenchées à la main dans l'appli
   (vérifier/créer/répondre à une dérogation tout de suite).
 - Journal : `fbi-local-worker-<date>.jsonl` (sans identifiant, mot de passe

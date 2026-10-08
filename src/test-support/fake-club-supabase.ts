@@ -290,6 +290,7 @@ export interface FakeClubSupabaseState {
   derogationMessages: FakeRow[];
   matchDocuments: FakeMatchDocumentRow[];
   claimRequests: FakeRow[];
+  licenceImportRuns: FakeRow[];
   isPlatformAdmin: boolean;
   /** Clés `${clubId}:${integration}` actuellement verrouillées (voir try_acquire_sync_lock/release_sync_lock). */
   syncLocks: Set<string>;
@@ -324,6 +325,7 @@ export function makeFakeClubSupabaseState(overrides: Partial<FakeClubSupabaseSta
     derogationMessages: [],
     matchDocuments: [],
     claimRequests: [],
+    licenceImportRuns: [],
     isPlatformAdmin: false,
     syncLocks: new Set(),
     ...overrides,
@@ -688,7 +690,10 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
       const hasConflict = state.fbiJobs.some(
         (j) => j.club_id === payload.club_id && j.match_id === matchId && j.type === payload.type && blockingStatuses.includes(j.status),
       );
-      if (hasConflict) return Promise.resolve({ error: { code: "23505", message: "duplicate key value violates unique constraint" } });
+      // Thenable ET chaînable `.select("id").single()` (comme le vrai client).
+      const settle = <T extends { error: unknown }>(result: T, row: unknown) =>
+        Object.assign(Promise.resolve(result), { select: () => ({ single: () => Promise.resolve({ data: row, error: result.error }) }) });
+      if (hasConflict) return settle({ error: { code: "23505", message: "duplicate key value violates unique constraint" } }, null);
 
       fbiJobCounter += 1;
       const now = new Date().toISOString();
@@ -702,7 +707,7 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
         window_start: payload.window_start ?? null,
         created_at: now,
       });
-      return Promise.resolve({ error: null });
+      return settle({ error: null }, state.fbiJobs[state.fbiJobs.length - 1]);
     },
     // `.update(patch).eq(...).in(...).lt(...)`, thenable sans `.select()` —
     // même contrat que `licenciesTable.update`, voir reclaimStaleReconcileScheduleJob
@@ -1028,6 +1033,11 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
           return matchTableOfficialsTable;
         case "match_documents":
           return matchDocumentsTable;
+        case "licence_import_runs":
+          return mutableTable(
+            () => state.licenceImportRuns,
+            (rows) => (state.licenceImportRuns = rows),
+          );
         case "licencie_claim_requests":
           return mutableTable(
             () => state.claimRequests,

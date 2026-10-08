@@ -52,7 +52,7 @@ export type CoachRole = "principal" | "adjoint";
 export type RefereeRole = "referee_1" | "referee_2" | "referee_3";
 export type TableOfficialRole = "scorer" | "assistant_scorer" | "timekeeper" | "shot_clock_operator" | "commissioner" | "other";
 export type HistoricalSyncMode = "current_season" | "last_30_days" | "none";
-export type FbiJobType = "test_connection" | "discover_emarque" | "reconcile_schedule" | "check_derogation" | "check_all_derogations";
+export type FbiJobType = "test_connection" | "discover_emarque" | "reconcile_schedule" | "check_derogation" | "check_all_derogations" | "import_licences";
 export type FbiJobStatus = "pending" | "claimed" | "running" | "succeeded" | "failed";
 export type MatchDocumentType = "emarque_zip" | "match_sheet" | "summary" | "shot_chart" | "other";
 export type MatchDocumentStatus = "downloaded" | "parsing" | "imported" | "error";
@@ -589,6 +589,35 @@ export interface Database {
           expires_at?: string;
           decided_by?: string | null;
           decided_at?: string | null;
+        }
+      >;
+
+      licence_import_runs: Table<
+        {
+          id: string;
+          club_id: string;
+          source: "fbi" | "file";
+          created_at: string;
+          created_by: string | null;
+          total: number;
+          inserted: number;
+          updated: number;
+          reactivated: number;
+          unchanged: number;
+          not_in_export: number;
+        },
+        {
+          id?: string;
+          club_id: string;
+          source: "fbi" | "file";
+          created_at?: string;
+          created_by?: string | null;
+          total: number;
+          inserted: number;
+          updated: number;
+          reactivated: number;
+          unchanged: number;
+          not_in_export: number;
         }
       >;
 
