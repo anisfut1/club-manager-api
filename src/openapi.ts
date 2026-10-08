@@ -87,6 +87,7 @@ import {
 import { PublicHomeDtoSchema } from "./contracts/public-home.js";
 import { PublicPlayerProfileDtoSchema } from "./contracts/public-players.js";
 import { TableLeaderboardDtoSchema } from "./contracts/tables.js";
+import { PasswordResetDtoSchema } from "./modules/account/routes.js";
 import { ClubMemberListDtoSchema, InviteMemberDtoSchema, SetMemberRolesDtoSchema } from "./contracts/members.js";
 import { ClubVenueAdminDtoSchema, ClubVenueListDtoSchema, UpdateClubVenueDtoSchema } from "./contracts/club-venues.js";
 import { PoolStandingsListDtoSchema } from "./contracts/standings.js";
@@ -637,6 +638,14 @@ registry.registerPath({
   // Classements FFBB des poules où le club est engagé — retour du club, 2026-10-01.
   request: { params: clubSlugParam },
   responses: { 200: jsonResponse("Classements FFBB (copiés à chaque synchronisation)", PoolStandingsListDtoSchema), 404: jsonResponse("Introuvable", ErrorEnvelopeSchema) },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/account/password-reset",
+  // Mot de passe oublié — réponse identique que le compte existe ou non (retour du club, 2026-10-08).
+  request: { body: { content: { "application/json": { schema: PasswordResetDtoSchema } } } },
+  responses: { 200: jsonResponse("Demande prise en compte", z.object({ sent: z.literal(true) })), ...validationResponses },
 });
 
 registry.registerPath({

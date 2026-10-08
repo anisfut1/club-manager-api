@@ -7,6 +7,7 @@ import { computeClubCapabilities } from "../../tenancy/club-capabilities.js";
 import { logError } from "../../logger.js";
 import { GrantClubAdminDtoSchema, type PlatformClubDto } from "../../contracts/platform.js";
 import { listMembers } from "../members/routes.js";
+import { provisionClubAccount } from "../../auth/account-invites.js";
 import { DeleteOldSeasonsDtoSchema } from "../../contracts/maintenance.js";
 import { deleteMatchesBeforeCurrentSeason, purgeAllStoredEmarqueDocuments, retryFailedEmarqueImports } from "./maintenance.js";
 
@@ -209,22 +210,18 @@ platformRouter.post("/maintenance/retry-failed-emarque-imports", async (c) => {
 });
 
 async function inviteFirstClubAdmin(supabase: DbClient, clubId: string, email: string): Promise<void> {
-  const { data: existingUsers, error: listError } = await supabase.auth.admin.listUsers();
-  if (listError) throw new Error(`Recherche de l'utilisateur échouée : ${listError.message}`);
+  const { data: club, error: clubError } = await supabase.from("clubs").select("id, slug, name, logo_url, accent_color").eq("id", clubId).single();
+  if (clubError || !club) throw new Error(`Lecture du club échouée : ${clubError?.message}`);
 
-  let userId = existingUsers.users.find((u) => u.email?.toLowerCase() === email.toLowerCase())?.id;
-
-  if (!userId) {
-    const { data: invited, error: inviteError } = await supabase.auth.admin.inviteUserByEmail(email);
-    if (inviteError || !invited.user) {
-      throw new Error(`Invitation échouée : ${inviteError?.message ?? "aucun utilisateur retourné"}`);
-    }
-    userId = invited.user.id;
-  }
+  const account = await provisionClubAccount(supabase, {
+    email,
+    club: { slug: club.slug, name: club.name, logoUrl: club.logo_url ?? null, accentColor: club.accent_color ?? null },
+    roles: ["club_admin"],
+  });
 
   const { data: membership, error: membershipError } = await supabase
     .from("club_memberships")
-    .upsert({ club_id: clubId, user_id: userId, status: "active" }, { onConflict: "club_id,user_id" })
+    .upsert({ club_id: clubId, user_id: account.userId, status: "active" }, { onConflict: "club_id,user_id" })
     .select("id")
     .single();
 
@@ -238,5 +235,11 @@ async function inviteFirstClubAdmin(supabase: DbClient, clubId: string, email: s
 
   if (roleError) {
     throw new Error(`Attribution du rôle club_admin échouée : ${roleError.message}`);
+  }
+
+  try {
+    await account.sendEmail();
+  } catch {
+    throw badRequest("Administrateur nommé, mais l'email n'a pas pu partir. Réessaie dans quelques minutes pour le renvoyer.", "EMAIL_SEND_FAILED");
   }
 }

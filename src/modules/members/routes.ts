@@ -5,6 +5,7 @@ import { badRequest, conflict, notFound } from "../../api-error.js";
 import { createServiceSupabaseClient, type DbClient } from "../../db/client.js";
 import type { ClubRole } from "../../db/types.js";
 import { InviteMemberDtoSchema, SetMemberRolesDtoSchema } from "../../contracts/members.js";
+import { provisionClubAccount } from "../../auth/account-invites.js";
 
 /**
  * Gestion légère des membres et rôles d'un club (`club_admin`) — retour du
@@ -131,18 +132,21 @@ membersRouter.post("/", async (c) => {
   await assertTeamsBelongToClub(db, club.id, grants);
 
   const email = body.data.email.toLowerCase();
-  const { data: existing, error: listError } = await db.auth.admin.listUsers();
-  if (listError) throw new Error(`Recherche de l'utilisateur échouée : ${listError.message}`);
-  let userId = existing.users.find((u) => u.email?.toLowerCase() === email)?.id;
-  if (!userId) {
-    const { data: invited, error: inviteError } = await db.auth.admin.inviteUserByEmail(email);
-    if (inviteError || !invited.user) throw new Error(`Invitation échouée : ${inviteError?.message ?? "aucun utilisateur retourné"}`);
-    userId = invited.user.id;
-  }
+  // Compte + email Ball Manager (invitation ou « nouvel accès »), jamais l'email brut de Supabase Auth.
+  const account = await provisionClubAccount(db, {
+    email,
+    club: { slug: club.slug, name: club.name, logoUrl: club.logoUrl ?? null, accentColor: club.accentColor ?? null },
+    roles: grants.map((g) => g.role),
+  });
 
-  const { data: membership, error } = await db.from("club_memberships").upsert({ club_id: club.id, user_id: userId, status: "active" }, { onConflict: "club_id,user_id" }).select("id").single();
+  const { data: membership, error } = await db.from("club_memberships").upsert({ club_id: club.id, user_id: account.userId, status: "active" }, { onConflict: "club_id,user_id" }).select("id").single();
   if (error || !membership) throw new Error(`Création du membre échouée : ${error?.message}`);
   await replaceRoles(db, membership.id, grants);
+  try {
+    await account.sendEmail();
+  } catch {
+    throw badRequest("Membre ajouté, mais l'email n'a pas pu partir. Réessaie dans quelques minutes pour le renvoyer.", "EMAIL_SEND_FAILED");
+  }
 
   return c.json({ members: await listMembers(db, club.id, c.get("user").id) }, 201);
 });
