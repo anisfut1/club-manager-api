@@ -91,6 +91,7 @@ matchTablesRouter.put("/table-assignments/:role", async (c) => {
     role: role.data,
     licencie: { id: licencie.id, firstName: licencie.first_name, lastName: licencie.last_name, teamId: licencie.team_id },
     createdByUserId: user.id,
+    allowMatchConflict: body.data.ignoreMatchConflict === true,
   });
 
   return c.json({ assignment });

@@ -428,6 +428,7 @@ publicTablesRouter.put("/matches/:matchId/table-assignments/:role", async (c) =>
     licencie: target,
     createdByUserId: null,
     blockIfHeldBySomeoneElse: !manager,
+    allowMatchConflict: body.data.ignoreMatchConflict === true,
   });
 
   return c.json({ assignment });

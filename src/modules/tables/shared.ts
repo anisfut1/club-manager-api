@@ -195,6 +195,8 @@ export interface AssignTableRoleParams {
    * qui reste volontairement un remplacement direct — §77 "Modifier").
    */
   blockIfHeldBySomeoneElse?: boolean;
+  /** Confirmé par l'utilisateur : son équipe joue sur ce créneau mais il fait la table (seul MATCH_CONFLICT est levé, le conflit reste affiché). */
+  allowMatchConflict?: boolean;
 }
 
 /**
@@ -235,7 +237,8 @@ export async function assignTableRole(params: AssignTableRoleParams): Promise<As
     todayAssignmentCountByLicencieId: context.todayAssignmentCountByLicencieId,
   });
 
-  if (conflictResult) throw conflict(conflictResult.reason, conflictResult.code);
+  const acceptedMatchConflict = conflictResult?.code === "MATCH_CONFLICT" && params.allowMatchConflict === true;
+  if (conflictResult && !acceptedMatchConflict) throw conflict(conflictResult.reason, conflictResult.code);
 
   const serviceSupabase = createServiceSupabaseClient();
   const { data: saved, error } = await serviceSupabase
@@ -253,8 +256,8 @@ export async function assignTableRole(params: AssignTableRoleParams): Promise<As
     id: saved.id,
     licencie: { id: params.licencie.id, firstName: params.licencie.firstName, lastName: params.licencie.lastName },
     teams: candidateTeamsDto(candidateInput),
-    hasConflict: false,
-    conflictReason: null,
+    hasConflict: acceptedMatchConflict,
+    conflictReason: acceptedMatchConflict ? conflictResult!.reason : null,
   };
 }
 

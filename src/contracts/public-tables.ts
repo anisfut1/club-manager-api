@@ -111,7 +111,18 @@ export const PublicAssignRoleQueryDtoSchema = PublicTokenQueryDtoSchema.extend({
  * auto-positionnement ; avec un autre `licencieId` = désignation, réservée
  * aux coachs / admins du club (`tables.canManage`).
  */
-export const PublicAssignTableBodyDtoSchema = z.object({ licencieId: z.string().min(1).optional() }).openapi("PublicAssignTableBodyDto");
+export const PublicAssignTableBodyDtoSchema = z
+  .object({
+    licencieId: z.string().min(1).optional(),
+    /**
+     * Se positionner quand même alors que son équipe joue sur ce créneau
+     * (retour du club, 2026-10-08 : "il se peut qu'il ne joue pas le match
+     * et fasse la table"). Ne lève QUE le conflit MATCH_CONFLICT, jamais
+     * une autre table au même moment ni un autre poste du même match.
+     */
+    ignoreMatchConflict: z.boolean().optional(),
+  })
+  .openapi("PublicAssignTableBodyDto");
 
 /** Réutilise le même DTO de résultat que le flux admin (`{ assignment }}`) — même forme des deux côtés. */
 export const PublicAssignResultDtoSchema = z.object({ assignment: TableAssignmentSlotDtoSchema }).openapi("PublicAssignResultDto");

@@ -128,7 +128,13 @@ export const TableAssignmentsQueryDtoSchema = z
 export const TableAssignmentsListDtoSchema = z.object({ matches: z.array(TableAssignmentsForMatchDtoSchema) }).openapi("TableAssignmentsListDto");
 
 /** PUT .../table-assignments/:role (§40) — la SEULE action qui transforme une suggestion en affectation réelle. */
-export const PutTableAssignmentDtoSchema = z.object({ licencieId: z.string().uuid() }).openapi("PutTableAssignmentDto");
+export const PutTableAssignmentDtoSchema = z
+  .object({
+    licencieId: z.string().uuid(),
+    /** Affecter quand même alors que son équipe joue sur ce créneau (seul MATCH_CONFLICT est levé). */
+    ignoreMatchConflict: z.boolean().optional(),
+  })
+  .openapi("PutTableAssignmentDto");
 
 export const TableAssignmentResultDtoSchema = z.object({ assignment: TableAssignmentSlotDtoSchema }).openapi("TableAssignmentResultDto");
 

@@ -245,6 +245,31 @@ describe("PUT .../table-assignments/:role — §40/§58 : seule action qui crée
     expect(state.tableAssignments).toHaveLength(1); // inchangé, aucune écriture en cas de conflit
   });
 
+  it("son équipe joue sur le créneau : 409 MATCH_CONFLICT, puis affecté « quand même » sur confirmation (retour du club, 2026-10-08), conflit toujours signalé", async () => {
+    const SARAH = "55555555-5555-4555-8555-555555555555";
+    state.matches = [TARGET_MATCH, AWAY_MATCH];
+    state.licencies = [licencie({ id: SARAH, first_name: "Sarah", last_name: "Martin", team_id: TEAM_U13F.id })];
+
+    const refused = await request(`/matches/${TARGET_MATCH.id}/table-assignments/SCORER`, { method: "PUT", body: JSON.stringify({ licencieId: SARAH }) });
+    expect(refused.status).toBe(409);
+    expect(((await refused.json()) as { error: { code: string } }).error.code).toBe("MATCH_CONFLICT");
+    expect(state.tableAssignments).toHaveLength(0);
+
+    const forced = await request(`/matches/${TARGET_MATCH.id}/table-assignments/SCORER`, { method: "PUT", body: JSON.stringify({ licencieId: SARAH, ignoreMatchConflict: true }) });
+    expect(forced.status).toBe(200);
+    const body = (await forced.json()) as { assignment: { hasConflict: boolean; conflictReason: string | null } };
+    expect(body.assignment.hasConflict).toBe(true);
+    expect(body.assignment.conflictReason).toContain("Match extérieur");
+    expect(state.tableAssignments).toHaveLength(1);
+  });
+
+  it("« quand même » ne lève jamais un autre conflit (autre poste sur ce match)", async () => {
+    state.licencies = [licencie({ id: L1, team_id: null })];
+    state.tableAssignments = [{ id: "existing", club_id: CLUB_A.id, match_id: TARGET_MATCH.id, role: "SCORER", licencie_id: L1, created_by: "user-admin" }];
+    const res = await request(`/matches/${TARGET_MATCH.id}/table-assignments/TIMEKEEPER`, { method: "PUT", body: JSON.stringify({ licencieId: L1, ignoreMatchConflict: true }) });
+    expect(res.status).toBe(409);
+  });
+
   it("409 ALREADY_ASSIGNED_ON_MATCH si le candidat occupe déjà un AUTRE rôle sur CE match (§11/§28)", async () => {
     state.licencies = [licencie({ id: L1, team_id: null })];
     state.tableAssignments = [{ id: "existing", club_id: CLUB_A.id, match_id: TARGET_MATCH.id, role: "SCORER", licencie_id: L1, created_by: "user-admin" }];
