@@ -1,5 +1,7 @@
 # API
 
+> Inventaire complet et à jour de toutes les routes : [API_ROUTES.md](API_ROUTES.md) (généré par `npm run docs:routes`).
+
 Spec complète et à jour : `GET /openapi.json` (générée depuis `src/contracts/*.ts`
 via `src/openapi.ts`) ou `GET /docs` (Swagger UI). Ce document donne la vue
 d'ensemble ; ne le laisse pas diverger de la génération automatique — en

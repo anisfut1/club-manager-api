@@ -1,0 +1,297 @@
+# Inventaire des routes de l'API
+
+> Fichier **généré** par `npm run docs:routes` (ops/docs/generate-routes-doc.ts) — ne pas modifier à la main.
+> 117 routes montées dans le code, 110 décrites dans le contrat OpenAPI (`/openapi.json`, `/docs`).
+
+Accès : **Compte connecté** = JWT Supabase (`Authorization: Bearer`), droits vérifiés par club ; **Public** = sans compte ; **Public (lien perso si action)** = lecture libre, écriture avec le jeton du lien personnel ; **Secret cron** = `CRON_SECRET`.
+
+## Club — capabilities
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/clubs/:clubId/capabilities` | Compte connecté | Capacités du club (FBI facultatif) |
+
+## Club — club
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/clubs/:clubId` | Compte connecté | Détail du club |
+| PATCH | `/v1/clubs/:clubId` | Compte connecté | Club mis à jour (branding uniquement) |
+
+## Club — derogation-requests
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/clubs/:clubId/derogation-requests` | Compte connecté | Inbox coordinateur / demandes du coach |
+| POST | `/v1/clubs/:clubId/derogation-requests` | Compte connecté | Demande créée (créneau revalidé côté serveur) |
+| DELETE | `/v1/clubs/:clubId/derogation-requests/:requestId` | Compte connecté | Demande supprimée |
+| GET | `/v1/clubs/:clubId/derogation-requests/:requestId` | Compte connecté | Demande, match, propositions, conversation, permissions |
+| POST | `/v1/clubs/:clubId/derogation-requests/:requestId/actions` | Compte connecté | Statut mis à jour + événement système |
+| POST | `/v1/clubs/:clubId/derogation-requests/:requestId/messages` | Compte connecté | Message ajouté (demande à jour) |
+| POST | `/v1/clubs/:clubId/derogation-requests/:requestId/official` | Compte connecté | Résultat FBI réel + demande à jour |
+| POST | `/v1/clubs/:clubId/derogation-requests/:requestId/proposals` | Compte connecté | Nouveau créneau proposé (historique conservé) |
+| GET | `/v1/clubs/:clubId/derogation-requests/context` | Compte connecté | Demandeur, coordinateur configuré, gymnases, matchs éligibles |
+
+## Club — derogations
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/clubs/:clubId/derogations` | Compte connecté | Toutes les dérogations connues du club |
+| POST | `/v1/clubs/:clubId/derogations/:derogationId/respond` | Compte connecté | Résultat RÉEL renvoyé par FBI (success/error/unknown) |
+
+## Club — emarque-imports
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/clubs/:clubId/emarque-imports` | Compte connecté | Imports e-Marque du club (filtrés, paginés) |
+
+## Club — emarque-tracking
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/clubs/:clubId/emarque-tracking` | Compte connecté | État de récupération des statistiques de chaque match joué de la saison |
+| POST | `/v1/clubs/:clubId/emarque-tracking/:matchId/relaunch` | Compte connecté | Relance enregistrée : essai au prochain passage, puis 7 jours au calendrier fixe |
+
+## Club — integrations
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/clubs/:clubId/integrations` | Compte connecté | Statut des intégrations |
+| PATCH | `/v1/clubs/:clubId/integrations/fbi` | Compte connecté | Réglages FBI mis à jour |
+| POST | `/v1/clubs/:clubId/integrations/fbi` | Compte connecté | Identifiants enregistrés (jamais le mot de passe) |
+| POST | `/v1/clubs/:clubId/integrations/fbi/check-all-derogations` | Compte connecté | Résultat immédiat de la vérification globale FBI |
+| POST | `/v1/clubs/:clubId/integrations/fbi/parse-documents` | Compte connecté | Lot de documents e-Marque téléchargés du club parsés (OCR/PDF, jamais de navigateur) |
+| POST | `/v1/clubs/:clubId/integrations/fbi/process-jobs` | Compte connecté | Lot de jobs FBI du club traité (discover_emarque/test_connection en attente) |
+| POST | `/v1/clubs/:clubId/integrations/fbi/reconcile-schedule` | Compte connecté | Job de rapprochement calendrier FFBB/FBI empilé (un seul par club à la fois) |
+| POST | `/v1/clubs/:clubId/integrations/fbi/test` | Compte connecté | Résultat du test (HttpFbiClient, ou BrowserFbiClient en repli) |
+| PATCH | `/v1/clubs/:clubId/integrations/ffbb` | Compte connecté | Intégration FFBB mise à jour (jamais de suppression de l'historique déjà synchronisé) |
+| POST | `/v1/clubs/:clubId/integrations/ffbb/sync` | Compte connecté | Résultat de la synchronisation |
+| GET | `/v1/clubs/:clubId/integrations/sync-runs` | Compte connecté | Historique des synchronisations |
+
+## Club — issues
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/clubs/:clubId/issues` | Compte connecté | Anomalies e-Marque à vérifier |
+| POST | `/v1/clubs/:clubId/issues/:matchId/resolve` | Compte connecté | Anomalie résolue |
+
+## Club — licencies
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/clubs/:clubId/licencies` | Compte connecté | Roster du club |
+| POST | `/v1/clubs/:clubId/licencies` | Compte connecté | Licencié créé |
+| DELETE | `/v1/clubs/:clubId/licencies/:licencieId` | Compte connecté | Licencié supprimé |
+| GET | `/v1/clubs/:clubId/licencies/:licencieId` | Compte connecté | Fiche joueur : identité, historique des matchs, statistiques par match |
+| DELETE | `/v1/clubs/:clubId/licencies/:licencieId/photo` | Compte connecté | Photo retirée |
+| POST | `/v1/clubs/:clubId/licencies/:licencieId/photo` | Compte connecté | Photo enregistrée, fiche à jour |
+| PATCH | `/v1/clubs/:clubId/licencies/:licencieId/profile` | Compte connecté | Profil mis à jour (champs admin, ou contact/photo si le licencié lui-même) |
+| POST | `/v1/clubs/:clubId/licencies/auto-assign-teams` | Compte connecté | Répartition terminée (total/assigned/skipped) |
+| POST | `/v1/clubs/:clubId/licencies/import` | Compte connecté | Import terminé (total/inserted/skipped) |
+
+## Club — matches
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/clubs/:clubId/matches` | Compte connecté | Matchs du club (filtrés, paginés) |
+| GET | `/v1/clubs/:clubId/matches/:matchId` | Compte connecté | Détail du match |
+| GET | `/v1/clubs/:clubId/matches/:matchId/derogation` | Compte connecté | Dernier état connu de la dérogation de ce match (null si aucune) |
+| GET | `/v1/clubs/:clubId/matches/:matchId/derogation-availability` | Compte connecté | Occupation des gymnases + créneaux candidats (match cible exclu) |
+| GET | `/v1/clubs/:clubId/matches/:matchId/derogation-slot-check` | Compte connecté | Vérification serveur d'une heure personnalisée |
+| POST | `/v1/clubs/:clubId/matches/:matchId/derogation/check` | Compte connecté | Résultat immédiat de la vérification FBI de ce match |
+| POST | `/v1/clubs/:clubId/matches/:matchId/derogation/create` | Compte connecté | Résultat RÉEL renvoyé par FBI (success/error/unknown) |
+| POST | `/v1/clubs/:clubId/matches/:matchId/derogation/respond` | Compte connecté | Résultat RÉEL renvoyé par FBI (success/error/unknown) |
+| GET | `/v1/clubs/:clubId/matches/:matchId/documents` | Compte connecté | Documents e-Marque du match |
+| PUT | `/v1/clubs/:clubId/matches/:matchId/referee-status` | Compte connecté | Statut arbitre enregistré |
+| DELETE | `/v1/clubs/:clubId/matches/:matchId/table-assignments/:role` | Compte connecté | Affectation retirée (poste remis à 'À attribuer') |
+| PUT | `/v1/clubs/:clubId/matches/:matchId/table-assignments/:role` | Compte connecté | Affectation enregistrée |
+| GET | `/v1/clubs/:clubId/matches/:matchId/table-suggestions` | Compte connecté | Candidats classés (recommandés/disponibles/indisponibles) pour ce rôle sur ce match |
+
+## Club — members
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/clubs/:clubId/members` | Compte connecté | Membres du club et leurs rôles |
+| POST | `/v1/clubs/:clubId/members` | Compte connecté | Membre invité/rattaché |
+| PUT | `/v1/clubs/:clubId/members/:membershipId/roles` | Compte connecté | Rôles remplacés |
+
+## Club — standings
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/clubs/:clubId/standings` | Compte connecté | Classements FFBB des poules où le club est engagé |
+
+## Club — table-assignments
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/clubs/:clubId/table-assignments` | Compte connecté | Matchs à domicile du club, avec leurs 4 postes (affectés ou 'à attribuer') |
+| GET | `/v1/clubs/:clubId/table-assignments/public-access` | Compte connecté | État des accès publics par licencié (revendiqué ou non) |
+| POST | `/v1/clubs/:clubId/table-assignments/public-access/:licencieId/link` | Compte connecté | Lien personnel du licencié |
+| POST | `/v1/clubs/:clubId/table-assignments/public-access/:licencieId/reset` | Compte connecté | Accès public réinitialisé |
+
+## Club — teams
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/clubs/:clubId/teams` | Compte connecté | Équipes du club (y compris sans engagement FFBB, voir docs/TEAMS.md) |
+| POST | `/v1/clubs/:clubId/teams` | Compte connecté | Équipe créée |
+| PATCH | `/v1/clubs/:clubId/teams/:teamId` | Compte connecté | Équipe mise à jour |
+
+## Club — venues
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/clubs/:clubId/venues` | Compte connecté | Gymnases du club |
+| PATCH | `/v1/clubs/:clubId/venues/:venueId` | Compte connecté | Gymnase mis à jour |
+
+## Compte (sans session)
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| POST | `/v1/account/password-reset` | Public | Demande prise en compte |
+
+## Général — clubs
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/clubs` | Compte connecté | Clubs dont l'utilisateur est membre |
+
+## Général — jobs
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/jobs/:jobId` | Compte connecté | Statut du job |
+
+## Général — me
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/me` | Compte connecté | Utilisateur courant |
+
+## Interne (tâches planifiées)
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/internal/cron/emarque-parse` | Secret cron |  |
+| GET | `/internal/cron/fbi-enqueue` | Secret cron |  |
+| GET | `/internal/cron/fbi-jobs` | Secret cron |  |
+| GET | `/internal/cron/fbi-reachability` | Secret cron |  |
+| GET | `/internal/cron/ffbb` | Secret cron |  |
+
+## Plateforme (platform_admin)
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/platform/clubs` | Compte connecté | Clubs de la plateforme (platform_admin) |
+| POST | `/v1/platform/clubs` | Compte connecté | Club créé |
+| POST | `/v1/platform/clubs/:clubId/admins` | Compte connecté | Administrateur nommé (compte invité s'il n'existait pas) |
+| DELETE | `/v1/platform/clubs/:clubId/admins/:membershipId` | Compte connecté | Rôle administrateur retiré (jamais le dernier) |
+| GET | `/v1/platform/clubs/:clubId/members` | Compte connecté | Membres et rôles du club (platform_admin) |
+| POST | `/v1/platform/maintenance/delete-old-seasons` | Compte connecté | Matchs des saisons précédentes supprimés (cascade FK sur toutes les données liées) |
+| POST | `/v1/platform/maintenance/purge-emarque-documents` | Compte connecté | Purge terminée (idempotente, jamais destructive pour les stats déjà en base) |
+| POST | `/v1/platform/maintenance/retry-failed-emarque-imports` | Compte connecté | Nouvelle tentative terminée (réutilise le fichier déjà en Storage, jamais un nouveau téléchargement FBI) |
+
+## Public — club
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/public/clubs/:clubSlug` | Public (lien perso si action) | Infos club minimales (aucune donnée membre/rôle) |
+
+## Public — derogation-requests
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/public/clubs/:clubSlug/derogation-requests` | Public (lien perso si action) | Demandes visibles (espace public) |
+| POST | `/v1/public/clubs/:clubSlug/derogation-requests` | Public (lien perso si action) | Demande créée (espace public) |
+| DELETE | `/v1/public/clubs/:clubSlug/derogation-requests/:requestId` | Public (lien perso si action) | Demande supprimée (espace public) |
+| GET | `/v1/public/clubs/:clubSlug/derogation-requests/:requestId` | Public (lien perso si action) | Demande + conversation (espace public) |
+| POST | `/v1/public/clubs/:clubSlug/derogation-requests/:requestId/actions` | Public (lien perso si action) | Statut mis à jour |
+| POST | `/v1/public/clubs/:clubSlug/derogation-requests/:requestId/messages` | Public (lien perso si action) | Message ajouté |
+| POST | `/v1/public/clubs/:clubSlug/derogation-requests/:requestId/official` | Public (lien perso si action) | Résultat FBI réel + demande à jour |
+| POST | `/v1/public/clubs/:clubSlug/derogation-requests/:requestId/proposals` | Public (lien perso si action) | Nouveau créneau proposé |
+| GET | `/v1/public/clubs/:clubSlug/derogation-requests/availability` | Public (lien perso si action) | Occupation des gymnases (espace public) |
+| GET | `/v1/public/clubs/:clubSlug/derogation-requests/context` | Public (lien perso si action) | Contexte (espace public) |
+| GET | `/v1/public/clubs/:clubSlug/derogation-requests/slot-check` | Public (lien perso si action) | Vérification d'une heure (espace public) |
+
+## Public — derogations
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/public/clubs/:clubSlug/derogations` | Public (lien perso si action) | Dérogations connues du club |
+| POST | `/v1/public/clubs/:clubSlug/derogations/:derogationId/respond` | Public (lien perso si action) | Résultat de l'envoi à FBI |
+
+## Public — home
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/public/clubs/:clubSlug/home` | Public (lien perso si action) | Accueil personnel |
+
+## Public — licencies
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/public/clubs/:clubSlug/licencies` | Public (lien perso si action) | Roster pour choisir son nom (`claimed` seulement, jamais qui) |
+| POST | `/v1/public/clubs/:clubSlug/licencies/:licencieId/request-link` | Public (lien perso si action) | Lien personnel envoyé par email (adresse masquée) |
+
+## Public — matches
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/public/clubs/:clubSlug/matches` | Public (lien perso si action) | Matchs du club (filtrés, paginés) — mêmes filtres que la route authentifiée |
+| GET | `/v1/public/clubs/:clubSlug/matches/:matchId` | Public (lien perso si action) | Détail du match (composition, statistiques, officiels, e-Marque) |
+| GET | `/v1/public/clubs/:clubSlug/matches/:matchId/derogation` | Public (lien perso si action) | Dernier état connu de la dérogation de ce match (null si aucune) |
+| POST | `/v1/public/clubs/:clubSlug/matches/:matchId/derogation/create` | Public (lien perso si action) | Résultat de l'envoi à FBI |
+| GET | `/v1/public/clubs/:clubSlug/matches/:matchId/documents` | Public (lien perso si action) | Documents e-Marque du match — `downloadUrl` toujours `null` (jamais d'URL signée en public) |
+| PUT | `/v1/public/clubs/:clubSlug/matches/:matchId/referee-status` | Public (lien perso si action) | Statut arbitre enregistré |
+| DELETE | `/v1/public/clubs/:clubSlug/matches/:matchId/table-assignments/:role` | Public (lien perso si action) | Affectation retirée |
+| PUT | `/v1/public/clubs/:clubSlug/matches/:matchId/table-assignments/:role` | Public (lien perso si action) | Affectation enregistrée |
+| GET | `/v1/public/clubs/:clubSlug/matches/:matchId/table-suggestions` | Public (lien perso si action) | Candidats classés pour ce poste |
+
+## Public — me
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/public/clubs/:clubSlug/me` | Public (lien perso si action) | Identité résolue depuis le jeton |
+
+## Public — players
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/public/clubs/:clubSlug/players/:licencieId` | Public (lien perso si action) | Fiche joueur publique (saison en cours, matchs publiés uniquement) |
+
+## Public — standings
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/public/clubs/:clubSlug/standings` | Public (lien perso si action) | Classements FFBB (copiés à chaque synchronisation) |
+
+## Public — table-assignments
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/public/clubs/:clubSlug/table-assignments` | Public (lien perso si action) | Même contenu que la vue admin, avec `me` |
+
+## Public — table-leaderboard
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/public/clubs/:clubSlug/table-leaderboard` | Public (lien perso si action) | Classement des tables tenues cette saison (ex æquo = même rang) |
+
+## Public — teams
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/public/clubs/:clubSlug/teams` | Public (lien perso si action) | Équipes du club (pour le filtre de la liste des matchs) |
+
+## Technique
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/docs` | Public |  |
+| GET | `/health` | Public | État du service |
+| GET | `/openapi.json` | Public |  |
+
+## Écarts code / contrat
+
+Aucun.

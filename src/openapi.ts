@@ -736,7 +736,7 @@ registry.registerPath({
 
 registry.registerPath({
   method: "get",
-  path: "/v1/clubs/{clubId}/sync-runs",
+  path: "/v1/clubs/{clubId}/integrations/sync-runs",
   security: bearerAuth,
   request: { params: clubIdParam },
   responses: { 200: jsonResponse("Historique des synchronisations", z.object({ syncRuns: z.array(SyncRunDtoSchema) })), ...errorResponses },
