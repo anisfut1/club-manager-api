@@ -50,7 +50,7 @@ async function replaceRoles(db: DbClient, membershipId: string, grants: readonly
   if (error) throw new Error(`Mise à jour des rôles échouée : ${error.message}`);
 }
 
-async function listMembers(db: DbClient, clubId: string, currentUserId: string) {
+export async function listMembers(db: DbClient, clubId: string, currentUserId: string) {
   const { data: memberships, error } = await db.from("club_memberships").select("id, user_id, status, licencie_id").eq("club_id", clubId);
   if (error) throw new Error(`Lecture des membres échouée : ${error.message}`);
   const rows = memberships ?? [];

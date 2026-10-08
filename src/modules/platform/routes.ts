@@ -2,10 +2,11 @@ import { Hono } from "hono";
 import type { AppEnv } from "../../auth/context.js";
 import { requireAuth, requirePlatformAdmin } from "../../auth/middleware.js";
 import { createServiceSupabaseClient, type DbClient } from "../../db/client.js";
-import { badRequest } from "../../api-error.js";
+import { badRequest, conflict, notFound } from "../../api-error.js";
 import { computeClubCapabilities } from "../../tenancy/club-capabilities.js";
 import { logError } from "../../logger.js";
-import type { PlatformClubDto } from "../../contracts/platform.js";
+import { GrantClubAdminDtoSchema, type PlatformClubDto } from "../../contracts/platform.js";
+import { listMembers } from "../members/routes.js";
 import { DeleteOldSeasonsDtoSchema } from "../../contracts/maintenance.js";
 import { deleteMatchesBeforeCurrentSeason, purgeAllStoredEmarqueDocuments, retryFailedEmarqueImports } from "./maintenance.js";
 
@@ -99,6 +100,67 @@ platformRouter.post("/clubs", async (c) => {
   return c.json({ clubId: club.id, slug: club.slug, adminInviteError }, 201);
 });
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function loadClubOrThrow(supabase: DbClient, clubId: string | undefined): Promise<{ id: string; slug: string; name: string }> {
+  if (!clubId || !UUID.test(clubId)) throw notFound("Club introuvable.");
+  const { data } = await supabase.from("clubs").select("id, slug, name").eq("id", clubId).maybeSingle();
+  if (!data) throw notFound("Club introuvable.");
+  return { id: data.id, slug: data.slug, name: data.name };
+}
+
+/**
+ * GET /v1/platform/clubs/:clubId/members — membres et rôles d'un club, vus
+ * par l'opérateur de la plateforme (retour du club, 2026-10-08 : « dans
+ * l'espace clubs, il faut que je voie les admins, qui je mets en admin »).
+ * Même lecture que `GET /v1/clubs/:clubId/members`, sans exiger d'être
+ * membre du club.
+ */
+platformRouter.get("/clubs/:clubId/members", async (c) => {
+  const supabase = createServiceSupabaseClient();
+  const club = await loadClubOrThrow(supabase, c.req.param("clubId"));
+  return c.json({ club, members: await listMembers(supabase, club.id, c.get("user").id) });
+});
+
+/** POST /v1/platform/clubs/:clubId/admins — nomme administrateur du club (invite le compte s'il n'existe pas, garde ses autres rôles). */
+platformRouter.post("/clubs/:clubId/admins", async (c) => {
+  const body = GrantClubAdminDtoSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!body.success) throw badRequest(body.error.issues.map((i) => i.message).join(" "));
+  const supabase = createServiceSupabaseClient();
+  const club = await loadClubOrThrow(supabase, c.req.param("clubId"));
+  await inviteFirstClubAdmin(supabase, club.id, body.data.email.toLowerCase());
+  return c.json({ club, members: await listMembers(supabase, club.id, c.get("user").id) }, 201);
+});
+
+/**
+ * DELETE /v1/platform/clubs/:clubId/admins/:membershipId — retire le rôle
+ * administrateur (les autres rôles et l'accès au club restent). Jamais le
+ * dernier administrateur actif : le club ne doit pas se retrouver sans
+ * personne pour le gérer.
+ */
+platformRouter.delete("/clubs/:clubId/admins/:membershipId", async (c) => {
+  const supabase = createServiceSupabaseClient();
+  const club = await loadClubOrThrow(supabase, c.req.param("clubId"));
+  const membershipId = c.req.param("membershipId");
+
+  const { data: memberships } = await supabase.from("club_memberships").select("id, status").eq("club_id", club.id);
+  const target = (memberships ?? []).find((m) => m.id === membershipId);
+  if (!target) throw notFound("Membre introuvable.");
+
+  const activeIds = (memberships ?? []).filter((m) => m.status === "active").map((m) => m.id);
+  const { data: adminRows } = activeIds.length
+    ? await supabase.from("membership_roles").select("membership_id").eq("role", "club_admin").in("membership_id", activeIds)
+    : { data: [] as { membership_id: string }[] };
+  const adminIds = new Set((adminRows ?? []).map((r) => r.membership_id));
+  if (adminIds.has(target.id) && adminIds.size <= 1) {
+    throw conflict("C'est le dernier administrateur de ce club : nommes-en un autre avant de retirer celui-ci.", "LAST_CLUB_ADMIN");
+  }
+
+  const { error } = await supabase.from("membership_roles").delete().eq("membership_id", target.id).eq("role", "club_admin");
+  if (error) throw new Error(`Retrait du rôle administrateur échoué : ${error.message}`);
+  return c.json({ club, members: await listMembers(supabase, club.id, c.get("user").id) });
+});
+
 /**
  * POST /v1/platform/maintenance/purge-emarque-documents — retour du club,
  * 2026-09-29 : "je veux juste l'interpréter, récupérer les stats et
@@ -162,7 +224,7 @@ async function inviteFirstClubAdmin(supabase: DbClient, clubId: string, email: s
 
   const { data: membership, error: membershipError } = await supabase
     .from("club_memberships")
-    .upsert({ club_id: clubId, user_id: userId }, { onConflict: "club_id,user_id" })
+    .upsert({ club_id: clubId, user_id: userId, status: "active" }, { onConflict: "club_id,user_id" })
     .select("id")
     .single();
 

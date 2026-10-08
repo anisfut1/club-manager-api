@@ -22,7 +22,7 @@ import {
 } from "./contracts/derogations.js";
 import { IssueDtoSchema } from "./contracts/issues.js";
 import { JobStatusDtoSchema } from "./contracts/jobs.js";
-import { PlatformClubDtoSchema, CreateClubDtoSchema } from "./contracts/platform.js";
+import { PlatformClubDtoSchema, CreateClubDtoSchema, PlatformClubMembersDtoSchema, GrantClubAdminDtoSchema } from "./contracts/platform.js";
 import {
   PurgeEmarqueDocumentsResultDtoSchema,
   DeleteOldSeasonsDtoSchema,
@@ -881,6 +881,32 @@ registry.registerPath({
   security: bearerAuth,
   request: { body: { content: { "application/json": { schema: CreateClubDtoSchema } } } },
   responses: { 201: jsonResponse("Club créé", z.object({ clubId: z.string().uuid(), slug: z.string(), adminInviteError: z.string().nullable() })), ...errorResponses },
+});
+
+const platformClubIdParams = z.object({ clubId: z.string().uuid() });
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/platform/clubs/{clubId}/members",
+  security: bearerAuth,
+  request: { params: platformClubIdParams },
+  responses: { 200: jsonResponse("Membres et rôles du club (platform_admin)", PlatformClubMembersDtoSchema), ...errorResponses },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/platform/clubs/{clubId}/admins",
+  security: bearerAuth,
+  request: { params: platformClubIdParams, body: { content: { "application/json": { schema: GrantClubAdminDtoSchema } } } },
+  responses: { 201: jsonResponse("Administrateur nommé (compte invité s'il n'existait pas)", PlatformClubMembersDtoSchema), ...errorResponses, ...validationResponses },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/v1/platform/clubs/{clubId}/admins/{membershipId}",
+  security: bearerAuth,
+  request: { params: z.object({ clubId: z.string().uuid(), membershipId: z.string().uuid() }) },
+  responses: { 200: jsonResponse("Rôle administrateur retiré (jamais le dernier)", PlatformClubMembersDtoSchema), ...errorResponses },
 });
 
 registry.registerPath({
