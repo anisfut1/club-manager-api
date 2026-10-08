@@ -71,7 +71,25 @@ export const RequestPersonalLinkDtoSchema = z
   .openapi("RequestPersonalLinkDto");
 
 /** `maskedEmail` (ex: `c***@gmail.com`) : jamais l'adresse complète renvoyée à un visiteur anonyme. */
-export const RequestPersonalLinkResultDtoSchema = z.object({ sent: z.literal(true), maskedEmail: z.string() }).openapi("RequestPersonalLinkResultDto");
+/**
+ * `sent` : lien envoyé à l'adresse déjà connue (`maskedEmail`). `pendingApproval` :
+ * fiche sans adresse, la demande attend la validation d'un admin du club (rien n'est envoyé avant).
+ */
+export const RequestPersonalLinkResultDtoSchema = z
+  .object({ sent: z.boolean(), maskedEmail: z.string().nullable(), pendingApproval: z.boolean() })
+  .openapi("RequestPersonalLinkResultDto");
+
+/** Demande de lien en attente (fiche sans adresse), vue par les admins du club. */
+export const ClaimRequestDtoSchema = z
+  .object({
+    id: z.string().uuid(),
+    licencie: z.object({ id: z.string().uuid(), firstName: z.string(), lastName: z.string() }),
+    requestedEmail: z.string().nullable(),
+    createdAt: z.string(),
+    expiresAt: z.string(),
+  })
+  .openapi("ClaimRequestDto");
+export const ClaimRequestListDtoSchema = z.object({ requests: z.array(ClaimRequestDtoSchema) }).openapi("ClaimRequestListDto");
 
 /** `isClubAdmin` : le licencié est rattaché à un compte club_admin actif de CE club — seul cas où la vue publique des dérogations s'ouvre. */
 export const PublicMeDtoSchema = z

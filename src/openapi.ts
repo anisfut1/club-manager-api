@@ -70,6 +70,7 @@ import {
   LicencieSearchDtoSchema,
   LicencieSearchResultDtoSchema,
   AccessRequestDtoSchema,
+  ClaimRequestListDtoSchema,
 } from "./contracts/public-tables.js";
 import {
   CreateDerogationRequestDtoSchema,
@@ -123,6 +124,7 @@ const clubAndJobParams = z.object({ jobId: z.string().uuid() });
 const clubAndMatchIssueParams = clubIdParam.extend({ matchId: z.string().uuid() });
 const clubAndMatchAndRoleParams = clubAndMatchIdParams.extend({ role: TableAssignmentRoleSchema });
 const clubAndLicencieIdParams = clubIdParam.extend({ licencieId: z.string().uuid() });
+const clubAndRequestIdParams = clubIdParam.extend({ requestId: z.string().uuid() });
 
 const clubSlugParam = z.object({ clubSlug: z.string().openapi({ description: "Slug du club (flux public sans compte)" }) });
 const clubSlugAndLicencieIdParams = clubSlugParam.extend({ licencieId: z.string().uuid() });
@@ -467,6 +469,39 @@ registry.registerPath({
   responses: { 200: jsonResponse("Lien personnel du licencié", PersonalLinkDtoSchema), ...errorResponses },
 });
 
+registry.registerPath({
+  method: "get",
+  path: "/v1/clubs/{clubId}/table-assignments/public-access/claims",
+  security: bearerAuth,
+  // club_admin : demandes de lien pour une fiche sans adresse connue (risque R-018) — rien n'est envoyé sans validation.
+  request: { params: clubIdParam },
+  responses: { 200: jsonResponse("Demandes en attente (non expirées)", ClaimRequestListDtoSchema), ...errorResponses },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/clubs/{clubId}/table-assignments/public-access/claims/{requestId}/approve",
+  security: bearerAuth,
+  request: { params: clubAndRequestIdParams },
+  responses: {
+    200: jsonResponse("Lien envoyé à l'adresse demandée, enregistrée sur la fiche", z.object({ approved: z.literal(true) })),
+    409: jsonResponse("Déjà traitée (ALREADY_DECIDED) ou expirée (EXPIRED)", ErrorEnvelopeSchema),
+    ...errorResponses,
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/clubs/{clubId}/table-assignments/public-access/claims/{requestId}/reject",
+  security: bearerAuth,
+  request: { params: clubAndRequestIdParams },
+  responses: {
+    200: jsonResponse("Demande refusée, rien n'est envoyé", z.object({ rejected: z.literal(true) })),
+    409: jsonResponse("Déjà traitée (ALREADY_DECIDED) ou expirée (EXPIRED)", ErrorEnvelopeSchema),
+    ...errorResponses,
+  },
+});
+
 /**
  * Flux PUBLIC sans compte (retour du club, 2026-09-29) — AUCUNE de ces
  * routes ne porte `security: bearerAuth` : il n'y a pas de session
@@ -494,7 +529,8 @@ registry.registerPath({
   // Le jeton n'est JAMAIS dans la réponse : uniquement envoyé par email (Resend) — retour du club, 2026-10-01.
   request: { params: clubSlugAndLicencieIdParams, body: { content: { "application/json": { schema: RequestPersonalLinkDtoSchema } } } },
   responses: {
-    200: jsonResponse("Lien personnel envoyé par email (adresse masquée)", RequestPersonalLinkResultDtoSchema),
+    200: jsonResponse("Lien personnel envoyé par email à l'adresse connue (adresse masquée)", RequestPersonalLinkResultDtoSchema),
+    202: jsonResponse("Fiche sans adresse : demande transmise aux administrateurs, rien n'est envoyé (pendingApproval)", RequestPersonalLinkResultDtoSchema),
     400: jsonResponse("Requête invalide ou email requis (EMAIL_REQUIRED)", ErrorEnvelopeSchema),
     404: jsonResponse("Introuvable", ErrorEnvelopeSchema),
     409: jsonResponse("Nom déjà choisi sans adresse email connue (ALREADY_CLAIMED)", ErrorEnvelopeSchema),

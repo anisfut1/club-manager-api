@@ -87,3 +87,22 @@ export function buildAccessRequestEmail(input: { club: ClubBranding; fullName: s
   });
   return { subject, html, text };
 }
+
+/** Demande de lien pour une fiche sans adresse connue : l'admin valide ou refuse (rien n'est envoyé à la personne avant). */
+export function buildClaimRequestEmail(input: { club: ClubBranding; licencieName: string; email: string; link: string }) {
+  const subject = `Lien demandé pour ${input.licencieName} — à valider`;
+  const { html, text } = renderEmail({
+    preheader: `Quelqu'un demande le lien personnel de ${input.licencieName}.`,
+    eyebrow: input.club.name,
+    title: "Demande de lien à valider",
+    paragraphs: [
+      `Quelqu'un a choisi la fiche de ${input.licencieName} dans l'espace public et demande que son lien personnel soit envoyé à ${input.email}.`,
+      "Cette fiche n'a pas d'adresse email enregistrée : rien n'a été envoyé. Si l'adresse est bien la sienne, approuve la demande ; sinon, refuse-la.",
+    ],
+    button: { label: "Voir les demandes", href: input.link },
+    footer: [`Tu reçois cet email parce que tu es administrateur de ${input.club.name} sur ${PLATFORM_NAME}. Sans réponse, la demande expire après 14 jours.`],
+    accentColor: input.club.accentColor,
+    logoUrl: input.club.logoUrl,
+  });
+  return { subject, html, text };
+}

@@ -289,6 +289,7 @@ export interface FakeClubSupabaseState {
   derogationProposals: FakeRow[];
   derogationMessages: FakeRow[];
   matchDocuments: FakeMatchDocumentRow[];
+  claimRequests: FakeRow[];
   isPlatformAdmin: boolean;
   /** Clés `${clubId}:${integration}` actuellement verrouillées (voir try_acquire_sync_lock/release_sync_lock). */
   syncLocks: Set<string>;
@@ -322,6 +323,7 @@ export function makeFakeClubSupabaseState(overrides: Partial<FakeClubSupabaseSta
     derogationProposals: [],
     derogationMessages: [],
     matchDocuments: [],
+    claimRequests: [],
     isPlatformAdmin: false,
     syncLocks: new Set(),
     ...overrides,
@@ -1026,6 +1028,15 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
           return matchTableOfficialsTable;
         case "match_documents":
           return matchDocumentsTable;
+        case "licencie_claim_requests":
+          return mutableTable(
+            () => state.claimRequests,
+            (rows) => (state.claimRequests = rows),
+            {
+              defaults: () => ({ status: "pending", return_to: "accueil", expires_at: new Date(Date.now() + 14 * 86_400_000).toISOString(), decided_by: null, decided_at: null }),
+              unique: (row, rows) => row.status === "pending" && rows.some((r) => r.licencie_id === row.licencie_id && r.status === "pending"),
+            },
+          );
         default:
           throw new Error(`Table inattendue dans le fake Supabase de test : ${table}`);
       }

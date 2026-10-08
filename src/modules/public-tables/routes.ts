@@ -12,7 +12,7 @@ import { assignTableRole, buildTableSuggestions, loadHomeMatchOrThrow, loadTable
 import { loadTableLeaderboard } from "../tables/leaderboard.js";
 import { checkQuery, searchRoster } from "./name-search.js";
 import { clientIp, hitRateLimit } from "../../security/rate-limit.js";
-import { buildAccessRequestEmail } from "../../email/account-emails.js";
+import { buildAccessRequestEmail, buildClaimRequestEmail } from "../../email/account-emails.js";
 import { PLATFORM_NAME } from "../../email/layout.js";
 import { AccessRequestDtoSchema } from "../../contracts/public-tables.js";
 import { logError } from "../../logger.js";
@@ -153,26 +153,7 @@ publicTablesRouter.post("/access-requests", async (c) => {
     return c.json({ error: { code: "RATE_LIMITED", message: "Ta demande a déjà été envoyée. Le club te répondra par email." } }, 429);
   }
 
-  const supabase = c.get("supabase");
-  const { data: memberships } = await supabase.from("club_memberships").select("id, user_id").eq("club_id", club.id).eq("status", "active");
-  const membershipIds = (memberships ?? []).map((m) => m.id);
-  const { data: adminRoles } = membershipIds.length
-    ? await supabase.from("membership_roles").select("membership_id").eq("role", "club_admin").in("membership_id", membershipIds)
-    : { data: [] as { membership_id: string }[] };
-  const adminIds = new Set((adminRoles ?? []).map((r) => r.membership_id));
-  const adminUserIds = (memberships ?? []).filter((m) => adminIds.has(m.id)).map((m) => m.user_id);
-  const emails = (
-    await Promise.all(
-      adminUserIds.map(async (id) => {
-        try {
-          const { data } = await supabase.auth.admin.getUserById(id);
-          return data.user?.email ?? null;
-        } catch {
-          return null;
-        }
-      }),
-    )
-  ).filter((e): e is string => Boolean(e));
+  const emails = await clubAdminEmails(c.get("supabase"), club.id);
 
   if (emails.length === 0) {
     logError("Demande d'accès sans administrateur joignable", null, { clubId: club.id });
@@ -206,6 +187,76 @@ export function resolvePublicAppBaseUrl(requestOrigin: string | undefined): stri
   if (env.PUBLIC_APP_URL) return env.PUBLIC_APP_URL.replace(/\/+$/, "");
   if (requestOrigin && allowed.includes(requestOrigin)) return requestOrigin;
   return allowed.find((o) => o.startsWith("https://")) ?? allowed[0] ?? "";
+}
+
+/** Adresses des administrateurs actifs (`club_admin`) d'un club — destinataires des demandes publiques. */
+export async function clubAdminEmails(supabase: DbClient, clubId: string): Promise<string[]> {
+  const { data: memberships } = await supabase.from("club_memberships").select("id, user_id").eq("club_id", clubId).eq("status", "active");
+  const membershipIds = (memberships ?? []).map((m) => m.id);
+  const { data: adminRoles } = membershipIds.length
+    ? await supabase.from("membership_roles").select("membership_id").eq("role", "club_admin").in("membership_id", membershipIds)
+    : { data: [] as { membership_id: string }[] };
+  const adminIds = new Set((adminRoles ?? []).map((r) => r.membership_id));
+  const adminUserIds = (memberships ?? []).filter((m) => adminIds.has(m.id)).map((m) => m.user_id);
+  const emails = await Promise.all(
+    adminUserIds.map(async (id) => {
+      try {
+        const { data } = await supabase.auth.admin.getUserById(id);
+        return data.user?.email ?? null;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  return emails.filter((e): e is string => Boolean(e));
+}
+
+/**
+ * Émet un nouveau lien personnel et l'envoie à `targetEmail` : révoque
+ * l'ancien, le restaure si l'envoi échoue, enregistre l'adresse sur la fiche
+ * si elle n'en avait pas. Partagé par la demande publique (adresse connue)
+ * et l'approbation d'une demande par un admin.
+ */
+export async function issuePersonalLink(
+  supabase: DbClient,
+  input: {
+    club: { id: string; slug: string; name: string; logoUrl: string | null; accentColor: string | null };
+    licencie: { id: string; first_name: string; email: string | null };
+    targetEmail: string;
+    returnTo: string;
+    baseUrl: string;
+  },
+): Promise<void> {
+  const { club, licencie, targetEmail } = input;
+  const { data: activeTokens } = await supabase.from("licencie_public_tokens").select("id").eq("club_id", club.id).eq("licencie_id", licencie.id).is("revoked_at", null);
+  const activeToken = (activeTokens ?? [])[0] ?? null;
+
+  const revokedAt = new Date().toISOString();
+  if (activeToken) await supabase.from("licencie_public_tokens").update({ revoked_at: revokedAt }).eq("id", activeToken.id).is("revoked_at", null);
+
+  const token = generatePublicToken();
+  const tokenHash = hashPublicToken(token);
+  const { error } = await supabase.from("licencie_public_tokens").insert({ club_id: club.id, licencie_id: licencie.id, token_hash: tokenHash, token_ciphertext: encryptPublicToken(token, club.id, licencie.id), email: targetEmail });
+  if (error) {
+    // Deux demandes simultanées pour le même nom : la seconde perd la course (index unique partiel), l'autre lien est le bon.
+    if (error.code === "23505") throw tooManyRequests("Une demande de lien est déjà en cours pour ce nom. Réessaie dans une minute.", "LINK_RECENTLY_SENT");
+    if (activeToken) await supabase.from("licencie_public_tokens").update({ revoked_at: null }).eq("id", activeToken.id);
+    throw new Error(`Création du lien personnel échouée : ${error.message}`);
+  }
+
+  const link = `${input.baseUrl}/public/${encodeURIComponent(club.slug)}/${input.returnTo}?token=${encodeURIComponent(token)}`;
+  const message = buildPersonalLinkEmail({ clubName: club.name, clubLogoUrl: club.logoUrl, accentColor: club.accentColor, firstName: licencie.first_name, link });
+
+  try {
+    await sendEmail({ to: targetEmail, fromName: club.name, ...message });
+  } catch (sendError) {
+    await supabase.from("licencie_public_tokens").update({ revoked_at: new Date().toISOString() }).eq("token_hash", tokenHash).is("revoked_at", null);
+    if (activeToken) await supabase.from("licencie_public_tokens").update({ revoked_at: null }).eq("id", activeToken.id);
+    throw sendError;
+  }
+
+  // Première adresse seulement, jamais l'écrasement d'une adresse existante.
+  if (!licencie.email) await supabase.from("licencies").update({ email: targetEmail }).eq("id", licencie.id).eq("club_id", club.id);
 }
 
 /**
@@ -248,46 +299,71 @@ publicTablesRouter.post("/licencies/:licencieId/request-link", async (c) => {
   if (!knownEmail && activeToken) {
     throw conflict("Ce nom a déjà été choisi sans adresse email. Demande à un·e responsable du club de réinitialiser ce profil.", "ALREADY_CLAIMED");
   }
-  const targetEmail = knownEmail ?? body.data.email ?? null;
-  if (!targetEmail) throw badRequest("Indique ton adresse email pour recevoir ton lien personnel.", "EMAIL_REQUIRED");
+  const returnTo = body.data.returnTo ?? "tables";
+
+  if (!knownEmail) {
+    // Fiche sans adresse connue : jamais de lien automatique, l'admin décide
+    // (retour du club, 2026-10-08 — anti-usurpation et anti-troll, R-018).
+    if (!body.data.email) throw badRequest("Indique ton adresse email pour recevoir ton lien personnel.", "EMAIL_REQUIRED");
+    await createClaimRequest(c, { licencie, email: body.data.email.trim().toLowerCase(), returnTo });
+    return c.json({ sent: false as const, maskedEmail: null, pendingApproval: true as const }, 202);
+  }
 
   if (activeToken && Date.now() - new Date(activeToken.created_at).getTime() < PERSONAL_LINK_COOLDOWN_MS) {
-    throw tooManyRequests(`Un lien vient d'être envoyé à ${maskEmail(targetEmail)}. Vérifie ta boîte mail (et les spams) avant de redemander.`, "LINK_RECENTLY_SENT");
+    throw tooManyRequests(`Un lien vient d'être envoyé à ${maskEmail(knownEmail)}. Vérifie ta boîte mail (et les spams) avant de redemander.`, "LINK_RECENTLY_SENT");
   }
 
   // Avant toute écriture : sans clé Resend, ne jamais révoquer un lien existant pour rien.
   if (!isEmailConfigured()) throw serviceUnavailable("L'envoi d'email n'est pas encore configuré pour ce club. Contacte un·e responsable.", "EMAIL_NOT_CONFIGURED");
 
-  const revokedAt = new Date().toISOString();
-  if (activeToken) await supabase.from("licencie_public_tokens").update({ revoked_at: revokedAt }).eq("id", activeToken.id).is("revoked_at", null);
-
-  const token = generatePublicToken();
-  const tokenHash = hashPublicToken(token);
-  const { error } = await supabase.from("licencie_public_tokens").insert({ club_id: club.id, licencie_id: licencie.id, token_hash: tokenHash, token_ciphertext: encryptPublicToken(token, club.id, licencie.id), email: targetEmail });
-  if (error) {
-    // Deux demandes simultanées pour le même nom : la seconde perd la course (index unique partiel), l'autre lien est le bon.
-    if (error.code === "23505") throw tooManyRequests("Une demande de lien est déjà en cours pour ce nom. Réessaie dans une minute.", "LINK_RECENTLY_SENT");
-    if (activeToken) await supabase.from("licencie_public_tokens").update({ revoked_at: null }).eq("id", activeToken.id);
-    throw new Error(`Création du lien personnel échouée : ${error.message}`);
-  }
-
-  const returnTo = body.data.returnTo ?? "tables";
-  const link = `${resolvePublicAppBaseUrl(c.req.header("origin"))}/public/${encodeURIComponent(club.slug)}/${returnTo}?token=${encodeURIComponent(token)}`;
-  const message = buildPersonalLinkEmail({ clubName: club.name, clubLogoUrl: club.logoUrl, accentColor: club.accentColor, firstName: licencie.first_name, link });
-
-  try {
-    await sendEmail({ to: targetEmail, fromName: club.name, ...message });
-  } catch (sendError) {
-    await supabase.from("licencie_public_tokens").update({ revoked_at: new Date().toISOString() }).eq("token_hash", tokenHash).is("revoked_at", null);
-    if (activeToken) await supabase.from("licencie_public_tokens").update({ revoked_at: null }).eq("id", activeToken.id);
-    throw sendError;
-  }
-
-  // "faudra aussi du coup stocker le mail du licencié" — seulement une première adresse, jamais l'écrasement d'une adresse existante.
-  if (!licencie.email) await supabase.from("licencies").update({ email: targetEmail }).eq("id", licencie.id).eq("club_id", club.id);
-
-  return c.json({ sent: true as const, maskedEmail: maskEmail(targetEmail) });
+  // Adresse connue : le lien part TOUJOURS là, jamais vers une adresse saisie.
+  await issuePersonalLink(supabase, { club, licencie, targetEmail: knownEmail, returnTo, baseUrl: resolvePublicAppBaseUrl(c.req.header("origin")) });
+  return c.json({ sent: true as const, maskedEmail: maskEmail(knownEmail), pendingApproval: false as const });
 });
+
+/**
+ * Demande en attente pour une fiche sans adresse : une seule par fiche (les
+ * suivantes ne recréent rien et ne renvoient aucun email aux admins), 5 par
+ * heure et par IP, 20 par heure et par club. Une demande expirée est
+ * réactivée. Les admins sont prévenus une fois par demande.
+ */
+async function createClaimRequest(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  c: any,
+  input: { licencie: { id: string; first_name: string; last_name: string }; email: string; returnTo: string },
+): Promise<void> {
+  const supabase: DbClient = c.get("supabase");
+  const club: PublicClub = c.get("publicClub");
+  const ip = clientIp(c.req.header("x-forwarded-for"));
+  if (!hitRateLimit(`claim:${ip}`, 5, 3_600_000) || !hitRateLimit(`claim-club:${club.id}`, 20, 3_600_000)) {
+    throw tooManyRequests("Trop de demandes d'affilée. Réessaie dans une heure ou contacte ton club.", "RATE_LIMITED");
+  }
+
+  const { data: pending } = await supabase.from("licencie_claim_requests").select("id, expires_at").eq("club_id", club.id).eq("licencie_id", input.licencie.id).eq("status", "pending");
+  const existing = (pending ?? [])[0] ?? null;
+  const now = new Date();
+  if (existing && new Date(existing.expires_at) > now) return; // déjà en attente : rien de plus, aucun email
+
+  const expiresAt = new Date(now.getTime() + 14 * 86_400_000).toISOString();
+  if (existing) {
+    await supabase.from("licencie_claim_requests").update({ requested_email: input.email, return_to: input.returnTo, created_at: now.toISOString(), expires_at: expiresAt }).eq("id", existing.id);
+  } else {
+    const { error } = await supabase.from("licencie_claim_requests").insert({ club_id: club.id, licencie_id: input.licencie.id, requested_email: input.email, return_to: input.returnTo, expires_at: expiresAt });
+    if (error) {
+      if (error.code === "23505") return; // une autre demande vient d'arriver pour cette fiche
+      throw new Error(`Enregistrement de la demande échoué : ${error.message}`);
+    }
+  }
+
+  const emails = await clubAdminEmails(supabase, club.id);
+  const message = buildClaimRequestEmail({
+    club: { name: club.name, logoUrl: club.logoUrl, accentColor: club.accentColor },
+    licencieName: `${input.licencie.first_name} ${input.licencie.last_name}`,
+    email: input.email,
+    link: `${resolvePublicAppBaseUrl(c.req.header("origin"))}/c/${encodeURIComponent(club.slug)}/tables/public-access`,
+  });
+  await Promise.all(emails.map((to) => sendEmail({ to, fromName: PLATFORM_NAME, ...message }).catch((error) => logError("Envoi de la demande de lien échoué", error, { clubId: club.id }))));
+}
 
 /**
  * Le licencié du jeton est-il admin de ce club pour l'espace public ? Soit

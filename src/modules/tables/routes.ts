@@ -1,10 +1,10 @@
 import { Hono } from "hono";
 import { personalLinkUrl, revealOrIssueToken } from "../public-tables/personal-link.js";
-import { resolvePublicAppBaseUrl } from "../public-tables/routes.js";
+import { issuePersonalLink, resolvePublicAppBaseUrl } from "../public-tables/routes.js";
 import type { AppEnv } from "../../auth/context.js";
 import { requireAuth, requireClubMembership, requireAnyClubRole, requireClubRole } from "../../auth/middleware.js";
 import { createServiceSupabaseClient } from "../../db/client.js";
-import { badRequest, notFound } from "../../api-error.js";
+import { badRequest, conflict, notFound } from "../../api-error.js";
 import { TableSuggestionsQueryDtoSchema, TableAssignmentsQueryDtoSchema, PutTableAssignmentDtoSchema, TableAssignmentRoleSchema, PutRefereeStatusDtoSchema } from "../../contracts/tables.js";
 import { assignTableRole, buildTableSuggestions, loadHomeMatchOrThrow, loadTableAssignmentsList, removeTableRole, setRefereeNotNeeded } from "./shared.js";
 
@@ -183,6 +183,71 @@ tableAssignmentsRouter.get("/public-access", requireClubRole("club_admin"), asyn
   });
 
   return c.json({ entries });
+});
+
+/**
+ * GET .../table-assignments/public-access/claims — demandes de lien pour une
+ * fiche sans adresse (retour du club, 2026-10-08 : « si ce n'est pas son
+ * mail, c'est l'admin qui décide »). En attente et non expirées seulement.
+ */
+tableAssignmentsRouter.get("/public-access/claims", requireClubRole("club_admin"), async (c) => {
+  const { club } = c.get("club");
+  const db = createServiceSupabaseClient();
+  const { data: rows } = await db.from("licencie_claim_requests").select("id, licencie_id, requested_email, created_at, expires_at").eq("club_id", club.id).eq("status", "pending");
+  const now = new Date().toISOString();
+  const pending = (rows ?? []).filter((r) => r.expires_at > now);
+  const ids = [...new Set(pending.map((r) => r.licencie_id))];
+  const { data: licencies } = ids.length ? await db.from("licencies").select("id, first_name, last_name").eq("club_id", club.id).in("id", ids) : { data: [] as { id: string; first_name: string; last_name: string }[] };
+  const byId = new Map((licencies ?? []).map((l) => [l.id, l]));
+  const requests = pending
+    .filter((r) => byId.has(r.licencie_id))
+    .sort((a, b) => a.created_at.localeCompare(b.created_at))
+    .map((r) => {
+      const l = byId.get(r.licencie_id)!;
+      return { id: r.id, licencie: { id: l.id, firstName: l.first_name, lastName: l.last_name }, requestedEmail: r.requested_email, createdAt: r.created_at, expiresAt: r.expires_at };
+    });
+  return c.json({ requests });
+});
+
+async function pendingClaimOrThrow(db: ReturnType<typeof createServiceSupabaseClient>, clubId: string, requestId: string | undefined) {
+  if (!requestId) throw badRequest("Paramètre de route :requestId manquant.");
+  const { data: claim } = await db.from("licencie_claim_requests").select("id, licencie_id, requested_email, return_to, status, expires_at").eq("id", requestId).eq("club_id", clubId).maybeSingle();
+  if (!claim) throw notFound("Demande introuvable.");
+  if (claim.status !== "pending") throw conflict("Cette demande a déjà été traitée.", "ALREADY_DECIDED");
+  if (claim.expires_at <= new Date().toISOString()) throw conflict("Cette demande a expiré (14 jours sans réponse).", "EXPIRED");
+  return claim;
+}
+
+/** POST .../public-access/claims/:requestId/approve — envoie le lien à l'adresse demandée et l'enregistre sur la fiche. */
+tableAssignmentsRouter.post("/public-access/claims/:requestId/approve", requireClubRole("club_admin"), async (c) => {
+  const { club } = c.get("club");
+  const user = c.get("user");
+  const db = createServiceSupabaseClient();
+  const claim = await pendingClaimOrThrow(db, club.id, c.req.param("requestId"));
+  if (!claim.requested_email) throw conflict("Cette demande n'a pas d'adresse.", "NO_EMAIL");
+
+  const { data: licencie } = await db.from("licencies").select("id, first_name, email").eq("id", claim.licencie_id).eq("club_id", club.id).maybeSingle();
+  if (!licencie) throw notFound("Licencié introuvable pour ce club.");
+
+  await issuePersonalLink(db, {
+    club: { id: club.id, slug: club.slug, name: club.name, logoUrl: club.logoUrl ?? null, accentColor: club.accentColor ?? null },
+    licencie: { id: licencie.id, first_name: licencie.first_name, email: licencie.email ?? null },
+    targetEmail: claim.requested_email,
+    returnTo: claim.return_to,
+    baseUrl: resolvePublicAppBaseUrl(c.req.header("origin")),
+  });
+  await db.from("licencie_claim_requests").update({ status: "approved", decided_by: user.id, decided_at: new Date().toISOString(), requested_email: null }).eq("id", claim.id);
+  return c.json({ approved: true as const });
+});
+
+/** POST .../public-access/claims/:requestId/reject — rien n'est envoyé, l'adresse saisie est effacée. */
+tableAssignmentsRouter.post("/public-access/claims/:requestId/reject", requireClubRole("club_admin"), async (c) => {
+  const { club } = c.get("club");
+  const user = c.get("user");
+  const db = createServiceSupabaseClient();
+  const claim = await pendingClaimOrThrow(db, club.id, c.req.param("requestId"));
+  await db.from("licencie_claim_requests").update({ status: "rejected", decided_by: user.id, decided_at: new Date().toISOString(), requested_email: null }).eq("id", claim.id);
+  return c.json({ rejected: true as const });
 });
 
 /**

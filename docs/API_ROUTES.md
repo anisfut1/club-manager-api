@@ -1,7 +1,7 @@
 # Inventaire des routes de l'API
 
 > Fichier **généré** par `npm run docs:routes` (ops/docs/generate-routes-doc.ts) — ne pas modifier à la main.
-> 119 routes montées dans le code, 112 décrites dans le contrat OpenAPI (`/openapi.json`, `/docs`).
+> 122 routes montées dans le code, 115 décrites dans le contrat OpenAPI (`/openapi.json`, `/docs`).
 
 Accès : **Compte connecté** = JWT Supabase (`Authorization: Bearer`), droits vérifiés par club ; **Public** = sans compte ; **Public (lien perso si action)** = lecture libre, écriture avec le jeton du lien personnel ; **Secret cron** = `CRON_SECRET`.
 
@@ -129,6 +129,9 @@ Accès : **Compte connecté** = JWT Supabase (`Authorization: Bearer`), droits v
 | GET | `/v1/clubs/:clubId/table-assignments/public-access` | Compte connecté | État des accès publics par licencié (revendiqué ou non) |
 | POST | `/v1/clubs/:clubId/table-assignments/public-access/:licencieId/link` | Compte connecté | Lien personnel du licencié |
 | POST | `/v1/clubs/:clubId/table-assignments/public-access/:licencieId/reset` | Compte connecté | Accès public réinitialisé |
+| GET | `/v1/clubs/:clubId/table-assignments/public-access/claims` | Compte connecté | Demandes en attente (non expirées) |
+| POST | `/v1/clubs/:clubId/table-assignments/public-access/claims/:requestId/approve` | Compte connecté | Lien envoyé à l'adresse demandée, enregistrée sur la fiche |
+| POST | `/v1/clubs/:clubId/table-assignments/public-access/claims/:requestId/reject` | Compte connecté | Demande refusée, rien n'est envoyé |
 
 ## Club — teams
 
@@ -238,7 +241,7 @@ Accès : **Compte connecté** = JWT Supabase (`Authorization: Bearer`), droits v
 | Méthode | Route | Accès | Description |
 |---|---|---|---|
 | GET | `/v1/public/clubs/:clubSlug/licencies` | Public (lien perso si action) | Introuvable |
-| POST | `/v1/public/clubs/:clubSlug/licencies/:licencieId/request-link` | Public (lien perso si action) | Lien personnel envoyé par email (adresse masquée) |
+| POST | `/v1/public/clubs/:clubSlug/licencies/:licencieId/request-link` | Public (lien perso si action) | Lien personnel envoyé par email à l'adresse connue (adresse masquée) |
 | POST | `/v1/public/clubs/:clubSlug/licencies/search` | Public (lien perso si action) | Au plus 5 fiches : prénom et initiale du nom |
 
 ## Public — matches

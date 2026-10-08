@@ -18,6 +18,13 @@ const withAuth = () =>
     auth: { admin: { getUserById: async (id: string) => ({ data: { user: authEmails[id] ? { id, email: authEmails[id] } : null }, error: null }) } },
   });
 
+/** Routes admin (validation des demandes de lien) : session simulée, le rôle vient des appartenances du state. */
+let currentUserId = "u-admin";
+vi.mock("../../auth/jwt.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../auth/jwt.js")>();
+  return { ...actual, verifyAccessToken: vi.fn(async () => ({ id: currentUserId, email: `${currentUserId}@example.test` })) };
+});
+
 vi.mock("../../db/client.js", () => ({
   createServiceSupabaseClient: () => withAuth(),
   createUserSupabaseClient: () => withAuth(),
@@ -113,8 +120,10 @@ function tokenFromLastEmail(): string {
   return decodeURIComponent(match[1]);
 }
 
+/** Lien personnel d'un licencié dont l'adresse est connue du club (sans adresse, c'est l'admin qui valide : voir plus bas). */
 async function claim(licencieId: string, email = `${licencieId}@example.test`): Promise<string> {
-  const res = await requestLink(licencieId, { email });
+  state.licencies = state.licencies.map((l) => (l.id === licencieId && !l.email ? { ...l, email } : l));
+  const res = await requestLink(licencieId, {});
   expect(res.status).toBe(200);
   return tokenFromLastEmail();
 }
@@ -227,11 +236,12 @@ describe("POST …/access-requests — « je ne trouve pas mon nom »", () => {
 });
 
 describe("POST .../licencies/:licencieId/request-link — retour du club : \"il va chercher son nom, il va mettre son mail\"", () => {
-  it("envoie le lien par email (bouton + lien texte), JAMAIS le jeton dans la réponse, et enregistre l'adresse du licencié", async () => {
-    const res = await requestLink(THOMAS.id, { email: "thomas@example.test", returnTo: "derogations" });
+  it("adresse connue : envoie le lien par email (bouton + lien texte), JAMAIS le jeton dans la réponse", async () => {
+    state.licencies = [{ ...THOMAS, email: "thomas@example.test" }, { ...LEA }];
+    const res = await requestLink(THOMAS.id, { returnTo: "derogations" });
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(body).toEqual({ sent: true, maskedEmail: "t***@example.test" });
+    expect(body).toEqual({ sent: true, maskedEmail: "t***@example.test", pendingApproval: false });
     expect(JSON.stringify(body)).not.toContain("token");
 
     expect(sentEmails).toHaveLength(1);
@@ -244,8 +254,6 @@ describe("POST .../licencies/:licencieId/request-link — retour du club : \"il 
     const meRes = await request(`/me?token=${token}`);
     expect(meRes.status).toBe(200);
     expect(await meRes.json()).toEqual({ licencie: { id: THOMAS.id, firstName: "Thomas", lastName: "Martin" }, isClubAdmin: false, derogationRequests: { canCreate: false, canManage: false }, tables: { canManage: false } });
-
-    expect(state.licencies.find((l) => l.id === THOMAS.id)?.email).toBe("thomas@example.test");
   });
 
   it("400 EMAIL_REQUIRED sans adresse connue ni saisie — rien n'est créé", async () => {
@@ -312,14 +320,10 @@ describe("POST .../licencies/:licencieId/request-link — retour du club : \"il 
     expect(res.status).toBe(502);
     expect((await request(`/me?token=${token}`)).status).toBe(200);
     expect(state.publicTokens.filter((t) => t.revoked_at === null)).toHaveLength(1);
-
-    resendStatus = 403;
-    const leaRes = await requestLink(LEA.id, { email: "lea@example.test" });
-    expect(leaRes.status).toBe(502);
-    expect(state.licencies.find((l) => l.id === LEA.id)?.email).toBeNull();
   });
 
   it("n'utilise jamais une origine non autorisée dans le lien", async () => {
+    state.licencies = [{ ...THOMAS, email: "thomas@example.test" }, { ...LEA }];
     await app.request(`/v1/public/clubs/club-a/licencies/${THOMAS.id}/request-link`, {
       method: "POST",
       headers: { "content-type": "application/json", origin: "https://site-piege.example" },
@@ -455,6 +459,92 @@ describe("DELETE .../table-assignments/:role — retour du club : \"peuvent se s
     const res = await request(`/matches/${TARGET_MATCH.id}/table-assignments/SCORER?token=${leaToken}`, { method: "DELETE" });
     expect(res.status).toBe(403);
     expect(state.tableAssignments).toHaveLength(1); // toujours affecté à Thomas
+  });
+});
+
+describe("Fiche sans adresse connue — retour du club, 2026-10-08 : « si ce n'est pas son mail, c'est l'admin qui décide » (R-018)", () => {
+  const admin = (path: string, init: RequestInit = {}) =>
+    app.request(`/v1/clubs/${CLUB_A.id}/table-assignments/public-access/claims${path}`, { ...init, headers: { authorization: "Bearer test-jwt", "content-type": "application/json", origin: "http://localhost:3000" } });
+  const pendingIds = async () => ((await (await admin("")).json()) as { requests: { id: string }[] }).requests.map((r) => r.id);
+
+  beforeEach(() => {
+    resetRateLimits();
+    currentUserId = "u-admin";
+    state.memberships = [
+      { id: "m-admin", club_id: CLUB_A.id, user_id: "u-admin", status: "active" },
+      { id: "m-coach", club_id: CLUB_A.id, user_id: "u-coach", status: "active" },
+    ] as never;
+    state.roles = [
+      { membership_id: "m-admin", role: "club_admin", scope_team_id: null },
+      { membership_id: "m-coach", role: "coach", scope_team_id: null },
+    ] as never;
+    authEmails = { "u-admin": "admin@club-a.test", "u-coach": "coach@club-a.test" };
+  });
+
+  it("aucun lien envoyé à l'adresse saisie : 202 en attente, les administrateurs (eux seuls) sont prévenus", async () => {
+    const res = await requestLink(THOMAS.id, { email: "Thomas@Example.test", returnTo: "derogations" });
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ sent: false, maskedEmail: null, pendingApproval: true });
+    expect(state.publicTokens).toHaveLength(0);
+    expect(state.licencies.find((l) => l.id === THOMAS.id)?.email).toBeNull();
+    expect(sentEmails).toHaveLength(1);
+    expect(sentEmails[0]!.to).toEqual(["admin@club-a.test"]);
+    expect(sentEmails[0]!.subject).toBe("Lien demandé pour Thomas Martin — à valider");
+    expect(sentEmails[0]!.text).toContain("thomas@example.test");
+    expect(sentEmails[0]!.text).toContain("http://localhost:3000/c/club-a/tables/public-access");
+  });
+
+  it("anti-troll : une demande déjà en attente ne renvoie aucun email ; 5 demandes par heure et par IP", async () => {
+    expect((await requestLink(THOMAS.id, { email: "a@example.test" })).status).toBe(202);
+    expect((await requestLink(THOMAS.id, { email: "b@example.test" })).status).toBe(202);
+    expect(sentEmails).toHaveLength(1);
+    expect(state.claimRequests).toHaveLength(1);
+    for (let i = 0; i < 3; i++) await requestLink(LEA.id, { email: "c@example.test" });
+    expect((await requestLink(LEA.id, { email: "c@example.test" })).status).toBe(429);
+  });
+
+  it("l'admin approuve : le lien part à l'adresse demandée, enregistrée sur la fiche ; la demande disparaît", async () => {
+    await requestLink(THOMAS.id, { email: "thomas@example.test", returnTo: "derogations" });
+    const [id] = await pendingIds();
+    sentEmails = [];
+
+    const res = await admin(`/${id}/approve`, { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(sentEmails).toHaveLength(1);
+    expect(sentEmails[0]!.to).toEqual(["thomas@example.test"]);
+    expect(sentEmails[0]!.text).toContain("http://localhost:3000/public/club-a/derogations?token=");
+    expect((await request(`/me?token=${tokenFromLastEmail()}`)).status).toBe(200);
+    expect(state.licencies.find((l) => l.id === THOMAS.id)?.email).toBe("thomas@example.test");
+    expect(state.claimRequests[0]).toMatchObject({ status: "approved", decided_by: "u-admin", requested_email: null });
+    expect(await pendingIds()).toEqual([]);
+
+    const again = await admin(`/${id}/approve`, { method: "POST" });
+    expect(again.status).toBe(409);
+    expect(((await again.json()) as { error: { code: string } }).error.code).toBe("ALREADY_DECIDED");
+  });
+
+  it("l'admin refuse : rien n'est envoyé, l'adresse saisie est effacée", async () => {
+    await requestLink(THOMAS.id, { email: "troll@example.test" });
+    const [id] = await pendingIds();
+    sentEmails = [];
+    expect((await admin(`/${id}/reject`, { method: "POST" })).status).toBe(200);
+    expect(sentEmails).toHaveLength(0);
+    expect(state.publicTokens).toHaveLength(0);
+    expect(state.claimRequests[0]).toMatchObject({ status: "rejected", requested_email: null });
+  });
+
+  it("409 EXPIRED après 14 jours ; 403 pour un non-admin", async () => {
+    await requestLink(THOMAS.id, { email: "thomas@example.test" });
+    const [id] = await pendingIds();
+    currentUserId = "u-coach";
+    expect((await admin("")).status).toBe(403);
+    expect((await admin(`/${id}/approve`, { method: "POST" })).status).toBe(403);
+    currentUserId = "u-admin";
+    state.claimRequests = state.claimRequests.map((r) => ({ ...r, expires_at: new Date(Date.now() - 1000).toISOString() }));
+    expect(await pendingIds()).toEqual([]);
+    const res = await admin(`/${id}/approve`, { method: "POST" });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe("EXPIRED");
   });
 });
 

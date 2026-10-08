@@ -565,6 +565,33 @@ export interface Database {
         }
       >;
 
+      licencie_claim_requests: Table<
+        {
+          id: string;
+          club_id: string;
+          licencie_id: string;
+          requested_email: string | null;
+          return_to: string;
+          status: "pending" | "approved" | "rejected";
+          created_at: string;
+          expires_at: string;
+          decided_by: string | null;
+          decided_at: string | null;
+        },
+        {
+          id?: string;
+          club_id: string;
+          licencie_id: string;
+          requested_email?: string | null;
+          return_to?: string;
+          status?: "pending" | "approved" | "rejected";
+          created_at?: string;
+          expires_at?: string;
+          decided_by?: string | null;
+          decided_at?: string | null;
+        }
+      >;
+
       match_change_history: Table<
         {
           id: string;
