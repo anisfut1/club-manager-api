@@ -202,7 +202,7 @@ export async function loadMatchDetails(supabase: DbClient, club: ClubRef, matchI
         .maybeSingle(),
     ]);
 
-  // Photos des fiches joueurs, espace club uniquement (voir PlayerMatchStatsDto.photoUrl).
+  // Photos des fiches joueurs (voir PlayerMatchStatsDto.photoUrl).
   const photoByLicencieId = new Map<string, string>();
   if (options.includePhotos) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

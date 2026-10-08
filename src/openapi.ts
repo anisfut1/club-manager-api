@@ -85,6 +85,7 @@ import {
   SubmitOfficialDerogationResultDtoSchema,
 } from "./contracts/derogation-requests.js";
 import { PublicHomeDtoSchema } from "./contracts/public-home.js";
+import { PublicPlayerProfileDtoSchema } from "./contracts/public-players.js";
 import { ClubMemberListDtoSchema, InviteMemberDtoSchema, SetMemberRolesDtoSchema } from "./contracts/members.js";
 import { ClubVenueAdminDtoSchema, ClubVenueListDtoSchema, UpdateClubVenueDtoSchema } from "./contracts/club-venues.js";
 import { PoolStandingsListDtoSchema } from "./contracts/standings.js";
@@ -635,6 +636,14 @@ registry.registerPath({
   // Classements FFBB des poules où le club est engagé — retour du club, 2026-10-01.
   request: { params: clubSlugParam },
   responses: { 200: jsonResponse("Classements FFBB (copiés à chaque synchronisation)", PoolStandingsListDtoSchema), 404: jsonResponse("Introuvable", ErrorEnvelopeSchema) },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/public/clubs/{clubSlug}/players/{licencieId}",
+  // Fiche joueur publique — retour du club, 2026-10-08. Jamais de coordonnées, date de naissance ni numéro de licence.
+  request: { params: z.object({ clubSlug: z.string(), licencieId: z.string().uuid() }) },
+  responses: { 200: jsonResponse("Fiche joueur publique (saison en cours, matchs publiés uniquement)", PublicPlayerProfileDtoSchema), 404: jsonResponse("Introuvable", ErrorEnvelopeSchema) },
 });
 
 registry.registerPath({

@@ -79,7 +79,7 @@ publicMatchesRouter.get("/matches/:matchId", async (c) => {
   const matchId = c.req.param("matchId");
   if (!matchId) throw badRequest("Paramètre de route :matchId manquant.");
 
-  const dto = await loadMatchDetails(c.get("supabase"), club, matchId);
+  const dto = await loadMatchDetails(c.get("supabase"), club, matchId, { includePhotos: true });
   // Garde-fou de publication (processus e-Marque, 2026-10-06 : "un coup les
   // stats sont fausses") : une lecture "à vérifier" (total des points ≠
   // score officiel, maillot en double...) ou en erreur n'est JAMAIS

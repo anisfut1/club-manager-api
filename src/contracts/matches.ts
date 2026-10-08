@@ -98,8 +98,8 @@ export const PlayerMatchStatsDtoSchema = z
     licencieId: z.string().uuid().nullable(),
     /**
      * Photo de la fiche joueur (retour du club, 2026-10-08 : stats en cartes
-     * avec photo). Espace club uniquement — toujours `null` côté public
-     * (joueurs souvent mineurs), et `null` sans photo renseignée.
+     * avec photo), aussi côté public depuis la fiche joueur publique (même
+     * jour : « nom, prénom, photo... »). `null` sans photo renseignée.
      */
     photoUrl: z.string().nullable(),
     secondsPlayed: z.number().nullable(),
