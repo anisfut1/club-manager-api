@@ -243,6 +243,8 @@ export interface DerogationDetailStats {
   failed: number;
   skippedUnchanged: number;
   stoppedEarly: "budget" | "fbi_ne_repond_plus" | null;
+  /** Forme de la première page de détail lue (voir `selectors.derogationDetailShape`). */
+  pageShape?: { checkboxes: Array<{ id: string; checked: boolean }>; hasNomSalle: boolean } | null;
 }
 
 export class BrowserFbiClient {
@@ -1757,6 +1759,9 @@ export class BrowserFbiClient {
         detailPage ??= await page.context().newPage();
         const detail = await this.readDerogationDetail(detailPage, page.url(), href);
         detailByHref.set(href, detail);
+        if (detail && !this.lastDerogationDetailStats.pageShape) {
+          this.lastDerogationDetailStats.pageShape = await selectors.derogationDetailShape(detailPage).catch(() => null);
+        }
         if (detail) {
           this.lastDerogationDetailStats.fetched += 1;
           consecutiveFailures = 0;

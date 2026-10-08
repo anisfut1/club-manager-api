@@ -19,7 +19,7 @@ export async function loadClubDerogations(supabase: DbClient, clubId: string): P
   const { data: checks, error } = await supabase
     .from("fbi_derogation_checks")
     .select(
-      "id, match_id, numero, etat, date_depot, date_derogation, date_rencontre, heure, domicile, visiteur, demandeur, motif, date_rencontre_demandee, heure_demandee, adversaire, date_reponse, acceptation, motif_refus, checked_at",
+      "id, match_id, numero, etat, date_depot, date_derogation, date_rencontre, heure, domicile, visiteur, demandeur, motif, date_rencontre_demandee, heure_demandee, adversaire, date_reponse, acceptation, motif_refus, modifier_date, modifier_horaire, modifier_salle, salle_demandee, inverser_rencontre, inverser_equipe, checked_at",
     )
     .eq("club_id", clubId)
     .order("checked_at", { ascending: false });
@@ -111,6 +111,12 @@ export async function loadClubDerogations(supabase: DbClient, clubId: string): P
       dateReponse: row.date_reponse,
       acceptation: row.acceptation,
       motifRefus: row.motif_refus,
+      modifierDate: row.modifier_date,
+      modifierHoraire: row.modifier_horaire,
+      modifierSalle: row.modifier_salle,
+      salleDemandee: row.salle_demandee,
+      inverserRencontre: row.inverser_rencontre,
+      inverserEquipe: row.inverser_equipe,
       checkedAt: row.checked_at,
     };
   });

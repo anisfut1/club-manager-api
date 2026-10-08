@@ -282,7 +282,7 @@ export async function resolveDerogationStatus(supabase: DbClient, club: ClubRef,
   const { data: rows } = await supabase
     .from("fbi_derogation_checks")
     .select(
-      "id, numero, etat, date_depot, date_derogation, date_rencontre, heure, domicile, visiteur, demandeur, motif, date_rencontre_demandee, heure_demandee, adversaire, date_reponse, acceptation, motif_refus, checked_at",
+      "id, numero, etat, date_depot, date_derogation, date_rencontre, heure, domicile, visiteur, demandeur, motif, date_rencontre_demandee, heure_demandee, adversaire, date_reponse, acceptation, motif_refus, modifier_date, modifier_horaire, modifier_salle, salle_demandee, inverser_rencontre, inverser_equipe, checked_at",
     )
     .eq("club_id", club.id)
     .eq("match_id", matchId)
@@ -320,6 +320,12 @@ export async function resolveDerogationStatus(supabase: DbClient, club: ClubRef,
     dateReponse: data.date_reponse,
     acceptation: data.acceptation,
     motifRefus: data.motif_refus,
+    modifierDate: data.modifier_date,
+    modifierHoraire: data.modifier_horaire,
+    modifierSalle: data.modifier_salle,
+    salleDemandee: data.salle_demandee,
+    inverserRencontre: data.inverser_rencontre,
+    inverserEquipe: data.inverser_equipe,
     checkedAt: data.checked_at,
   };
 }

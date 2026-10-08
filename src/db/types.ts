@@ -822,6 +822,13 @@ export interface Database {
           date_reponse: string | null;
           acceptation: string | null;
           motif_refus: string | null;
+          modifier_date: boolean | null;
+          modifier_horaire: boolean | null;
+          modifier_salle: boolean | null;
+          salle_demandee: string | null;
+          inverser_rencontre: boolean | null;
+          inverser_equipe: boolean | null;
+          changes_read_at: string | null;
           checked_at: string;
           created_at: string;
           updated_at: string;
@@ -848,6 +855,13 @@ export interface Database {
           date_reponse?: string | null;
           acceptation?: string | null;
           motif_refus?: string | null;
+          modifier_date?: boolean | null;
+          modifier_horaire?: boolean | null;
+          modifier_salle?: boolean | null;
+          salle_demandee?: string | null;
+          inverser_rencontre?: boolean | null;
+          inverser_equipe?: boolean | null;
+          changes_read_at?: string | null;
           checked_at?: string;
           created_at?: string;
           updated_at?: string;

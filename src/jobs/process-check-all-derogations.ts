@@ -90,7 +90,7 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
      */
     const { data: existingChecks, error: existingChecksError } = await supabase
       .from("fbi_derogation_checks")
-      .select("fbi_row_key, etat, date_derogation, demandeur, motif, date_rencontre_demandee, heure_demandee, adversaire, date_reponse, acceptation, motif_refus")
+      .select("fbi_row_key, etat, date_derogation, demandeur, motif, date_rencontre_demandee, heure_demandee, adversaire, date_reponse, acceptation, motif_refus, modifier_date, modifier_horaire, modifier_salle, salle_demandee, inverser_rencontre, inverser_equipe, changes_read_at")
       .eq("club_id", job.club_id);
     if (existingChecksError) throw new Error(`Lecture du détail de dérogation déjà connu échouée : ${existingChecksError.message}`);
     const existingByRowKey = new Map((existingChecks ?? []).map((c) => [c.fbi_row_key, c]));
@@ -101,7 +101,9 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
       const detailKnown = Boolean(
         existing.demandeur || existing.motif || existing.date_rencontre_demandee || existing.heure_demandee || existing.adversaire || existing.date_reponse || existing.acceptation || existing.motif_refus,
       );
-      return !detailKnown || existing.etat !== row.etat || existing.date_derogation !== row.dateDerogation;
+      // `changes_read_at` absent : détail lu avant la lecture des cases
+      // (salle, inversion…) — relu une fois pour les connaître.
+      return !detailKnown || !existing.changes_read_at || existing.etat !== row.etat || existing.date_derogation !== row.dateDerogation;
     };
 
     const derogations = await client.fetchAllDerogations(session, {
@@ -203,6 +205,7 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
        */
       const fbiRowKey = derogation.idDerogation ?? `${matchId}:${derogation.numero}:${derogation.dateDepot}`;
       const existing = existingByRowKey.get(fbiRowKey);
+      const changesRead = "modifierSalle" in derogation;
 
       const { error: upsertError } = await supabase.from("fbi_derogation_checks").upsert(
         {
@@ -231,6 +234,19 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
           date_reponse: derogation.dateReponse ?? existing?.date_reponse ?? null,
           acceptation: derogation.acceptation ?? existing?.acceptation ?? null,
           motif_refus: derogation.motifRefus ?? existing?.motif_refus ?? null,
+          // Cases du formulaire : présentes dans `derogation` seulement si
+          // sa page de détail a été lue CETTE fois (sinon valeur connue gardée).
+          ...(changesRead
+            ? {
+                modifier_date: derogation.modifierDate ?? null,
+                modifier_horaire: derogation.modifierHoraire ?? null,
+                modifier_salle: derogation.modifierSalle ?? null,
+                salle_demandee: derogation.salleDemandee ?? null,
+                inverser_rencontre: derogation.inverserRencontre ?? null,
+                inverser_equipe: derogation.inverserEquipe ?? null,
+                changes_read_at: now,
+              }
+            : {}),
           checked_at: now,
           updated_at: now,
         },

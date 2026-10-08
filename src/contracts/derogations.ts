@@ -50,6 +50,18 @@ export const DerogationStatusDtoSchema = z
     dateReponse: z.string().nullable(),
     acceptation: z.string().nullable(),
     motifRefus: z.string().nullable(),
+    /**
+     * Ce que la dérogation demande de changer, lu sur la page FBI de la
+     * dérogation (cases du formulaire, retour du club 2026-10-08 :
+     * "intégrer le changement de salle et inversion de rencontre").
+     * `null` : pas encore lu, ou case absente de la page — jamais supposé.
+     */
+    modifierDate: z.boolean().nullable(),
+    modifierHoraire: z.boolean().nullable(),
+    modifierSalle: z.boolean().nullable(),
+    salleDemandee: z.string().nullable(),
+    inverserRencontre: z.boolean().nullable(),
+    inverserEquipe: z.boolean().nullable(),
     checkedAt: z.string(),
     /**
      * `true` si cette dérogation "En Cours" attend une décision DU CLUB

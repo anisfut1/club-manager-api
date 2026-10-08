@@ -64,6 +64,19 @@ export interface FbiDerogationDetailFields {
   dateReponse: string | null;
   acceptation: string | null;
   motifRefus: string | null;
+  /**
+   * Ce que la dérogation demande de changer (cases du formulaire FBI,
+   * ids réels `modifierDate`/`modifierHoraire`/`modifierSalle`/
+   * `inverserRencontre`/`inverserEquipe`, salle `nomSalle`) — retour du
+   * club, 2026-10-08. `null`/absent : case introuvable sur la page, jamais
+   * supposée décochée.
+   */
+  modifierDate?: boolean | null;
+  modifierHoraire?: boolean | null;
+  modifierSalle?: boolean | null;
+  salleDemandee?: string | null;
+  inverserRencontre?: boolean | null;
+  inverserEquipe?: boolean | null;
 }
 
 /**

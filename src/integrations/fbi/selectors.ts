@@ -746,5 +746,34 @@ export async function derogationDetailFields(page: Page): Promise<FbiDerogationD
     dateReponse: await readValue("input#reponseAdversaireDate"),
     acceptation: await readValue("input#acceptation"),
     motifRefus: await readValue("textarea#motifRefus"),
+    modifierDate: await readChecked(page, "modifierDate"),
+    modifierHoraire: await readChecked(page, "modifierHoraire"),
+    modifierSalle: await readChecked(page, "modifierSalle"),
+    salleDemandee: await readValue("input#nomSalle"),
+    inverserRencontre: await readChecked(page, "inverserRencontre"),
+    inverserEquipe: await readChecked(page, "inverserEquipe"),
   };
+}
+
+/** État d'une case du formulaire de dérogation (id réel), `null` si la case n'existe pas sur la page. */
+async function readChecked(page: Page, id: string): Promise<boolean | null> {
+  const box = page.locator(`input[type="checkbox"]#${id}`).first();
+  if ((await box.count().catch(() => 0)) === 0) return null;
+  return await box.isChecked().catch(() => null);
+}
+
+/**
+ * Forme réelle de la page de détail (preuve, 2026-10-08) : cases à cocher
+ * présentes (id + état) et présence du champ salle — jamais de valeur
+ * saisie, uniquement des identifiants de champs et des booléens.
+ */
+export async function derogationDetailShape(page: Page): Promise<{ checkboxes: Array<{ id: string; checked: boolean }>; hasNomSalle: boolean }> {
+  const boxes = page.locator('input[type="checkbox"]');
+  const count = Math.min(await boxes.count().catch(() => 0), 20);
+  const checkboxes: Array<{ id: string; checked: boolean }> = [];
+  for (let i = 0; i < count; i += 1) {
+    const box = boxes.nth(i);
+    checkboxes.push({ id: ((await box.getAttribute("id").catch(() => null)) ?? "").slice(0, 40), checked: await box.isChecked().catch(() => false) });
+  }
+  return { checkboxes, hasNomSalle: (await page.locator("input#nomSalle").count().catch(() => 0)) > 0 };
 }
