@@ -1,7 +1,7 @@
 # Inventaire des routes de l'API
 
 > Fichier **généré** par `npm run docs:routes` (ops/docs/generate-routes-doc.ts) — ne pas modifier à la main.
-> 147 routes montées dans le code, 140 décrites dans le contrat OpenAPI (`/openapi.json`, `/docs`).
+> 159 routes montées dans le code, 152 décrites dans le contrat OpenAPI (`/openapi.json`, `/docs`).
 
 Accès : **Compte connecté** = JWT Supabase (`Authorization: Bearer`), droits vérifiés par club ; **Public** = sans compte ; **Public (lien perso si action)** = lecture libre, écriture avec le jeton du lien personnel ; **Secret cron** = `CRON_SECRET`.
 
@@ -140,6 +140,11 @@ Accès : **Compte connecté** = JWT Supabase (`Authorization: Bearer`), droits v
 
 | Méthode | Route | Accès | Description |
 |---|---|---|---|
+| GET | `/v1/clubs/:clubId/team-life/matches/:matchId` | Compte connecté | Disponibilités et convocation du match (coach / admin) |
+| POST | `/v1/clubs/:clubId/team-life/matches/:matchId/availability/open` | Compte connecté | Disponibilités demandées (aucune convocation créée) |
+| PUT | `/v1/clubs/:clubId/team-life/matches/:matchId/convocation/draft` | Compte connecté | Brouillon enregistré (jamais visible des familles) |
+| POST | `/v1/clubs/:clubId/team-life/matches/:matchId/convocation/preview` | Compte connecté | Aperçu : ce que recevront un parent et un joueur |
+| POST | `/v1/clubs/:clubId/team-life/matches/:matchId/convocation/send` | Compte connecté | Convocation envoyée (ou mise à jour envoyée) |
 | GET | `/v1/clubs/:clubId/team-life/planning` | Compte connecté | Planning : matchs FFBB + entraînements |
 | GET | `/v1/clubs/:clubId/team-life/teams/:teamId/training-series` | Compte connecté | Créneaux d'entraînement en cours de l'équipe |
 | POST | `/v1/clubs/:clubId/team-life/teams/:teamId/training-series` | Compte connecté | Créneaux créés, séances générées |
@@ -311,6 +316,13 @@ Accès : **Compte connecté** = JWT Supabase (`Authorization: Bearer`), droits v
 | Méthode | Route | Accès | Description |
 |---|---|---|---|
 | POST | `/v1/public/clubs/:clubSlug/team-life/action-center` | Public (lien perso si action) | Home « À faire » (liens de l'appareil fusionnés) |
+| GET | `/v1/public/clubs/:clubSlug/team-life/matches/:matchId` | Public (lien perso si action) | Disponibilités et convocation du match (coach / admin) |
+| POST | `/v1/public/clubs/:clubSlug/team-life/matches/:matchId/availability/open` | Public (lien perso si action) | Disponibilités demandées (aucune convocation créée) |
+| PUT | `/v1/public/clubs/:clubSlug/team-life/matches/:matchId/availability/response` | Public (lien perso si action) | Disponibilité du licencié du lien |
+| PUT | `/v1/public/clubs/:clubSlug/team-life/matches/:matchId/convocation/draft` | Public (lien perso si action) | Brouillon enregistré (jamais visible des familles) |
+| POST | `/v1/public/clubs/:clubSlug/team-life/matches/:matchId/convocation/preview` | Public (lien perso si action) | Aperçu : ce que recevront un parent et un joueur |
+| PUT | `/v1/public/clubs/:clubSlug/team-life/matches/:matchId/convocation/response` | Public (lien perso si action) | Confirmation / refus du convoqué du lien |
+| POST | `/v1/public/clubs/:clubSlug/team-life/matches/:matchId/convocation/send` | Public (lien perso si action) | Convocation envoyée (ou mise à jour envoyée) |
 | POST | `/v1/public/clubs/:clubSlug/team-life/planning` | Public (lien perso si action) | Planning des équipes de l'appareil |
 | GET | `/v1/public/clubs/:clubSlug/team-life/teams/:teamId/training-series` | Public (lien perso si action) | Créneaux d'entraînement en cours de l'équipe |
 | POST | `/v1/public/clubs/:clubSlug/team-life/teams/:teamId/training-series` | Public (lien perso si action) | Créneaux créés, séances générées |

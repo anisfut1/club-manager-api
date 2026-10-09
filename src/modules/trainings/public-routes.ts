@@ -15,6 +15,8 @@ import { resolvePublicClub, type PublicClub } from "../public/club-resolver.js";
 import { words } from "../public-tables/name-search.js";
 import { licencieFromToken } from "../public-tables/routes.js";
 import { actorFromLicencie } from "./actor.js";
+import { PutAvailabilityResponseDtoSchema, PutConvocationDraftDtoSchema, PutConvocationResponseDtoSchema } from "../../contracts/convocations.js";
+import { matchHomeActions, matchTeamLife, openAvailability, previewConvocation, respondAvailability, respondConvocation, saveDraft, sendConvocation } from "../convocations/service.js";
 import { parse, rangeOf } from "./routes.js";
 import {
   canManageTeam,
@@ -92,6 +94,30 @@ publicTrainingsRouter.put("/trainings/:occurrenceId/response", async (c) => {
   const ctx = await tokenCtx(c);
   const body = await parse(PutTrainingResponseDtoSchema, c);
   return c.json(await respond(ctx, param(c, "occurrenceId"), ctx.licencie.id, body.response));
+});
+
+// ─── Lot 2 : matchs ──────────────────────────────────────────────────────────
+
+// Coach / admin du club (mêmes règles que l'espace club).
+publicTrainingsRouter.get("/matches/:matchId", async (c) => c.json(await matchTeamLife(await tokenCtx(c), param(c, "matchId"))));
+publicTrainingsRouter.post("/matches/:matchId/availability/open", async (c) => c.json(await openAvailability(await tokenCtx(c), param(c, "matchId"))));
+publicTrainingsRouter.put("/matches/:matchId/convocation/draft", async (c) => {
+  const ctx = await tokenCtx(c);
+  return c.json(await saveDraft(ctx, param(c, "matchId"), await parse(PutConvocationDraftDtoSchema, c)));
+});
+publicTrainingsRouter.post("/matches/:matchId/convocation/preview", async (c) => c.json(await previewConvocation(await tokenCtx(c), param(c, "matchId"))));
+publicTrainingsRouter.post("/matches/:matchId/convocation/send", async (c) => c.json(await sendConvocation(await tokenCtx(c), param(c, "matchId"))));
+
+/** Disponibilité / confirmation du licencié DU LIEN (jamais un autre, même UUID connu). */
+publicTrainingsRouter.put("/matches/:matchId/availability/response", async (c) => {
+  const ctx = await tokenCtx(c);
+  const body = await parse(PutAvailabilityResponseDtoSchema, c);
+  return c.json(await respondAvailability(ctx, param(c, "matchId"), ctx.licencie.id, body.response));
+});
+publicTrainingsRouter.put("/matches/:matchId/convocation/response", async (c) => {
+  const ctx = await tokenCtx(c);
+  const body = await parse(PutConvocationResponseDtoSchema, c);
+  return c.json(await respondConvocation(ctx, param(c, "matchId"), ctx.licencie.id, body.response));
 });
 
 interface Person {
@@ -186,9 +212,22 @@ publicTrainingsRouter.post("/action-center", async (c) => {
     const coach = people.find((p) => p.actor.coachTeamList.includes(teamId));
     if (next && coach) actions.push({ type: "COACH_TRAINING_SUMMARY", coachLicencieId: coach.licencieId, training: next });
   }
-  // Réponses attendues d'abord (chronologique), puis les résumés coach, puis le reste.
-  const rank = (a: ActionCenterDto["actions"][number]) => (a.type === "TRAINING_RESPONSE" ? (a.currentResponse ? 2 : 0) : 1);
-  actions.sort((a, b) => rank(a) - rank(b) || a.training.startsAt.localeCompare(b.training.startsAt));
+  // Matchs (Lot 2) : disponibilité, convocation à confirmer, étape suivante du coach.
+  const matchActions = (await matchHomeActions(
+    ctx,
+    people.map((p) => ({ licencieId: p.licencieId, firstName: p.firstName, teamId: p.teamId, coachTeams: p.actor.coachTeamList })),
+  )) as ActionCenterDto["actions"];
+  actions.push(...matchActions);
+
+  // Priorité (retour du club) : réponses attendues, puis convocations à confirmer, puis le coach, puis le reste ; chronologique.
+  const rank = (a: ActionCenterDto["actions"][number]): number => {
+    if (a.type === "TRAINING_RESPONSE") return a.currentResponse ? 3 : 0;
+    if (a.type === "MATCH_AVAILABILITY") return a.currentResponse ? 3 : 0;
+    if (a.type === "CONVOCATION_RESPONSE") return a.currentResponse === "PENDING" && !a.matchClosed ? 1 : 3;
+    return 2;
+  };
+  const when = (a: ActionCenterDto["actions"][number]): string => ("training" in a ? a.training.startsAt : (a.match.startsAt ?? ""));
+  actions.sort((a, b) => rank(a) - rank(b) || when(a).localeCompare(when(b)));
 
   const events: PlanningEventDto[] = await planning(ctx, { teamIds: allTeams, from, to });
   const upcoming = events.map((e) => ({

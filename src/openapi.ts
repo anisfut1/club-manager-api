@@ -119,6 +119,15 @@ import {
   UpdateTrainingOccurrenceDtoSchema,
   UpdateTrainingSeriesDtoSchema,
 } from "./contracts/trainings.js";
+import {
+  AvailabilityResponseResultDtoSchema,
+  ConvocationPreviewDtoSchema,
+  ConvocationResponseResultDtoSchema,
+  MatchTeamLifeDtoSchema,
+  PutAvailabilityResponseDtoSchema,
+  PutConvocationDraftDtoSchema,
+  PutConvocationResponseDtoSchema,
+} from "./contracts/convocations.js";
 const registry = new OpenAPIRegistry();
 
 registry.registerComponent("securitySchemes", "BearerAuth", {
@@ -1271,6 +1280,23 @@ for (const space of ["club", "public"] as const) {
   registry.registerPath({ method: "post", path: `${base}/trainings/{occurrenceId}/cancel`, security, request: { params: P(occurrenceParams, pubOccurrenceParams), ...auth, body: jsonBody(CancelTrainingOccurrenceDtoSchema) }, responses: { 200: jsonResponse("Séance annulée (reste visible)", TrainingOccurrenceDtoSchema), ...errorResponses } });
   registry.registerPath({ method: "post", path: `${base}/trainings/{occurrenceId}/restore`, security, request: { params: P(occurrenceParams, pubOccurrenceParams), ...auth }, responses: { 200: jsonResponse("Séance rétablie", TrainingOccurrenceDtoSchema), ...errorResponses } });
 }
+
+// Lot 2 : disponibilités et convocation d'un match (coach / admin), dans les deux espaces.
+const tlMatchParams = clubIdParam.extend({ matchId: z.string().uuid() });
+const pubTlMatchParams = clubSlugParam.extend({ matchId: z.string().uuid() });
+for (const space of ["club", "public"] as const) {
+  const base = space === "club" ? "/v1/clubs/{clubId}/team-life" : "/v1/public/clubs/{clubSlug}/team-life";
+  const security = space === "club" ? bearerAuth : undefined;
+  const auth = space === "club" ? {} : { query: pubToken };
+  const params = space === "club" ? tlMatchParams : pubTlMatchParams;
+  registry.registerPath({ method: "get", path: `${base}/matches/{matchId}`, security, request: { params, ...auth }, responses: { 200: jsonResponse("Disponibilités et convocation du match (coach / admin)", MatchTeamLifeDtoSchema), ...errorResponses } });
+  registry.registerPath({ method: "post", path: `${base}/matches/{matchId}/availability/open`, security, request: { params, ...auth }, responses: { 200: jsonResponse("Disponibilités demandées (aucune convocation créée)", MatchTeamLifeDtoSchema), ...errorResponses, ...validationResponses } });
+  registry.registerPath({ method: "put", path: `${base}/matches/{matchId}/convocation/draft`, security, request: { params, ...auth, body: jsonBody(PutConvocationDraftDtoSchema) }, responses: { 200: jsonResponse("Brouillon enregistré (jamais visible des familles)", MatchTeamLifeDtoSchema), ...errorResponses, ...validationResponses } });
+  registry.registerPath({ method: "post", path: `${base}/matches/{matchId}/convocation/preview`, security, request: { params, ...auth }, responses: { 200: jsonResponse("Aperçu : ce que recevront un parent et un joueur", ConvocationPreviewDtoSchema), ...errorResponses } });
+  registry.registerPath({ method: "post", path: `${base}/matches/{matchId}/convocation/send`, security, request: { params, ...auth }, responses: { 200: jsonResponse("Convocation envoyée (ou mise à jour envoyée)", MatchTeamLifeDtoSchema), ...errorResponses, ...validationResponses } });
+}
+registry.registerPath({ method: "put", path: "/v1/public/clubs/{clubSlug}/team-life/matches/{matchId}/availability/response", request: { params: pubTlMatchParams, query: pubToken, body: jsonBody(PutAvailabilityResponseDtoSchema) }, responses: { 200: jsonResponse("Disponibilité du licencié du lien", AvailabilityResponseResultDtoSchema), ...errorResponses, ...validationResponses } });
+registry.registerPath({ method: "put", path: "/v1/public/clubs/{clubSlug}/team-life/matches/{matchId}/convocation/response", request: { params: pubTlMatchParams, query: pubToken, body: jsonBody(PutConvocationResponseDtoSchema) }, responses: { 200: jsonResponse("Confirmation / refus du convoqué du lien", ConvocationResponseResultDtoSchema), ...errorResponses, ...validationResponses } });
 
 registry.registerPath({ method: "get", path: "/v1/clubs/{clubId}/team-life/trainings", security: bearerAuth, request: { params: clubIdParam, query: rangeQuery.omit({ kind: true }) }, responses: { 200: jsonResponse("Séances de la période (compteurs pour qui gère l'équipe)", TrainingOccurrenceListDtoSchema), ...errorResponses, ...validationResponses } });
 registry.registerPath({ method: "get", path: "/v1/clubs/{clubId}/team-life/planning", security: bearerAuth, request: { params: clubIdParam, query: rangeQuery }, responses: { 200: jsonResponse("Planning : matchs FFBB + entraînements", PlanningDtoSchema), ...errorResponses, ...validationResponses } });

@@ -7,7 +7,7 @@ chat, sondages, cotisations, SMS, push…). Livré par lots testables :
 | Lot | Contenu | État |
 |---|---|---|
 | 1 | Entraînements (créneaux récurrents, séances, annuler / modifier une séance), Planning (matchs FFBB + entraînements), réponses Présent / Absent / Incertain, Home « À faire » | ✅ |
-| 2 | Disponibilités match, convocations (message personnalisé, snapshot, confirmations), changement FFBB après envoi | à faire |
+| 2 | Disponibilités match, convocations (message personnalisé, snapshot, confirmations), changement FFBB après envoi | ✅ |
 | 3 | Lavage des maillots (suggestions équitables, le coach décide) | à faire |
 
 ## Identité : le lien personnel (décision du club, 2026-10-09)
@@ -99,6 +99,55 @@ Tri : réponses attendues (chronologique), puis résumés coach, puis réponses
 déjà données. Liens invalides signalés (`invalidTokenIndexes`) pour être
 oubliés par l'appareil, jamais bloquants.
 
+## Matchs : disponibilités et convocations (Lot 2)
+
+Trois notions **distinctes** : DISPONIBLE (« je peux venir »), CONVOQUÉ
+(« le coach m'a choisi »), CONFIRMÉ (« je confirme ma venue »).
+
+1. **Demander les disponibilités** (coach / admin) :
+   `match_availability_requests` (une par match et équipe). Ne crée **aucune**
+   convocation. Les joueurs / parents de l'équipe voient « Lina est-elle
+   disponible ? » sur la Home et répondent Disponible / Indisponible /
+   Incertaine (`match_availability_responses`).
+2. **Préparer la convocation** : brouillon (`draft_*` de
+   `match_convocations`), jamais visible des familles. À la première
+   préparation, les disponibles sont présélectionnés. Ordre d'affichage :
+   disponibles, incertains, sans réponse, indisponibles. Sélectionner un
+   indisponible est permis (alerte « Emma a indiqué être indisponible »).
+   Rendez-vous : heure (`timestamptz`, fuseau du club) et lieu (texte libre,
+   gymnase du club en option). À domicile, le lieu de rendez-vous par défaut
+   est le gymnase du match ; **à l'extérieur, il est obligatoire**.
+3. **Aperçu** : un exemple de message « parent » et « joueur majeur » selon
+   la sélection, alertes et points bloquants.
+4. **Envoyer** : photo du match (`match_snapshot`), révision + 1, message
+   rendu pour chaque convoqué et gardé tel quel
+   (`match_convocation_dispatches`), statut individuel PENDING / CONFIRMED /
+   DECLINED (`match_convocation_recipients`). Envoi **dans l'application**
+   seulement (Home), pas d'email / SMS / push en V1.
+5. **Après envoi** : toute modification reste en brouillon
+   (`hasUnsentChanges`) jusqu'à « Envoyer la mise à jour ». Si l'heure, le
+   lieu de rendez-vous ou le match ont changé, les réponses repassent « en
+   attente ». Un convoqué retiré garde son historique (`removed_at`).
+6. **Match modifié par la FFBB** : `matchChanges` (DATE, VENUE, STATUS)
+   compare la photo au match actuel ; le message déjà lu n'est jamais modifié
+   en silence. Match annulé / reporté / commencé : plus de demande ni de
+   confirmation (409 `MATCH_CLOSED`), la convocation reste en historique.
+
+**Message** (`renderConvocationMessage`, fonction pure testée) : mineur ou
+âge inconnu → message au parent (« Convocation pour Lina avec les U15 (F).
+… Merci de confirmer la présence de Lina. ») ; majeur → « Bonjour Anis, … »
+avec tutoiement. Jamais de tournure genrée (« convoqué·e ») : le sexe n'est
+pas déduit du prénom. À l'extérieur, « Rendez-vous » et « Lieu du match »
+sont toujours séparés.
+
+**Home** : `MATCH_AVAILABILITY` (disponibilité à donner),
+`CONVOCATION_RESPONSE` (message tel qu'envoyé, Je confirme / Je ne peux pas
+venir en un clic), `COACH_MATCH` (étape suivante du coach pour chaque match
+de ses équipes dans les 14 jours : `ASK_AVAILABILITY`,
+`PREPARE_CONVOCATION`, `CONVOCATION_SENT` avec compteurs). Familles : matchs
+des 21 prochains jours. Tri : réponses attendues, convocations à confirmer,
+coach, le reste ; chronologique.
+
 ## Routes
 
 Espace club (Bearer) sous `/v1/clubs/{clubId}/team-life`, espace public
@@ -114,6 +163,11 @@ Espace club (Bearer) sous `/v1/clubs/{clubId}/team-life`, espace public
 | GET | `/teams/{teamId}/trainings` | (public) séances d'une équipe gérée, avec compteurs |
 | PUT | `/trainings/{occurrenceId}/response` | (public) Présent / Absent / Incertain |
 | POST | `/action-center`, `/planning` | (public) Home, planning de l'appareil |
+| GET | `/matches/{matchId}` | disponibilités + convocation (coach / admin) |
+| POST | `/matches/{matchId}/availability/open` | demander les disponibilités |
+| PUT | `/matches/{matchId}/convocation/draft` | brouillon : sélection, rendez-vous, message |
+| POST | `/matches/{matchId}/convocation/preview`, `/send` | aperçu, envoi / mise à jour |
+| PUT | `/matches/{matchId}/availability/response`, `/convocation/response` | (public) réponse du licencié du lien |
 
 ## Limites V1
 

@@ -689,6 +689,119 @@ export interface Database {
         }
       >;
 
+      match_availability_requests: Table<
+        { id: string; club_id: string; match_id: string; team_id: string; opened_at: string; opened_by_user_id: string | null; opened_by_licencie_id: string | null; created_at: string },
+        { id?: string; club_id: string; match_id: string; team_id: string; opened_at?: string; opened_by_user_id?: string | null; opened_by_licencie_id?: string | null; created_at?: string }
+      >;
+
+      match_availability_responses: Table<
+        {
+          id: string;
+          club_id: string;
+          request_id: string;
+          licencie_id: string;
+          response: "AVAILABLE" | "UNAVAILABLE" | "UNCERTAIN";
+          responded_at: string;
+          responded_by_user_id: string | null;
+          responded_by_licencie_id: string | null;
+          created_at: string;
+          updated_at: string;
+        },
+        {
+          id?: string;
+          club_id: string;
+          request_id: string;
+          licencie_id: string;
+          response: "AVAILABLE" | "UNAVAILABLE" | "UNCERTAIN";
+          responded_at?: string;
+          responded_by_user_id?: string | null;
+          responded_by_licencie_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        }
+      >;
+
+      match_convocations: Table<
+        {
+          id: string;
+          club_id: string;
+          match_id: string;
+          team_id: string;
+          draft_licencie_ids: string[];
+          draft_meeting_at: string | null;
+          draft_meeting_point: string | null;
+          draft_meeting_venue_id: string | null;
+          draft_coach_message: string | null;
+          revision: number;
+          meeting_at: string | null;
+          meeting_point: string | null;
+          meeting_venue_id: string | null;
+          coach_message: string | null;
+          match_snapshot: unknown;
+          sent_at: string | null;
+          sent_by_user_id: string | null;
+          sent_by_licencie_id: string | null;
+          created_at: string;
+          updated_at: string;
+        },
+        {
+          id?: string;
+          club_id: string;
+          match_id: string;
+          team_id: string;
+          draft_licencie_ids?: string[];
+          draft_meeting_at?: string | null;
+          draft_meeting_point?: string | null;
+          draft_meeting_venue_id?: string | null;
+          draft_coach_message?: string | null;
+          revision?: number;
+          meeting_at?: string | null;
+          meeting_point?: string | null;
+          meeting_venue_id?: string | null;
+          coach_message?: string | null;
+          match_snapshot?: unknown;
+          sent_at?: string | null;
+          sent_by_user_id?: string | null;
+          sent_by_licencie_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        }
+      >;
+
+      match_convocation_recipients: Table<
+        {
+          id: string;
+          club_id: string;
+          convocation_id: string;
+          licencie_id: string;
+          response: "PENDING" | "CONFIRMED" | "DECLINED";
+          responded_at: string | null;
+          responded_by_user_id: string | null;
+          responded_by_licencie_id: string | null;
+          removed_at: string | null;
+          created_at: string;
+          updated_at: string;
+        },
+        {
+          id?: string;
+          club_id: string;
+          convocation_id: string;
+          licencie_id: string;
+          response?: "PENDING" | "CONFIRMED" | "DECLINED";
+          responded_at?: string | null;
+          responded_by_user_id?: string | null;
+          responded_by_licencie_id?: string | null;
+          removed_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        }
+      >;
+
+      match_convocation_dispatches: Table<
+        { id: string; club_id: string; convocation_id: string; licencie_id: string; revision: number; rendered_message: string; sent_at: string },
+        { id?: string; club_id: string; convocation_id: string; licencie_id: string; revision: number; rendered_message: string; sent_at?: string }
+      >;
+
       derogation_notifications: Table<
         { id: string; club_id: string; kind: "fbi_incoming" | "fbi_outcome"; ref_key: string; created_at: string },
         { id?: string; club_id: string; kind: "fbi_incoming" | "fbi_outcome"; ref_key: string; created_at?: string }

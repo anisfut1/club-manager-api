@@ -295,6 +295,12 @@ export interface FakeClubSupabaseState {
   trainingSeries: FakeRow[];
   trainingOccurrences: FakeRow[];
   trainingResponses: FakeRow[];
+  availabilityRequests: FakeRow[];
+  availabilityResponses: FakeRow[];
+  convocations: FakeRow[];
+  convocationRecipients: FakeRow[];
+  convocationDispatches: FakeRow[];
+  venues: FakeRow[];
   isPlatformAdmin: boolean;
   /** Clés `${clubId}:${integration}` actuellement verrouillées (voir try_acquire_sync_lock/release_sync_lock). */
   syncLocks: Set<string>;
@@ -334,6 +340,12 @@ export function makeFakeClubSupabaseState(overrides: Partial<FakeClubSupabaseSta
     trainingSeries: [],
     trainingOccurrences: [],
     trainingResponses: [],
+    availabilityRequests: [],
+    availabilityResponses: [],
+    convocations: [],
+    convocationRecipients: [],
+    convocationDispatches: [],
+    venues: [],
     isPlatformAdmin: false,
     syncLocks: new Set(),
     ...overrides,
@@ -1056,6 +1068,26 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
               unique: (row, rows) => row.series_id != null && rows.some((r) => r.series_id === row.series_id && r.series_date === row.series_date),
             },
           );
+        case "match_availability_requests":
+          return mutableTable(() => state.availabilityRequests, (rows) => (state.availabilityRequests = rows), {
+            defaults: () => ({ opened_at: fakeNow() }),
+            unique: (row, rows) => rows.some((r) => r.match_id === row.match_id && r.team_id === row.team_id),
+          });
+        case "match_availability_responses":
+          return mutableTable(() => state.availabilityResponses, (rows) => (state.availabilityResponses = rows));
+        case "match_convocations":
+          return mutableTable(() => state.convocations, (rows) => (state.convocations = rows), {
+            defaults: () => ({ draft_licencie_ids: [], draft_meeting_at: null, draft_meeting_point: null, draft_meeting_venue_id: null, draft_coach_message: null, revision: 0, meeting_at: null, meeting_point: null, meeting_venue_id: null, coach_message: null, match_snapshot: null, sent_at: null, updated_at: fakeNow() }),
+            unique: (row, rows) => rows.some((r) => r.match_id === row.match_id && r.team_id === row.team_id),
+          });
+        case "match_convocation_recipients":
+          return mutableTable(() => state.convocationRecipients, (rows) => (state.convocationRecipients = rows), {
+            defaults: () => ({ response: "PENDING", responded_at: null, removed_at: null, updated_at: fakeNow() }),
+          });
+        case "match_convocation_dispatches":
+          return mutableTable(() => state.convocationDispatches, (rows) => (state.convocationDispatches = rows));
+        case "venues":
+          return { select: (_cols?: string) => queryable(state.venues) };
         case "training_responses":
           return mutableTable(
             () => state.trainingResponses,

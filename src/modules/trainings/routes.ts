@@ -9,6 +9,8 @@ import {
   UpdateTrainingOccurrenceDtoSchema,
   UpdateTrainingSeriesDtoSchema,
 } from "../../contracts/trainings.js";
+import { PutConvocationDraftDtoSchema } from "../../contracts/convocations.js";
+import { matchTeamLife, openAvailability, previewConvocation, saveDraft, sendConvocation } from "../convocations/service.js";
 import { actorFromAccount } from "./actor.js";
 import { createSeries, listOccurrences, listSeries, occurrenceDetail, planning, setOccurrenceStatus, stopSeries, updateOccurrence, updateSeries, type TrainingCtx } from "./service.js";
 
@@ -91,3 +93,14 @@ trainingsRouter.get("/planning", ...guard, async (c) => {
   const events = await planning(ctx, { teamIds: teamId ? [teamId] : "ALL", ...range, kinds: kind === "MATCH" || kind === "TRAINING" ? [kind] : undefined });
   return c.json({ ...range, events });
 });
+
+// ─── Lot 2 : disponibilités et convocation d'un match (coach / admin) ────────
+
+trainingsRouter.get("/matches/:matchId", ...guard, async (c) => c.json(await matchTeamLife(await ctxOf(c), param(c, "matchId"))));
+trainingsRouter.post("/matches/:matchId/availability/open", ...guard, async (c) => c.json(await openAvailability(await ctxOf(c), param(c, "matchId"))));
+trainingsRouter.put("/matches/:matchId/convocation/draft", ...guard, async (c) => {
+  const body = await parse(PutConvocationDraftDtoSchema, c);
+  return c.json(await saveDraft(await ctxOf(c), param(c, "matchId"), body));
+});
+trainingsRouter.post("/matches/:matchId/convocation/preview", ...guard, async (c) => c.json(await previewConvocation(await ctxOf(c), param(c, "matchId"))));
+trainingsRouter.post("/matches/:matchId/convocation/send", ...guard, async (c) => c.json(await sendConvocation(await ctxOf(c), param(c, "matchId"))));
