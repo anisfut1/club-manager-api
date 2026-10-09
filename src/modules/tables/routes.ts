@@ -236,6 +236,8 @@ tableAssignmentsRouter.post("/public-access/claims/:requestId/approve", requireC
     returnTo: claim.return_to,
     baseUrl: resolvePublicAppBaseUrl(c.req.header("origin")),
   });
+  // Adresse validée par l'admin : elle devient celle de la fiche.
+  await db.from("licencies").update({ email: claim.requested_email }).eq("id", licencie.id).eq("club_id", club.id);
   await db.from("licencie_claim_requests").update({ status: "approved", decided_by: user.id, decided_at: new Date().toISOString(), requested_email: null }).eq("id", claim.id);
   return c.json({ approved: true as const });
 });

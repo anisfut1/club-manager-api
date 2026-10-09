@@ -301,11 +301,24 @@ publicTablesRouter.post("/licencies/:licencieId/request-link", async (c) => {
   }
   const returnTo = body.data.returnTo ?? "tables";
 
+  const typedEmail = body.data.email?.trim().toLowerCase() || null;
+
   if (!knownEmail) {
-    // Fiche sans adresse connue : jamais de lien automatique, l'admin décide
-    // (retour du club, 2026-10-08 — anti-usurpation et anti-troll, R-018).
-    if (!body.data.email) throw badRequest("Indique ton adresse email pour recevoir ton lien personnel.", "EMAIL_REQUIRED");
-    await createClaimRequest(c, { licencie, email: body.data.email.trim().toLowerCase(), returnTo });
+    // Première connexion (fiche sans adresse) : lien envoyé directement à
+    // l'adresse saisie, enregistrée sur la fiche (retour du club, 2026-10-09 :
+    // « c'est sa première connexion, normalement ça lui envoie direct »).
+    if (!typedEmail) throw badRequest("Indique ton adresse email pour recevoir ton lien personnel.", "EMAIL_REQUIRED");
+    if (!isEmailConfigured()) throw serviceUnavailable("L'envoi d'email n'est pas encore configuré pour ce club. Contacte un·e responsable.", "EMAIL_NOT_CONFIGURED");
+    await issuePersonalLink(supabase, { club, licencie, targetEmail: typedEmail, returnTo, baseUrl: resolvePublicAppBaseUrl(c.req.header("origin")) });
+    return c.json({ sent: true as const, maskedEmail: maskEmail(typedEmail), pendingApproval: false as const });
+  }
+
+  if (typedEmail && typedEmail !== knownEmail.toLowerCase()) {
+    // Adresse différente de celle de la fiche : l'admin décide (retour du
+    // club, 2026-10-08 : « si ce n'est pas son mail, c'est l'admin qui
+    // décide de lui envoyer ou non, pour éviter qu'un mec fasse envoyer 40
+    // mails en mode troll »). Rien n'est envoyé avant sa décision.
+    await createClaimRequest(c, { licencie, email: typedEmail, returnTo, knownEmail });
     return c.json({ sent: false as const, maskedEmail: null, pendingApproval: true as const }, 202);
   }
 
@@ -316,13 +329,13 @@ publicTablesRouter.post("/licencies/:licencieId/request-link", async (c) => {
   // Avant toute écriture : sans clé Resend, ne jamais révoquer un lien existant pour rien.
   if (!isEmailConfigured()) throw serviceUnavailable("L'envoi d'email n'est pas encore configuré pour ce club. Contacte un·e responsable.", "EMAIL_NOT_CONFIGURED");
 
-  // Adresse connue : le lien part TOUJOURS là, jamais vers une adresse saisie.
+  // Adresse connue (rien saisi, ou la même) : le lien part là.
   await issuePersonalLink(supabase, { club, licencie, targetEmail: knownEmail, returnTo, baseUrl: resolvePublicAppBaseUrl(c.req.header("origin")) });
   return c.json({ sent: true as const, maskedEmail: maskEmail(knownEmail), pendingApproval: false as const });
 });
 
 /**
- * Demande en attente pour une fiche sans adresse : une seule par fiche (les
+ * Demande en attente pour une adresse différente de celle de la fiche : une seule par fiche (les
  * suivantes ne recréent rien et ne renvoient aucun email aux admins), 5 par
  * heure et par IP, 20 par heure et par club. Une demande expirée est
  * réactivée. Les admins sont prévenus une fois par demande.
@@ -330,7 +343,7 @@ publicTablesRouter.post("/licencies/:licencieId/request-link", async (c) => {
 async function createClaimRequest(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   c: any,
-  input: { licencie: { id: string; first_name: string; last_name: string }; email: string; returnTo: string },
+  input: { licencie: { id: string; first_name: string; last_name: string }; email: string; returnTo: string; knownEmail: string },
 ): Promise<void> {
   const supabase: DbClient = c.get("supabase");
   const club: PublicClub = c.get("publicClub");
@@ -360,7 +373,8 @@ async function createClaimRequest(
     club: { name: club.name, logoUrl: club.logoUrl, accentColor: club.accentColor },
     licencieName: `${input.licencie.first_name} ${input.licencie.last_name}`,
     email: input.email,
-    link: `${resolvePublicAppBaseUrl(c.req.header("origin"))}/c/${encodeURIComponent(club.slug)}/tables/public-access`,
+    knownEmail: maskEmail(input.knownEmail),
+    link: `${resolvePublicAppBaseUrl(c.req.header("origin"))}/c/${encodeURIComponent(club.slug)}/joueurs`,
   });
   await Promise.all(emails.map((to) => sendEmail({ to, fromName: PLATFORM_NAME, ...message }).catch((error) => logError("Envoi de la demande de lien échoué", error, { clubId: club.id }))));
 }

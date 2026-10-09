@@ -264,13 +264,23 @@ describe("POST .../licencies/:licencieId/request-link — retour du club : \"il 
     expect(sentEmails).toHaveLength(0);
   });
 
-  it("adresse déjà connue : l'email part TOUJOURS à cette adresse, l'adresse saisie est ignorée (\"lien perdu ?\")", async () => {
+  it("adresse déjà connue : sans adresse saisie (ou la même), l'email part à cette adresse (\"lien perdu ?\")", async () => {
     state.licencies = [{ ...THOMAS, email: "vrai.thomas@example.test" }, { ...LEA }];
-    const res = await requestLink(THOMAS.id, { email: "attaquant@example.test" });
+    const res = await requestLink(THOMAS.id, { email: "Vrai.Thomas@example.test" });
     expect(res.status).toBe(200);
     expect(((await res.json()) as { maskedEmail: string }).maskedEmail).toBe("v***@example.test");
     expect(sentEmails[0]!.to).toEqual(["vrai.thomas@example.test"]);
-    expect(state.licencies.find((l) => l.id === THOMAS.id)?.email).toBe("vrai.thomas@example.test");
+  });
+
+  it("première connexion (fiche sans adresse) : lien envoyé directement à l'adresse saisie, enregistrée sur la fiche — retour du club, 2026-10-09", async () => {
+    const res = await requestLink(THOMAS.id, { email: "Thomas@Example.test", returnTo: "derogations" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ sent: true, maskedEmail: "t***@example.test", pendingApproval: false });
+    expect(sentEmails).toHaveLength(1);
+    expect(sentEmails[0]!.to).toEqual(["thomas@example.test"]);
+    expect((await request(`/me?token=${tokenFromLastEmail()}`)).status).toBe(200);
+    expect(state.licencies.find((l) => l.id === THOMAS.id)?.email).toBe("thomas@example.test");
+    expect(state.claimRequests).toHaveLength(0);
   });
 
   it("une nouvelle demande remplace l'ancien lien (l'ancien jeton est révoqué)", async () => {
@@ -462,7 +472,7 @@ describe("DELETE .../table-assignments/:role — retour du club : \"peuvent se s
   });
 });
 
-describe("Fiche sans adresse connue — retour du club, 2026-10-08 : « si ce n'est pas son mail, c'est l'admin qui décide » (R-018)", () => {
+describe("Adresse différente de celle de la fiche — retour du club, 2026-10-08 : « si ce n'est pas son mail, c'est l'admin qui décide » (R-018)", () => {
   const admin = (path: string, init: RequestInit = {}) =>
     app.request(`/v1/clubs/${CLUB_A.id}/table-assignments/public-access/claims${path}`, { ...init, headers: { authorization: "Bearer test-jwt", "content-type": "application/json", origin: "http://localhost:3000" } });
   const pendingIds = async () => ((await (await admin("")).json()) as { requests: { id: string }[] }).requests.map((r) => r.id);
@@ -479,6 +489,7 @@ describe("Fiche sans adresse connue — retour du club, 2026-10-08 : « si ce n'
       { membership_id: "m-coach", role: "coach", scope_team_id: null },
     ] as never;
     authEmails = { "u-admin": "admin@club-a.test", "u-coach": "coach@club-a.test" };
+    state.licencies = [{ ...THOMAS, email: "ancien.thomas@example.test" }, { ...LEA, email: "ancienne.lea@example.test" }];
   });
 
   it("aucun lien envoyé à l'adresse saisie : 202 en attente, les administrateurs (eux seuls) sont prévenus", async () => {
@@ -486,12 +497,12 @@ describe("Fiche sans adresse connue — retour du club, 2026-10-08 : « si ce n'
     expect(res.status).toBe(202);
     expect(await res.json()).toEqual({ sent: false, maskedEmail: null, pendingApproval: true });
     expect(state.publicTokens).toHaveLength(0);
-    expect(state.licencies.find((l) => l.id === THOMAS.id)?.email).toBeNull();
+    expect(state.licencies.find((l) => l.id === THOMAS.id)?.email).toBe("ancien.thomas@example.test");
     expect(sentEmails).toHaveLength(1);
     expect(sentEmails[0]!.to).toEqual(["admin@club-a.test"]);
     expect(sentEmails[0]!.subject).toBe("Lien demandé pour Thomas Martin — à valider");
     expect(sentEmails[0]!.text).toContain("thomas@example.test");
-    expect(sentEmails[0]!.text).toContain("http://localhost:3000/c/club-a/tables/public-access");
+    expect(sentEmails[0]!.text).toContain("http://localhost:3000/c/club-a/joueurs");
   });
 
   it("anti-troll : une demande déjà en attente ne renvoie aucun email ; 5 demandes par heure et par IP", async () => {
@@ -503,7 +514,7 @@ describe("Fiche sans adresse connue — retour du club, 2026-10-08 : « si ce n'
     expect((await requestLink(LEA.id, { email: "c@example.test" })).status).toBe(429);
   });
 
-  it("l'admin approuve : le lien part à l'adresse demandée, enregistrée sur la fiche ; la demande disparaît", async () => {
+  it("l'admin approuve : le lien part à l'adresse demandée, qui remplace l'ancienne sur la fiche ; la demande disparaît", async () => {
     await requestLink(THOMAS.id, { email: "thomas@example.test", returnTo: "derogations" });
     const [id] = await pendingIds();
     sentEmails = [];
