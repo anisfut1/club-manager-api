@@ -155,10 +155,13 @@ describe("Répondre et Home « À faire » (lien personnel)", () => {
   });
 
   it("un parent avec deux enfants voit les entraînements de chacun, répond en un clic, et l'action passe en « répondue »", async () => {
-    const home = await json<{ people: { firstName: string }[]; actions: { type: string; firstName: string; currentResponse: string | null; training: { id: string; counts: unknown; location: { label: string } } }[] }>(
+    const home = await json<{ people: { firstName: string; tokenIndex: number }[]; actions: { type: string; firstName: string; currentResponse: string | null; training: { id: string; counts: unknown; location: { label: string } } }[] }>(
       await pub("/action-center", { method: "POST", body: { tokens: ["token-lina", "token-mathis"] } }),
     );
-    expect(home.people.map((p) => p.firstName).sort()).toEqual(["Lina", "Mathis"]);
+    expect(home.people.map((p) => [p.firstName, p.tokenIndex]).sort()).toEqual([
+      ["Lina", 0],
+      ["Mathis", 1],
+    ]);
     const lina = home.actions.filter((a) => a.type === "TRAINING_RESPONSE" && a.firstName === "Lina");
     const mathis = home.actions.filter((a) => a.type === "TRAINING_RESPONSE" && a.firstName === "Mathis");
     expect(lina).toHaveLength(3);

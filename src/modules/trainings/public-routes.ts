@@ -188,6 +188,7 @@ publicTrainingsRouter.post("/action-center", async (c) => {
 
   const result: ActionCenterDto = {
     people: people.map((p) => ({
+      tokenIndex: p.index,
       licencieId: p.licencieId,
       firstName: p.firstName,
       lastName: p.lastName,

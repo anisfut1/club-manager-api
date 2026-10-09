@@ -137,7 +137,7 @@ export const PlanningDtoSchema = z.object({ from: z.string(), to: z.string(), ev
 export const ActionCenterRequestDtoSchema = z.object({ tokens: z.array(z.string().min(1)).min(1).max(8) }).openapi("ActionCenterRequestDto");
 
 export const ActionCenterPersonDtoSchema = z
-  .object({ licencieId: z.string(), firstName: z.string(), lastName: z.string(), team: z.object({ id: z.string(), name: z.string() }).nullable(), coachTeams: z.array(z.object({ id: z.string(), name: z.string() })) })
+  .object({ tokenIndex: z.number().openapi({ description: "Position du lien de cette personne dans `tokens` (pour répondre avec le bon lien)" }), licencieId: z.string(), firstName: z.string(), lastName: z.string(), team: z.object({ id: z.string(), name: z.string() }).nullable(), coachTeams: z.array(z.object({ id: z.string(), name: z.string() })) })
   .openapi("ActionCenterPersonDto");
 
 export const ActionCenterActionDtoSchema = z
