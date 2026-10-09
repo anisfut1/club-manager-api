@@ -5,6 +5,7 @@ import { badRequest } from "../../api-error.js";
 import { createServiceSupabaseClient } from "../../db/client.js";
 import {
   CancelTrainingOccurrenceDtoSchema,
+  PutTrainingAttendanceDtoSchema,
   CreateTrainingSeriesDtoSchema,
   UpdateTrainingOccurrenceDtoSchema,
   UpdateTrainingSeriesDtoSchema,
@@ -12,7 +13,7 @@ import {
 import { PutConvocationDraftDtoSchema } from "../../contracts/convocations.js";
 import { matchTeamLife, openAvailability, previewConvocation, saveDraft, sendConvocation } from "../convocations/service.js";
 import { actorFromAccount } from "./actor.js";
-import { createSeries, listOccurrences, listSeries, occurrenceDetail, planning, setOccurrenceStatus, stopSeries, updateOccurrence, updateSeries, type TrainingCtx } from "./service.js";
+import { createSeries, markAttendance, listOccurrences, listSeries, occurrenceDetail, planning, setOccurrenceStatus, stopSeries, updateOccurrence, updateSeries, type TrainingCtx } from "./service.js";
 
 /**
  * Entraînements — espace club (comptes connectés). Mêmes fonctions que
@@ -104,3 +105,10 @@ trainingsRouter.put("/matches/:matchId/convocation/draft", ...guard, async (c) =
 });
 trainingsRouter.post("/matches/:matchId/convocation/preview", ...guard, async (c) => c.json(await previewConvocation(await ctxOf(c), param(c, "matchId"))));
 trainingsRouter.post("/matches/:matchId/convocation/send", ...guard, async (c) => c.json(await sendConvocation(await ctxOf(c), param(c, "matchId"))));
+
+/** Présence réelle (coach / admin, séance commencée) : PRESENT / LATE / ABSENT. */
+trainingsRouter.put("/trainings/:occurrenceId/attendance/:licencieId", ...guard, async (c) => {
+  const ctx = await ctxOf(c);
+  const body = await parse(PutTrainingAttendanceDtoSchema, c);
+  return c.json(await markAttendance(ctx, param(c, "occurrenceId"), param(c, "licencieId"), body.status));
+});

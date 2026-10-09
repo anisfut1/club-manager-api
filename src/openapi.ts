@@ -114,6 +114,7 @@ import {
   TrainingOccurrenceDetailDtoSchema,
   TrainingOccurrenceDtoSchema,
   TrainingOccurrenceListDtoSchema,
+  PutTrainingAttendanceDtoSchema,
   TrainingResponseResultDtoSchema,
   TrainingSeriesListDtoSchema,
   UpdateTrainingOccurrenceDtoSchema,
@@ -1279,6 +1280,7 @@ for (const space of ["club", "public"] as const) {
   registry.registerPath({ method: "patch", path: `${base}/trainings/{occurrenceId}`, security, request: { params: P(occurrenceParams, pubOccurrenceParams), ...auth, body: jsonBody(UpdateTrainingOccurrenceDtoSchema) }, responses: { 200: jsonResponse("Séance modifiée (cette séance uniquement)", TrainingOccurrenceDtoSchema), ...errorResponses, ...validationResponses } });
   registry.registerPath({ method: "post", path: `${base}/trainings/{occurrenceId}/cancel`, security, request: { params: P(occurrenceParams, pubOccurrenceParams), ...auth, body: jsonBody(CancelTrainingOccurrenceDtoSchema) }, responses: { 200: jsonResponse("Séance annulée (reste visible)", TrainingOccurrenceDtoSchema), ...errorResponses } });
   registry.registerPath({ method: "post", path: `${base}/trainings/{occurrenceId}/restore`, security, request: { params: P(occurrenceParams, pubOccurrenceParams), ...auth }, responses: { 200: jsonResponse("Séance rétablie", TrainingOccurrenceDtoSchema), ...errorResponses } });
+  registry.registerPath({ method: "put", path: `${base}/trainings/{occurrenceId}/attendance/{licencieId}`, security, request: { params: (space === "club" ? occurrenceParams : pubOccurrenceParams).extend({ licencieId: z.string().uuid() }), ...auth, body: jsonBody(PutTrainingAttendanceDtoSchema) }, responses: { 200: jsonResponse("Présence réelle relevée (présent / retard / absent)", z.object({ occurrenceId: z.string(), licencieId: z.string(), status: z.string() })), ...errorResponses, ...validationResponses } });
 }
 
 // Lot 2 : disponibilités et convocation d'un match (coach / admin), dans les deux espaces.

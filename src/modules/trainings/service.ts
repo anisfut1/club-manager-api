@@ -2,6 +2,7 @@ import type { DbClient } from "../../db/client.js";
 import { badRequest, conflict, forbidden, notFound } from "../../api-error.js";
 import type {
   PlanningEventDto,
+  TrainingAttendanceValue,
   TrainingCountsDto,
   TrainingOccurrenceDto,
   TrainingResponseValue,
@@ -30,6 +31,11 @@ export interface TrainingCtx {
   clubId: string;
   timezone: string;
   actor: TrainingActor;
+}
+
+/** Licencié coach (lien personnel) de cette équipe : jamais interrogé pour ses propres entraînements. */
+export function coachesTeam(l: { public_coach?: boolean | null; coached_team_ids?: string[] | null }, teamId: string): boolean {
+  return l.public_coach === true && (l.coached_team_ids ?? []).includes(teamId);
 }
 
 export function canManageTeam(actor: TrainingActor, teamId: string): boolean {
@@ -110,13 +116,18 @@ function location(venueMap: Map<string, { name: string; address: string | null }
   return { clubVenueId, label: label ?? venue?.name ?? null, address: label ? null : (venue?.address ?? null) };
 }
 
-/** Effectif d'une équipe : licenciés actifs rattachés (`team_id`). */
+/**
+ * Effectif d'une équipe à l'entraînement : licenciés actifs rattachés
+ * (`team_id`), SAUF ceux qui coachent cette équipe (retour du club,
+ * 2026-10-10 : « faut pas demander au coach s'il est dispo à l'entraînement »).
+ */
 async function rosters(ctx: TrainingCtx, teamIds: string[]): Promise<Map<string, { id: string; first_name: string; last_name: string; photo_url: string | null }[]>> {
   const out = new Map<string, { id: string; first_name: string; last_name: string; photo_url: string | null }[]>();
   if (teamIds.length === 0) return out;
-  const { data } = await ctx.db.from("licencies").select("id, first_name, last_name, photo_url, team_id").eq("club_id", ctx.clubId).eq("active", true).in("team_id", teamIds);
+  const { data } = await ctx.db.from("licencies").select("id, first_name, last_name, photo_url, team_id, public_coach, coached_team_ids").eq("club_id", ctx.clubId).eq("active", true).in("team_id", teamIds);
   for (const l of data ?? []) {
     if (!l.team_id) continue;
+    if (coachesTeam(l, l.team_id)) continue;
     out.set(l.team_id, [...(out.get(l.team_id) ?? []), { id: l.id, first_name: l.first_name, last_name: l.last_name, photo_url: l.photo_url ?? null }]);
   }
   return out;
@@ -138,10 +149,22 @@ function countsFor(occurrence: OccurrenceRow, roster: { id: string }[], response
 }
 
 /** Séances → DTO (avec les compteurs pour qui gère l'équipe, jamais pour un parent). */
+async function attendanceFor(ctx: TrainingCtx, occurrenceIds: string[]): Promise<{ occurrence_id: string; licencie_id: string; status: TrainingAttendanceValue }[]> {
+  if (occurrenceIds.length === 0) return [];
+  const { data } = await ctx.db.from("training_attendance").select("occurrence_id, licencie_id, status").eq("club_id", ctx.clubId).in("occurrence_id", occurrenceIds);
+  return (data ?? []) as { occurrence_id: string; licencie_id: string; status: TrainingAttendanceValue }[];
+}
+
+function attendanceSummary(marks: { status: TrainingAttendanceValue }[]) {
+  return { late: marks.filter((m) => m.status === "LATE").length, absent: marks.filter((m) => m.status === "ABSENT").length, recorded: marks.length > 0 };
+}
+
 async function toDtos(ctx: TrainingCtx, rows: OccurrenceRow[]): Promise<TrainingOccurrenceDto[]> {
   const teamIds = [...new Set(rows.map((r) => r.team_id))];
   const managed = teamIds.filter((id) => canManageTeam(ctx.actor, id));
-  const [names, venueMap, rosterMap, responses] = await Promise.all([
+  const nowIso = new Date().toISOString();
+  const startedManaged = rows.filter((r) => canManageTeam(ctx.actor, r.team_id) && r.starts_at <= nowIso).map((r) => r.id);
+  const [names, venueMap, rosterMap, responses, marks] = await Promise.all([
     teamNames(ctx, teamIds),
     venues(ctx),
     rosters(ctx, managed),
@@ -149,6 +172,7 @@ async function toDtos(ctx: TrainingCtx, rows: OccurrenceRow[]): Promise<Training
       ctx,
       rows.filter((r) => canManageTeam(ctx.actor, r.team_id)).map((r) => r.id),
     ),
+    attendanceFor(ctx, startedManaged),
   ]);
   return rows.map((r) => {
     const manage = canManageTeam(ctx.actor, r.team_id);
@@ -164,6 +188,7 @@ async function toDtos(ctx: TrainingCtx, rows: OccurrenceRow[]): Promise<Training
       isModified: r.is_modified,
       counts: manage ? countsFor(r, rosterMap.get(r.team_id) ?? [], responses) : null,
       canManage: manage,
+      attendance: manage && r.starts_at <= nowIso && r.status === "scheduled" ? attendanceSummary(marks.filter((m) => m.occurrence_id === r.id)) : null,
     };
   });
 }
@@ -365,13 +390,14 @@ export async function listOccurrences(ctx: TrainingCtx, input: { teamIds: string
 export async function occurrenceDetail(ctx: TrainingCtx, occurrenceId: string) {
   const occurrence = await loadOccurrence(ctx, occurrenceId);
   requireManage(ctx, occurrence.team_id);
-  const [[training], rosterMap, responses] = await Promise.all([toDtos(ctx, [occurrence]), rosters(ctx, [occurrence.team_id]), responsesFor(ctx, [occurrence.id])]);
+  const [[training], rosterMap, responses, marks] = await Promise.all([toDtos(ctx, [occurrence]), rosters(ctx, [occurrence.team_id]), responsesFor(ctx, [occurrence.id]), attendanceFor(ctx, [occurrence.id])]);
   const byLicencie = new Map(responses.map((r) => [r.licencie_id, r]));
+  const markOf = new Map(marks.map((m) => [m.licencie_id, m.status]));
   const order: Record<string, number> = { PRESENT: 0, UNCERTAIN: 1, ABSENT: 2 };
   const roster = (rosterMap.get(occurrence.team_id) ?? [])
     .map((l) => {
       const r = byLicencie.get(l.id);
-      return { licencie: { id: l.id, firstName: l.first_name, lastName: l.last_name, photoUrl: l.photo_url }, response: r?.response ?? null, respondedAt: r?.responded_at ?? null };
+      return { licencie: { id: l.id, firstName: l.first_name, lastName: l.last_name, photoUrl: l.photo_url }, response: r?.response ?? null, respondedAt: r?.responded_at ?? null, attendance: markOf.get(l.id) ?? null };
     })
     .sort((a, b) => (a.response ? order[a.response]! : 3) - (b.response ? order[b.response]! : 3) || a.licencie.lastName.localeCompare(b.licencie.lastName, "fr"));
   return { training: training!, roster };
@@ -473,4 +499,27 @@ export async function planning(ctx: TrainingCtx, input: { teamIds: string[] | "A
     }
   }
   return events.sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+}
+
+// ─── Présence réelle (après le début de la séance) ─────────────────────────
+
+/**
+ * Le coach relève les absents et les retards d'une séance commencée
+ * (retour du club, 2026-10-10). Pas de relevé = présent.
+ */
+export async function markAttendance(ctx: TrainingCtx, occurrenceId: string, licencieId: string, status: TrainingAttendanceValue) {
+  const occurrence = await loadOccurrence(ctx, occurrenceId);
+  requireManage(ctx, occurrence.team_id);
+  if (occurrence.status === "cancelled") throw conflict("Cet entraînement est annulé.", "TRAINING_CANCELLED");
+  if (occurrence.starts_at > new Date().toISOString()) throw conflict("La présence se relève une fois la séance commencée.", "TRAINING_NOT_STARTED");
+  const roster = (await rosters(ctx, [occurrence.team_id])).get(occurrence.team_id) ?? [];
+  if (!roster.some((l) => l.id === licencieId)) throw forbidden("Ce licencié ne fait pas partie de cette équipe.", "NOT_IN_TEAM");
+  const now = new Date().toISOString();
+  await ctx.db
+    .from("training_attendance")
+    .upsert(
+      { club_id: ctx.clubId, occurrence_id: occurrence.id, licencie_id: licencieId, status, marked_at: now, marked_by_user_id: ctx.actor.userId, marked_by_licencie_id: ctx.actor.licencieId, updated_at: now },
+      { onConflict: "occurrence_id,licencie_id" },
+    );
+  return { occurrenceId: occurrence.id, licencieId, status };
 }

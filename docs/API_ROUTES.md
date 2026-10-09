@@ -1,7 +1,7 @@
 # Inventaire des routes de l'API
 
 > Fichier **généré** par `npm run docs:routes` (ops/docs/generate-routes-doc.ts) — ne pas modifier à la main.
-> 159 routes montées dans le code, 152 décrites dans le contrat OpenAPI (`/openapi.json`, `/docs`).
+> 161 routes montées dans le code, 154 décrites dans le contrat OpenAPI (`/openapi.json`, `/docs`).
 
 Accès : **Compte connecté** = JWT Supabase (`Authorization: Bearer`), droits vérifiés par club ; **Public** = sans compte ; **Public (lien perso si action)** = lecture libre, écriture avec le jeton du lien personnel ; **Secret cron** = `CRON_SECRET`.
 
@@ -153,6 +153,7 @@ Accès : **Compte connecté** = JWT Supabase (`Authorization: Bearer`), droits v
 | GET | `/v1/clubs/:clubId/team-life/trainings` | Compte connecté | Séances de la période (compteurs pour qui gère l'équipe) |
 | GET | `/v1/clubs/:clubId/team-life/trainings/:occurrenceId` | Compte connecté | Séance + réponses nominatives (coach / admin) |
 | PATCH | `/v1/clubs/:clubId/team-life/trainings/:occurrenceId` | Compte connecté | Séance modifiée (cette séance uniquement) |
+| PUT | `/v1/clubs/:clubId/team-life/trainings/:occurrenceId/attendance/:licencieId` | Compte connecté | Présence réelle relevée (présent / retard / absent) |
 | POST | `/v1/clubs/:clubId/team-life/trainings/:occurrenceId/cancel` | Compte connecté | Séance annulée (reste visible) |
 | POST | `/v1/clubs/:clubId/team-life/trainings/:occurrenceId/restore` | Compte connecté | Séance rétablie |
 
@@ -331,6 +332,7 @@ Accès : **Compte connecté** = JWT Supabase (`Authorization: Bearer`), droits v
 | PATCH | `/v1/public/clubs/:clubSlug/team-life/training-series/:seriesId` | Public (lien perso si action) | Créneau modifié à partir d'une date (passé inchangé) |
 | GET | `/v1/public/clubs/:clubSlug/team-life/trainings/:occurrenceId` | Public (lien perso si action) | Séance + réponses nominatives (coach / admin) |
 | PATCH | `/v1/public/clubs/:clubSlug/team-life/trainings/:occurrenceId` | Public (lien perso si action) | Séance modifiée (cette séance uniquement) |
+| PUT | `/v1/public/clubs/:clubSlug/team-life/trainings/:occurrenceId/attendance/:licencieId` | Public (lien perso si action) | Présence réelle relevée (présent / retard / absent) |
 | POST | `/v1/public/clubs/:clubSlug/team-life/trainings/:occurrenceId/cancel` | Public (lien perso si action) | Séance annulée (reste visible) |
 | PUT | `/v1/public/clubs/:clubSlug/team-life/trainings/:occurrenceId/response` | Public (lien perso si action) | Réponse enregistrée pour le licencié du lien |
 | POST | `/v1/public/clubs/:clubSlug/team-life/trainings/:occurrenceId/restore` | Public (lien perso si action) | Séance rétablie |

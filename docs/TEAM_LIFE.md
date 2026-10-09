@@ -66,6 +66,19 @@ Règles (`modules/trainings/service.ts`) :
 - **Répondre** : jusqu'à la fin de la séance ; changer d'avis remplace la
   réponse (pas d'historique en V1).
 
+**Coach qui joue dans l'équipe qu'il coache** (retour du club, 2026-10-10) :
+on ne lui demande jamais sa présence aux entraînements de cette équipe (il
+les anime), et il n'est pas compté dans l'effectif (« sans réponse ») de ces
+entraînements. Idem pour les matchs : pas de disponibilité ni de
+convocation pour le coach de l'équipe, absent de l'effectif du match.
+
+**Présence réelle** (retour du club, 2026-10-10) : une fois la séance
+commencée, le coach relève les absents et les retards
+(`training_attendance`, PRESENT / LATE / ABSENT ; pas de relevé = présent).
+Distinct de la réponse prévue par la famille. Page Entraînements : les 2
+dernières séances passées, avec « 1 absent · 1 retard » ou « Présence non
+relevée ». Pas de statistique d'assiduité.
+
 ## Planning
 
 `GET /clubs/{clubId}/team-life/planning` (comptes) et
@@ -161,6 +174,7 @@ Espace club (Bearer) sous `/v1/clubs/{clubId}/team-life`, espace public
 | POST | `/trainings/{occurrenceId}/cancel`, `/restore` | annuler / rétablir |
 | GET | `/trainings`, `/planning` | (club) séances, planning |
 | GET | `/teams/{teamId}/trainings` | (public) séances d'une équipe gérée, avec compteurs |
+| PUT | `/trainings/{occurrenceId}/attendance/{licencieId}` | présence réelle (coach / admin, séance commencée) |
 | PUT | `/trainings/{occurrenceId}/response` | (public) Présent / Absent / Incertain |
 | POST | `/action-center`, `/planning` | (public) Home, planning de l'appareil |
 | GET | `/matches/{matchId}` | disponibilités + convocation (coach / admin) |

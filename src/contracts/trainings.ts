@@ -84,17 +84,25 @@ export const TrainingOccurrenceDtoSchema = z
     /** Réponses de l'équipe : coachs / admins seulement (jamais visible d'un parent). */
     counts: TrainingCountsDtoSchema.nullable(),
     canManage: z.boolean(),
+    /** Séance commencée : relevé des absents / retards possible (coachs / admins). */
+    attendance: z.object({ late: z.number(), absent: z.number(), recorded: z.boolean() }).nullable(),
   })
   .openapi("TrainingOccurrenceDto");
 export type TrainingOccurrenceDto = z.infer<typeof TrainingOccurrenceDtoSchema>;
 
 export const TrainingOccurrenceListDtoSchema = z.object({ trainings: z.array(TrainingOccurrenceDtoSchema) }).openapi("TrainingOccurrenceListDto");
 
+/** Présence RÉELLE relevée par le coach après le début de la séance (≠ réponse prévue). */
+export const TrainingAttendanceValueSchema = z.enum(["PRESENT", "LATE", "ABSENT"]).openapi("TrainingAttendanceValue");
+export type TrainingAttendanceValue = z.infer<typeof TrainingAttendanceValueSchema>;
+
 export const TrainingRosterEntryDtoSchema = z
   .object({
     licencie: z.object({ id: z.string(), firstName: z.string(), lastName: z.string(), photoUrl: z.string().nullable() }),
     response: TrainingResponseValueSchema.nullable(),
     respondedAt: z.string().nullable(),
+    /** `null` = non relevé (présent par défaut). */
+    attendance: TrainingAttendanceValueSchema.nullable(),
   })
   .openapi("TrainingRosterEntryDto");
 
@@ -109,6 +117,8 @@ export const UpdateTrainingOccurrenceDtoSchema = z
   .openapi("UpdateTrainingOccurrenceDto");
 
 export const CancelTrainingOccurrenceDtoSchema = z.object({ reason: z.string().trim().max(200).nullable().optional() }).openapi("CancelTrainingOccurrenceDto");
+
+export const PutTrainingAttendanceDtoSchema = z.object({ status: TrainingAttendanceValueSchema }).openapi("PutTrainingAttendanceDto");
 
 export const PutTrainingResponseDtoSchema = z.object({ response: TrainingResponseValueSchema }).openapi("PutTrainingResponseDto");
 

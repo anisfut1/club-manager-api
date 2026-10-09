@@ -9,7 +9,7 @@ import type {
   TeamLifeMatchDto,
 } from "../../contracts/convocations.js";
 import { formatTeamNameWithGender } from "../../util/team-name.js";
-import { canManageTeam, type TrainingCtx } from "../trainings/service.js";
+import { canManageTeam, coachesTeam, type TrainingCtx } from "../trainings/service.js";
 import { audienceFor, renderConvocationMessage, type ConvocationAudience } from "./render.js";
 
 /**
@@ -135,9 +135,10 @@ export async function toMatchDtos(ctx: TrainingCtx, matches: MatchRow[]): Promis
   );
 }
 
+/** Effectif du match : joueurs de l'équipe, sans ceux qui la coachent (retour du club, 2026-10-10 : « le coach n'a pas besoin de confirmer sa dispo au match »). */
 async function roster(ctx: TrainingCtx, teamId: string): Promise<RosterEntry[]> {
-  const { data } = await ctx.db.from("licencies").select("id, first_name, last_name, photo_url, birth_date").eq("club_id", ctx.clubId).eq("active", true).eq("team_id", teamId);
-  return ((data ?? []) as RosterEntry[]).sort((a, b) => a.last_name.localeCompare(b.last_name, "fr") || a.first_name.localeCompare(b.first_name, "fr"));
+  const { data } = await ctx.db.from("licencies").select("id, first_name, last_name, photo_url, birth_date, public_coach, coached_team_ids").eq("club_id", ctx.clubId).eq("active", true).eq("team_id", teamId);
+  return ((data ?? []) as (RosterEntry & { public_coach?: boolean; coached_team_ids?: string[] })[]).filter((l) => !coachesTeam(l, teamId)).sort((a, b) => a.last_name.localeCompare(b.last_name, "fr") || a.first_name.localeCompare(b.first_name, "fr"));
 }
 
 async function availabilityRequest(ctx: TrainingCtx, matchId: string, teamId: string) {
@@ -555,6 +556,8 @@ export async function matchHomeActions(ctx: TrainingCtx, people: HomePerson[], n
   const actions: unknown[] = [];
   for (const person of people) {
     if (!person.teamId) continue;
+    // Coach de sa propre équipe : ni disponibilité ni convocation à donner.
+    if (person.coachTeams.includes(person.teamId)) continue;
     for (const m of matches.filter((x) => x.team_id === person.teamId)) {
       const key = `${m.id}:${m.team_id}`;
       const dto = dtos.get(m.id)!;

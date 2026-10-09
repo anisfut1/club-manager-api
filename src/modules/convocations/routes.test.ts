@@ -263,3 +263,17 @@ describe("§100 : Home du parent", () => {
     expect(next.actions.find((a) => a.type === "COACH_MATCH" && a.match?.id === AWAY)?.stage).toBe("PREPARE_CONVOCATION");
   });
 });
+
+describe("Coach qui joue dans l'équipe qu'il coache (retour du club, 2026-10-10)", () => {
+  it("pas de disponibilité de match demandée au coach, et il n'est pas dans l'effectif du match", async () => {
+    state.licencies.push(lic("44444444-4444-4444-8444-000000000009", "Clément", U15F, { last_name: "DURAND", birth_date: "1995-01-01", public_coach: true, coached_team_ids: [U15F] }));
+    state.publicTokens.push({ id: "tok-pc", club_id: CLUB_A.id, licencie_id: "44444444-4444-4444-8444-000000000009", token_hash: hashPublicToken("token-pc"), email: null, created_at: "2026-10-01T00:00:00Z", revoked_at: null, revoked_by: null });
+    await club(`/matches/${AWAY}/availability/open`, { method: "POST" });
+    const home = await json<Home>(await pub("/action-center", { method: "POST", body: { tokens: ["token-pc"] } }));
+    expect(home.actions.some((a) => a.type === "MATCH_AVAILABILITY")).toBe(false);
+    expect(home.actions.some((a) => a.type === "COACH_MATCH")).toBe(true);
+    const view = await json<TeamLife>(await club(`/matches/${AWAY}`));
+    expect(view.availability.counts.total).toBe(3);
+    expect(view.availability.roster.map((r) => r.licencie.firstName)).not.toContain("Clément");
+  });
+});

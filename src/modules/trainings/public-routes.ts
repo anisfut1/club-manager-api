@@ -5,6 +5,7 @@ import type { ActionCenterDto, PlanningEventDto, TrainingOccurrenceDto } from ".
 import {
   ActionCenterRequestDtoSchema,
   CancelTrainingOccurrenceDtoSchema,
+  PutTrainingAttendanceDtoSchema,
   CreateTrainingSeriesDtoSchema,
   PutTrainingResponseDtoSchema,
   UpdateTrainingOccurrenceDtoSchema,
@@ -20,6 +21,7 @@ import { matchHomeActions, matchTeamLife, openAvailability, previewConvocation, 
 import { parse, rangeOf } from "./routes.js";
 import {
   canManageTeam,
+  markAttendance,
   createSeries,
   listOccurrences,
   listSeries,
@@ -201,6 +203,8 @@ publicTrainingsRouter.post("/action-center", async (c) => {
   const actions: ActionCenterDto["actions"] = [];
   for (const p of people) {
     if (!p.teamId) continue;
+    // Coach de sa propre équipe (ex. seniors) : il anime l'entraînement, on ne lui demande pas s'il vient.
+    if (p.actor.coachTeamList.includes(p.teamId)) continue;
     trainings
       .filter((t) => t.team.id === p.teamId && t.status === "scheduled")
       .slice(0, MAX_TRAININGS_PER_PERSON)
@@ -265,3 +269,10 @@ publicTrainingsRouter.post("/planning", async (c) => {
 });
 
 export type { TrainingOccurrenceDto };
+
+/** Présence réelle (coach / admin, séance commencée) : PRESENT / LATE / ABSENT. */
+publicTrainingsRouter.put("/trainings/:occurrenceId/attendance/:licencieId", async (c) => {
+  const ctx = await tokenCtx(c);
+  const body = await parse(PutTrainingAttendanceDtoSchema, c);
+  return c.json(await markAttendance(ctx, param(c, "occurrenceId"), param(c, "licencieId"), body.status));
+});

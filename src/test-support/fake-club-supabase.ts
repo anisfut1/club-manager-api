@@ -296,6 +296,7 @@ export interface FakeClubSupabaseState {
   trainingOccurrences: FakeRow[];
   trainingResponses: FakeRow[];
   availabilityRequests: FakeRow[];
+  trainingAttendance: FakeRow[];
   availabilityResponses: FakeRow[];
   convocations: FakeRow[];
   convocationRecipients: FakeRow[];
@@ -341,6 +342,7 @@ export function makeFakeClubSupabaseState(overrides: Partial<FakeClubSupabaseSta
     trainingOccurrences: [],
     trainingResponses: [],
     availabilityRequests: [],
+    trainingAttendance: [],
     availabilityResponses: [],
     convocations: [],
     convocationRecipients: [],
@@ -1068,6 +1070,8 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
               unique: (row, rows) => row.series_id != null && rows.some((r) => r.series_id === row.series_id && r.series_date === row.series_date),
             },
           );
+        case "training_attendance":
+          return mutableTable(() => state.trainingAttendance, (rows) => (state.trainingAttendance = rows));
         case "match_availability_requests":
           return mutableTable(() => state.availabilityRequests, (rows) => (state.availabilityRequests = rows), {
             defaults: () => ({ opened_at: fakeNow() }),

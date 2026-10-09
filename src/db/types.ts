@@ -689,6 +689,33 @@ export interface Database {
         }
       >;
 
+      training_attendance: Table<
+        {
+          id: string;
+          club_id: string;
+          occurrence_id: string;
+          licencie_id: string;
+          status: "PRESENT" | "LATE" | "ABSENT";
+          marked_at: string;
+          marked_by_user_id: string | null;
+          marked_by_licencie_id: string | null;
+          created_at: string;
+          updated_at: string;
+        },
+        {
+          id?: string;
+          club_id: string;
+          occurrence_id: string;
+          licencie_id: string;
+          status: "PRESENT" | "LATE" | "ABSENT";
+          marked_at?: string;
+          marked_by_user_id?: string | null;
+          marked_by_licencie_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        }
+      >;
+
       match_availability_requests: Table<
         { id: string; club_id: string; match_id: string; team_id: string; opened_at: string; opened_by_user_id: string | null; opened_by_licencie_id: string | null; created_at: string },
         { id?: string; club_id: string; match_id: string; team_id: string; opened_at?: string; opened_by_user_id?: string | null; opened_by_licencie_id?: string | null; created_at?: string }

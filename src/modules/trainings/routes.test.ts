@@ -223,3 +223,37 @@ describe("Répondre et Home « À faire » (lien personnel)", () => {
     ]);
   });
 });
+
+describe("Coach qui joue aussi dans l'équipe qu'il coache (retour du club, 2026-10-10)", () => {
+  it("on ne lui demande pas sa présence à l'entraînement, et il ne compte pas dans « sans réponse »", async () => {
+    state.licencies.push(lic("player-coach", "Ramzi", U15F, { last_name: "DURAND", public_coach: true, coached_team_ids: [U15F] }));
+    state.publicTokens.push({ id: "tok-pc", club_id: CLUB_A.id, licencie_id: "player-coach", token_hash: hashPublicToken("token-pc"), email: null, created_at: "2026-10-01T00:00:00Z", revoked_at: null, revoked_by: null });
+    await club(`/teams/${U15F}/training-series`, { method: "POST", body: WEEK });
+    const home = await json<{ actions: { type: string; training: { counts: { total: number } | null } }[] }>(await pub("/action-center", { method: "POST", body: { tokens: ["token-pc"] } }));
+    expect(home.actions.some((a) => a.type === "TRAINING_RESPONSE")).toBe(false);
+    const summary = home.actions.find((a) => a.type === "COACH_TRAINING_SUMMARY");
+    // Effectif U15 : Lina et Sarah (le coach-joueur n'est pas compté).
+    expect(summary?.training.counts?.total).toBe(2);
+  });
+});
+
+describe("Présence réelle aux séances passées (retour du club, 2026-10-10)", () => {
+  it("le coach marque Retard / Absent après le début de la séance ; jamais avant, jamais un parent", async () => {
+    await club(`/teams/${U15F}/training-series`, { method: "POST", body: WEEK });
+    const first = state.trainingOccurrences.filter((o) => o.team_id === U15F).sort((a, b) => String(a.starts_at).localeCompare(String(b.starts_at)))[0]!;
+    expect((await club(`/trainings/${first.id}/attendance/lina`, { method: "PUT", body: { status: "ABSENT" } })).status).toBe(409);
+
+    vi.setSystemTime(new Date(String(first.ends_at)));
+    expect((await club(`/trainings/${first.id}/attendance/lina`, { method: "PUT", body: { status: "ABSENT" } })).status).toBe(200);
+    expect((await club(`/trainings/${first.id}/attendance/sarah`, { method: "PUT", body: { status: "LATE" } })).status).toBe(200);
+    expect((await pub(`/trainings/${first.id}/attendance/sarah`, { method: "PUT", token: "token-lina", body: { status: "PRESENT" } })).status).toBe(403);
+
+    const detail = await json<{ training: { attendance: { late: number; absent: number; recorded: boolean } }; roster: { licencie: { firstName: string }; attendance: string | null }[] }>(await club(`/trainings/${first.id}`));
+    expect(detail.training.attendance).toEqual({ late: 1, absent: 1, recorded: true });
+    expect(Object.fromEntries(detail.roster.map((r) => [r.licencie.firstName, r.attendance]))).toEqual({ Lina: "ABSENT", Sarah: "LATE" });
+
+    // Les 2 dernières séances se lisent avec la liste des séances (période passée).
+    const past = await json<{ trainings: { id: string; attendance: unknown }[] }>(await club(`/trainings?teamId=${U15F}&from=2026-10-01T00:00:00Z&to=${encodeURIComponent(String(first.ends_at))}`));
+    expect(past.trainings.find((t) => t.id === first.id)?.attendance).toEqual({ late: 1, absent: 1, recorded: true });
+  });
+});
