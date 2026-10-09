@@ -592,6 +592,103 @@ export interface Database {
         }
       >;
 
+      training_series: Table<
+        {
+          id: string;
+          club_id: string;
+          team_id: string;
+          weekday: number;
+          start_time: string;
+          end_time: string;
+          club_venue_id: string | null;
+          location_label: string | null;
+          starts_on: string;
+          ends_on: string;
+          created_by_user_id: string | null;
+          created_by_licencie_id: string | null;
+          created_at: string;
+          updated_at: string;
+        },
+        {
+          id?: string;
+          club_id: string;
+          team_id: string;
+          weekday: number;
+          start_time: string;
+          end_time: string;
+          club_venue_id?: string | null;
+          location_label?: string | null;
+          starts_on: string;
+          ends_on: string;
+          created_by_user_id?: string | null;
+          created_by_licencie_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        }
+      >;
+
+      training_occurrences: Table<
+        {
+          id: string;
+          club_id: string;
+          team_id: string;
+          series_id: string | null;
+          series_date: string | null;
+          starts_at: string;
+          ends_at: string;
+          club_venue_id: string | null;
+          location_label: string | null;
+          status: "scheduled" | "cancelled";
+          cancel_reason: string | null;
+          is_modified: boolean;
+          created_at: string;
+          updated_at: string;
+        },
+        {
+          id?: string;
+          club_id: string;
+          team_id: string;
+          series_id?: string | null;
+          series_date?: string | null;
+          starts_at: string;
+          ends_at: string;
+          club_venue_id?: string | null;
+          location_label?: string | null;
+          status?: "scheduled" | "cancelled";
+          cancel_reason?: string | null;
+          is_modified?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        }
+      >;
+
+      training_responses: Table<
+        {
+          id: string;
+          club_id: string;
+          occurrence_id: string;
+          licencie_id: string;
+          response: "PRESENT" | "ABSENT" | "UNCERTAIN";
+          responded_at: string;
+          responded_by_user_id: string | null;
+          responded_by_licencie_id: string | null;
+          created_at: string;
+          updated_at: string;
+        },
+        {
+          id?: string;
+          club_id: string;
+          occurrence_id: string;
+          licencie_id: string;
+          response: "PRESENT" | "ABSENT" | "UNCERTAIN";
+          responded_at?: string;
+          responded_by_user_id?: string | null;
+          responded_by_licencie_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        }
+      >;
+
       derogation_notifications: Table<
         { id: string; club_id: string; kind: "fbi_incoming" | "fbi_outcome"; ref_key: string; created_at: string },
         { id?: string; club_id: string; kind: "fbi_incoming" | "fbi_outcome"; ref_key: string; created_at?: string }

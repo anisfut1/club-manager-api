@@ -292,6 +292,9 @@ export interface FakeClubSupabaseState {
   claimRequests: FakeRow[];
   licenceImportRuns: FakeRow[];
   derogationNotifications: FakeRow[];
+  trainingSeries: FakeRow[];
+  trainingOccurrences: FakeRow[];
+  trainingResponses: FakeRow[];
   isPlatformAdmin: boolean;
   /** Clés `${clubId}:${integration}` actuellement verrouillées (voir try_acquire_sync_lock/release_sync_lock). */
   syncLocks: Set<string>;
@@ -328,6 +331,9 @@ export function makeFakeClubSupabaseState(overrides: Partial<FakeClubSupabaseSta
     claimRequests: [],
     licenceImportRuns: [],
     derogationNotifications: [],
+    trainingSeries: [],
+    trainingOccurrences: [],
+    trainingResponses: [],
     isPlatformAdmin: false,
     syncLocks: new Set(),
     ...overrides,
@@ -1035,6 +1041,26 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
           return matchTableOfficialsTable;
         case "match_documents":
           return matchDocumentsTable;
+        case "training_series":
+          return mutableTable(
+            () => state.trainingSeries,
+            (rows) => (state.trainingSeries = rows),
+            { defaults: () => ({ club_venue_id: null, location_label: null, updated_at: fakeNow() }) },
+          );
+        case "training_occurrences":
+          return mutableTable(
+            () => state.trainingOccurrences,
+            (rows) => (state.trainingOccurrences = rows),
+            {
+              defaults: () => ({ status: "scheduled", cancel_reason: null, is_modified: false, club_venue_id: null, location_label: null, series_id: null, series_date: null, updated_at: fakeNow() }),
+              unique: (row, rows) => row.series_id != null && rows.some((r) => r.series_id === row.series_id && r.series_date === row.series_date),
+            },
+          );
+        case "training_responses":
+          return mutableTable(
+            () => state.trainingResponses,
+            (rows) => (state.trainingResponses = rows),
+          );
         case "derogation_notifications":
           return mutableTable(
             () => state.derogationNotifications,

@@ -1,7 +1,7 @@
 # Inventaire des routes de l'API
 
 > Fichier **généré** par `npm run docs:routes` (ops/docs/generate-routes-doc.ts) — ne pas modifier à la main.
-> 125 routes montées dans le code, 118 décrites dans le contrat OpenAPI (`/openapi.json`, `/docs`).
+> 146 routes montées dans le code, 139 décrites dans le contrat OpenAPI (`/openapi.json`, `/docs`).
 
 Accès : **Compte connecté** = JWT Supabase (`Authorization: Bearer`), droits vérifiés par club ; **Public** = sans compte ; **Public (lien perso si action)** = lecture libre, écriture avec le jeton du lien personnel ; **Secret cron** = `CRON_SECRET`.
 
@@ -135,6 +135,21 @@ Accès : **Compte connecté** = JWT Supabase (`Authorization: Bearer`), droits v
 | GET | `/v1/clubs/:clubId/table-assignments/public-access/claims` | Compte connecté | Demandes en attente (non expirées) |
 | POST | `/v1/clubs/:clubId/table-assignments/public-access/claims/:requestId/approve` | Compte connecté | Lien envoyé à l'adresse demandée, enregistrée sur la fiche |
 | POST | `/v1/clubs/:clubId/table-assignments/public-access/claims/:requestId/reject` | Compte connecté | Demande refusée, rien n'est envoyé |
+
+## Club — team-life
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| GET | `/v1/clubs/:clubId/team-life/planning` | Compte connecté | Planning : matchs FFBB + entraînements |
+| GET | `/v1/clubs/:clubId/team-life/teams/:teamId/training-series` | Compte connecté | Créneaux d'entraînement en cours de l'équipe |
+| POST | `/v1/clubs/:clubId/team-life/teams/:teamId/training-series` | Compte connecté | Créneaux créés, séances générées |
+| DELETE | `/v1/clubs/:clubId/team-life/training-series/:seriesId` | Compte connecté | Créneau arrêté à partir d'une date (séances avec réponses annulées) |
+| PATCH | `/v1/clubs/:clubId/team-life/training-series/:seriesId` | Compte connecté | Créneau modifié à partir d'une date (passé inchangé) |
+| GET | `/v1/clubs/:clubId/team-life/trainings` | Compte connecté | Séances de la période (compteurs pour qui gère l'équipe) |
+| GET | `/v1/clubs/:clubId/team-life/trainings/:occurrenceId` | Compte connecté | Séance + réponses nominatives (coach / admin) |
+| PATCH | `/v1/clubs/:clubId/team-life/trainings/:occurrenceId` | Compte connecté | Séance modifiée (cette séance uniquement) |
+| POST | `/v1/clubs/:clubId/team-life/trainings/:occurrenceId/cancel` | Compte connecté | Séance annulée (reste visible) |
+| POST | `/v1/clubs/:clubId/team-life/trainings/:occurrenceId/restore` | Compte connecté | Séance rétablie |
 
 ## Club — teams
 
@@ -290,6 +305,22 @@ Accès : **Compte connecté** = JWT Supabase (`Authorization: Bearer`), droits v
 | Méthode | Route | Accès | Description |
 |---|---|---|---|
 | GET | `/v1/public/clubs/:clubSlug/table-leaderboard` | Public (lien perso si action) | Classement des tables tenues cette saison (ex æquo = même rang) |
+
+## Public — team-life
+
+| Méthode | Route | Accès | Description |
+|---|---|---|---|
+| POST | `/v1/public/clubs/:clubSlug/team-life/action-center` | Public (lien perso si action) | Home « À faire » (liens de l'appareil fusionnés) |
+| POST | `/v1/public/clubs/:clubSlug/team-life/planning` | Public (lien perso si action) | Planning des équipes de l'appareil |
+| GET | `/v1/public/clubs/:clubSlug/team-life/teams/:teamId/training-series` | Public (lien perso si action) | Créneaux d'entraînement en cours de l'équipe |
+| POST | `/v1/public/clubs/:clubSlug/team-life/teams/:teamId/training-series` | Public (lien perso si action) | Créneaux créés, séances générées |
+| DELETE | `/v1/public/clubs/:clubSlug/team-life/training-series/:seriesId` | Public (lien perso si action) | Créneau arrêté à partir d'une date (séances avec réponses annulées) |
+| PATCH | `/v1/public/clubs/:clubSlug/team-life/training-series/:seriesId` | Public (lien perso si action) | Créneau modifié à partir d'une date (passé inchangé) |
+| GET | `/v1/public/clubs/:clubSlug/team-life/trainings/:occurrenceId` | Public (lien perso si action) | Séance + réponses nominatives (coach / admin) |
+| PATCH | `/v1/public/clubs/:clubSlug/team-life/trainings/:occurrenceId` | Public (lien perso si action) | Séance modifiée (cette séance uniquement) |
+| POST | `/v1/public/clubs/:clubSlug/team-life/trainings/:occurrenceId/cancel` | Public (lien perso si action) | Séance annulée (reste visible) |
+| PUT | `/v1/public/clubs/:clubSlug/team-life/trainings/:occurrenceId/response` | Public (lien perso si action) | Réponse enregistrée pour le licencié du lien |
+| POST | `/v1/public/clubs/:clubSlug/team-life/trainings/:occurrenceId/restore` | Public (lien perso si action) | Séance rétablie |
 
 ## Public — teams
 

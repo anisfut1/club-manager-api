@@ -1,0 +1,209 @@
+import { Hono, type Context } from "hono";
+import type { DbClient } from "../../db/client.js";
+import { badRequest } from "../../api-error.js";
+import type { ActionCenterDto, PlanningEventDto, TrainingOccurrenceDto } from "../../contracts/trainings.js";
+import {
+  ActionCenterRequestDtoSchema,
+  CancelTrainingOccurrenceDtoSchema,
+  CreateTrainingSeriesDtoSchema,
+  PutTrainingResponseDtoSchema,
+  UpdateTrainingOccurrenceDtoSchema,
+  UpdateTrainingSeriesDtoSchema,
+} from "../../contracts/trainings.js";
+import { formatTeamNameWithGender } from "../../util/team-name.js";
+import { resolvePublicClub, type PublicClub } from "../public/club-resolver.js";
+import { licencieFromToken } from "../public-tables/routes.js";
+import { actorFromLicencie } from "./actor.js";
+import { parse, rangeOf } from "./routes.js";
+import {
+  canManageTeam,
+  createSeries,
+  listOccurrences,
+  listSeries,
+  occurrenceDetail,
+  planning,
+  respond,
+  responsesOf,
+  setOccurrenceStatus,
+  stopSeries,
+  updateOccurrence,
+  updateSeries,
+  type TrainingActor,
+  type TrainingCtx,
+} from "./service.js";
+
+/**
+ * Entraînements — espace public (lien personnel, retour du club 2026-10-09 :
+ * on garde le lien personnel). Un parent peut avoir plusieurs liens sur son
+ * téléphone (un par enfant) : la Home « À faire » les fusionne. Voir
+ * docs/TEAM_LIFE.md.
+ */
+interface PublicEnv {
+  Variables: { supabase: DbClient; publicClub: PublicClub };
+}
+
+export const publicTrainingsRouter = new Hono<PublicEnv>();
+publicTrainingsRouter.use("*", resolvePublicClub<PublicEnv>());
+
+/** Jours affichés sur la Home : réponses attendues et « À venir ». */
+const HOME_DAYS = 14;
+/** Entraînements à répondre par personne (les plus proches). */
+const MAX_TRAININGS_PER_PERSON = 3;
+
+async function tokenCtx(c: Context<PublicEnv>): Promise<TrainingCtx & { licencie: { id: string; first_name: string } }> {
+  const token = c.req.query("token");
+  if (!token) throw badRequest("Lien personnel manquant.", "TOKEN_REQUIRED");
+  const db = c.get("supabase");
+  const club = c.get("publicClub");
+  const licencie = await licencieFromToken(db, club.id, token);
+  const actor = await actorFromLicencie(db, club.id, licencie.id);
+  return { db, clubId: club.id, timezone: club.timezone, actor, licencie };
+}
+
+const param = (c: Context, name: string): string => {
+  const value = c.req.param(name);
+  if (!value) throw badRequest(`Paramètre :${name} manquant.`);
+  return value;
+};
+
+// Gestion (coach de l'équipe / admin du club), mêmes règles que l'espace club.
+publicTrainingsRouter.get("/teams/:teamId/training-series", async (c) => c.json({ series: await listSeries(await tokenCtx(c), param(c, "teamId")) }));
+publicTrainingsRouter.post("/teams/:teamId/training-series", async (c) => c.json({ series: await createSeries(await tokenCtx(c), param(c, "teamId"), await parse(CreateTrainingSeriesDtoSchema, c)) }, 201));
+publicTrainingsRouter.patch("/training-series/:seriesId", async (c) => c.json({ series: await updateSeries(await tokenCtx(c), param(c, "seriesId"), await parse(UpdateTrainingSeriesDtoSchema, c)) }));
+publicTrainingsRouter.delete("/training-series/:seriesId", async (c) => c.json({ series: await stopSeries(await tokenCtx(c), param(c, "seriesId"), c.req.query("from")) }));
+publicTrainingsRouter.get("/trainings/:occurrenceId", async (c) => c.json(await occurrenceDetail(await tokenCtx(c), param(c, "occurrenceId"))));
+publicTrainingsRouter.patch("/trainings/:occurrenceId", async (c) => c.json(await updateOccurrence(await tokenCtx(c), param(c, "occurrenceId"), await parse(UpdateTrainingOccurrenceDtoSchema, c))));
+publicTrainingsRouter.post("/trainings/:occurrenceId/cancel", async (c) => {
+  const body = await parse(CancelTrainingOccurrenceDtoSchema, c);
+  return c.json(await setOccurrenceStatus(await tokenCtx(c), param(c, "occurrenceId"), "cancelled", body.reason ?? null));
+});
+publicTrainingsRouter.post("/trainings/:occurrenceId/restore", async (c) => c.json(await setOccurrenceStatus(await tokenCtx(c), param(c, "occurrenceId"), "scheduled", null)));
+
+/** Réponse du licencié DU LIEN (jamais un autre, même UUID connu). */
+publicTrainingsRouter.put("/trainings/:occurrenceId/response", async (c) => {
+  const ctx = await tokenCtx(c);
+  const body = await parse(PutTrainingResponseDtoSchema, c);
+  return c.json(await respond(ctx, param(c, "occurrenceId"), ctx.licencie.id, body.response));
+});
+
+interface Person {
+  index: number;
+  licencieId: string;
+  firstName: string;
+  lastName: string;
+  teamId: string | null;
+  actor: TrainingActor & { coachTeamList: string[] };
+}
+
+/** Liens valides de l'appareil → personnes (un lien invalide est signalé, jamais bloquant). */
+async function peopleOf(db: DbClient, club: PublicClub, tokens: string[]): Promise<{ people: Person[]; invalid: number[] }> {
+  const people: Person[] = [];
+  const invalid: number[] = [];
+  await Promise.all(
+    tokens.map(async (token, index) => {
+      try {
+        const l = await licencieFromToken(db, club.id, token);
+        const actor = await actorFromLicencie(db, club.id, l.id);
+        people.push({ index, licencieId: l.id, firstName: l.first_name, lastName: l.last_name, teamId: actor.teamId, actor });
+      } catch {
+        invalid.push(index);
+      }
+    }),
+  );
+  const unique = new Map<string, Person>();
+  for (const p of people.sort((a, b) => a.index - b.index)) if (!unique.has(p.licencieId)) unique.set(p.licencieId, p);
+  return { people: [...unique.values()], invalid: invalid.sort((a, b) => a - b) };
+}
+
+/** Droits fusionnés de l'appareil (une famille) : admin si l'un l'est, équipes coachées réunies. */
+function mergedActor(people: Person[]): TrainingActor {
+  return {
+    isAdmin: people.some((p) => p.actor.isAdmin),
+    coachTeamIds: new Set(people.flatMap((p) => p.actor.coachTeamList)),
+    userId: null,
+    licencieId: people[0]?.licencieId ?? null,
+  };
+}
+
+/**
+ * POST …/action-center — Home « À faire » : réponses attendues aux prochains
+ * entraînements de chaque enfant / du joueur, résumé des réponses pour les
+ * équipes coachées, puis « À venir » (matchs + entraînements). Les liens
+ * sont dans le corps (plusieurs enfants), jamais dans l'URL.
+ */
+publicTrainingsRouter.post("/action-center", async (c) => {
+  const body = await parse(ActionCenterRequestDtoSchema, c);
+  const db = c.get("supabase");
+  const club = c.get("publicClub");
+  const { people, invalid } = await peopleOf(db, club, body.tokens);
+  const ctx: TrainingCtx = { db, clubId: club.id, timezone: club.timezone, actor: mergedActor(people) };
+
+  const from = new Date().toISOString();
+  const to = new Date(Date.now() + HOME_DAYS * 86_400_000).toISOString();
+  const playerTeams = [...new Set(people.map((p) => p.teamId).filter((id): id is string => Boolean(id)))];
+  const coachTeams = [...new Set(people.flatMap((p) => p.actor.coachTeamList))];
+  const allTeams = [...new Set([...playerTeams, ...coachTeams])];
+
+  const { data: teamRows } = allTeams.length ? await db.from("teams").select("id, name, sexe").eq("club_id", club.id).in("id", allTeams) : { data: [] };
+  const teamName = new Map((teamRows ?? []).map((t) => [t.id, formatTeamNameWithGender(t.name, t.sexe)]));
+
+  const trainings = (await listOccurrences(ctx, { teamIds: allTeams, from, to })).filter((t) => t.endsAt > from);
+  const responses = await responsesOf(
+    ctx,
+    trainings.map((t) => t.id),
+    people.map((p) => p.licencieId),
+  );
+  const responseOf = new Map(responses.map((r) => [`${r.occurrence_id}:${r.licencie_id}`, r.response]));
+
+  const actions: ActionCenterDto["actions"] = [];
+  for (const p of people) {
+    if (!p.teamId) continue;
+    trainings
+      .filter((t) => t.team.id === p.teamId && t.status === "scheduled")
+      .slice(0, MAX_TRAININGS_PER_PERSON)
+      .forEach((t) => actions.push({ type: "TRAINING_RESPONSE", licencieId: p.licencieId, firstName: p.firstName, training: t, currentResponse: responseOf.get(`${t.id}:${p.licencieId}`) ?? null }));
+  }
+  // Coach : la prochaine séance de chaque équipe coachée, avec les réponses reçues.
+  for (const teamId of coachTeams) {
+    const next = trainings.find((t) => t.team.id === teamId && t.status === "scheduled" && canManageTeam(ctx.actor, teamId));
+    const coach = people.find((p) => p.actor.coachTeamList.includes(teamId));
+    if (next && coach) actions.push({ type: "COACH_TRAINING_SUMMARY", coachLicencieId: coach.licencieId, training: next });
+  }
+  // Réponses attendues d'abord (chronologique), puis les résumés coach, puis le reste.
+  const rank = (a: ActionCenterDto["actions"][number]) => (a.type === "TRAINING_RESPONSE" ? (a.currentResponse ? 2 : 0) : 1);
+  actions.sort((a, b) => rank(a) - rank(b) || a.training.startsAt.localeCompare(b.training.startsAt));
+
+  const events: PlanningEventDto[] = await planning(ctx, { teamIds: allTeams, from, to });
+  const upcoming = events.map((e) => ({
+    ...e,
+    forFirstNames: people.filter((p) => e.team && (p.teamId === e.team.id || p.actor.coachTeamList.includes(e.team.id))).map((p) => p.firstName),
+  }));
+
+  const result: ActionCenterDto = {
+    people: people.map((p) => ({
+      licencieId: p.licencieId,
+      firstName: p.firstName,
+      lastName: p.lastName,
+      team: p.teamId ? { id: p.teamId, name: teamName.get(p.teamId) ?? "Équipe" } : null,
+      coachTeams: p.actor.coachTeamList.filter((id) => teamName.has(id)).map((id) => ({ id, name: teamName.get(id)! })),
+    })),
+    invalidTokenIndexes: invalid,
+    actions,
+    upcoming,
+  };
+  return c.json(result);
+});
+
+/** Planning public : équipes de l'appareil (joueurs + équipes coachées), période choisie. */
+publicTrainingsRouter.post("/planning", async (c) => {
+  const body = await parse(ActionCenterRequestDtoSchema, c);
+  const db = c.get("supabase");
+  const club = c.get("publicClub");
+  const { people } = await peopleOf(db, club, body.tokens);
+  const ctx: TrainingCtx = { db, clubId: club.id, timezone: club.timezone, actor: mergedActor(people) };
+  const teamIds = [...new Set(people.flatMap((p) => [p.teamId, ...p.actor.coachTeamList]).filter((id): id is string => Boolean(id)))];
+  const range = rangeOf(c.req.query());
+  return c.json({ ...range, events: await planning(ctx, { teamIds, ...range }) });
+});
+
+export type { TrainingOccurrenceDto };

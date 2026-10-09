@@ -23,6 +23,8 @@ import { standingsRouter } from "../../modules/standings/routes.js";
 import { publicMatchesRouter } from "../../modules/public-matches/routes.js";
 import { publicPlayersRouter } from "../../modules/public-players/routes.js";
 import { accountRouter } from "../../modules/account/routes.js";
+import { trainingsRouter } from "../../modules/trainings/routes.js";
+import { publicTrainingsRouter } from "../../modules/trainings/public-routes.js";
 import type { MeDto } from "../../contracts/me.js";
 
 /**
@@ -67,6 +69,7 @@ v1Router.route("/clubs/:clubId/table-assignments", tableAssignmentsRouter);
 // Demandes de dérogation internes depuis l'espace public (lien personnel) — avant les autres routeurs publics.
 v1Router.route("/public/clubs/:clubSlug/derogation-requests", publicDerogationRequestsRouter);
 v1Router.route("/account", accountRouter);
+v1Router.route("/public/clubs/:clubSlug/team-life", publicTrainingsRouter);
 v1Router.route("/public/clubs/:clubSlug/home", publicHomeRouter);
 v1Router.route("/public/clubs/:clubSlug/players", publicPlayersRouter);
 v1Router.route("/public/clubs/:clubSlug", publicTablesRouter);
@@ -81,5 +84,6 @@ v1Router.route("/clubs/:clubId/standings", standingsRouter);
 v1Router.route("/clubs/:clubId/derogation-requests", derogationRequestsRouter);
 v1Router.route("/clubs/:clubId/members", membersRouter);
 v1Router.route("/clubs/:clubId/venues", clubVenuesRouter);
+v1Router.route("/clubs/:clubId/team-life", trainingsRouter);
 v1Router.route("/jobs", jobStatusRouter);
 v1Router.route("/platform", platformRouter);

@@ -104,6 +104,21 @@ import { PoolStandingsListDtoSchema } from "./contracts/standings.js";
  * du Hono simple (voir src/modules/**), cette spec sert de contrat lisible
  * et de base pour générer un client frontend.
  */
+import {
+  ActionCenterDtoSchema,
+  ActionCenterRequestDtoSchema,
+  CancelTrainingOccurrenceDtoSchema,
+  CreateTrainingSeriesDtoSchema,
+  PlanningDtoSchema,
+  PutTrainingResponseDtoSchema,
+  TrainingOccurrenceDetailDtoSchema,
+  TrainingOccurrenceDtoSchema,
+  TrainingOccurrenceListDtoSchema,
+  TrainingResponseResultDtoSchema,
+  TrainingSeriesListDtoSchema,
+  UpdateTrainingOccurrenceDtoSchema,
+  UpdateTrainingSeriesDtoSchema,
+} from "./contracts/trainings.js";
 const registry = new OpenAPIRegistry();
 
 registry.registerComponent("securitySchemes", "BearerAuth", {
@@ -1225,6 +1240,43 @@ registry.registerPath({
   request: { params: clubIdParam.extend({ venueId: z.string().uuid() }), body: { content: { "application/json": { schema: UpdateClubVenueDtoSchema } } } },
   responses: { 200: jsonResponse("Gymnase mis à jour", z.object({ venue: ClubVenueAdminDtoSchema })), ...errorResponses, ...validationResponses },
 });
+
+
+/**
+ * Vie d'équipe — entraînements (Lot 1, voir docs/TEAM_LIFE.md). Espace
+ * club (comptes) sous /clubs/{clubId}/team-life, espace public (lien
+ * personnel) sous /public/clubs/{clubSlug}/team-life.
+ */
+const teamIdParams = clubIdParam.extend({ teamId: z.string().uuid() });
+const seriesParams = clubIdParam.extend({ seriesId: z.string().uuid() });
+const occurrenceParams = clubIdParam.extend({ occurrenceId: z.string().uuid() });
+const rangeQuery = z.object({ from: z.string().optional(), to: z.string().optional(), teamId: z.string().uuid().optional(), kind: z.enum(["MATCH", "TRAINING"]).optional() });
+const pubToken = z.object({ token: z.string() });
+const pubTeamParams = clubSlugParam.extend({ teamId: z.string().uuid() });
+const pubSeriesParams = clubSlugParam.extend({ seriesId: z.string().uuid() });
+const pubOccurrenceParams = clubSlugParam.extend({ occurrenceId: z.string().uuid() });
+const jsonBody = <T extends z.ZodTypeAny>(schema: T) => ({ content: { "application/json": { schema } } });
+
+for (const space of ["club", "public"] as const) {
+  const base = space === "club" ? "/v1/clubs/{clubId}/team-life" : "/v1/public/clubs/{clubSlug}/team-life";
+  const security = space === "club" ? bearerAuth : undefined;
+  const auth = space === "club" ? {} : { query: pubToken };
+  const P = <A, B>(clubParams: A, publicParams: B) => (space === "club" ? clubParams : publicParams);
+  registry.registerPath({ method: "get", path: `${base}/teams/{teamId}/training-series`, security, request: { params: P(teamIdParams, pubTeamParams), ...auth }, responses: { 200: jsonResponse("Créneaux d'entraînement en cours de l'équipe", TrainingSeriesListDtoSchema), ...errorResponses } });
+  registry.registerPath({ method: "post", path: `${base}/teams/{teamId}/training-series`, security, request: { params: P(teamIdParams, pubTeamParams), ...auth, body: jsonBody(CreateTrainingSeriesDtoSchema) }, responses: { 201: jsonResponse("Créneaux créés, séances générées", TrainingSeriesListDtoSchema), ...errorResponses, ...validationResponses } });
+  registry.registerPath({ method: "patch", path: `${base}/training-series/{seriesId}`, security, request: { params: P(seriesParams, pubSeriesParams), ...auth, body: jsonBody(UpdateTrainingSeriesDtoSchema) }, responses: { 200: jsonResponse("Créneau modifié à partir d'une date (passé inchangé)", TrainingSeriesListDtoSchema), ...errorResponses, ...validationResponses } });
+  registry.registerPath({ method: "delete", path: `${base}/training-series/{seriesId}`, security, request: { params: P(seriesParams, pubSeriesParams), query: space === "club" ? z.object({ from: z.string().optional() }) : pubToken.extend({ from: z.string().optional() }) }, responses: { 200: jsonResponse("Créneau arrêté à partir d'une date (séances avec réponses annulées)", TrainingSeriesListDtoSchema), ...errorResponses } });
+  registry.registerPath({ method: "get", path: `${base}/trainings/{occurrenceId}`, security, request: { params: P(occurrenceParams, pubOccurrenceParams), ...auth }, responses: { 200: jsonResponse("Séance + réponses nominatives (coach / admin)", TrainingOccurrenceDetailDtoSchema), ...errorResponses } });
+  registry.registerPath({ method: "patch", path: `${base}/trainings/{occurrenceId}`, security, request: { params: P(occurrenceParams, pubOccurrenceParams), ...auth, body: jsonBody(UpdateTrainingOccurrenceDtoSchema) }, responses: { 200: jsonResponse("Séance modifiée (cette séance uniquement)", TrainingOccurrenceDtoSchema), ...errorResponses, ...validationResponses } });
+  registry.registerPath({ method: "post", path: `${base}/trainings/{occurrenceId}/cancel`, security, request: { params: P(occurrenceParams, pubOccurrenceParams), ...auth, body: jsonBody(CancelTrainingOccurrenceDtoSchema) }, responses: { 200: jsonResponse("Séance annulée (reste visible)", TrainingOccurrenceDtoSchema), ...errorResponses } });
+  registry.registerPath({ method: "post", path: `${base}/trainings/{occurrenceId}/restore`, security, request: { params: P(occurrenceParams, pubOccurrenceParams), ...auth }, responses: { 200: jsonResponse("Séance rétablie", TrainingOccurrenceDtoSchema), ...errorResponses } });
+}
+
+registry.registerPath({ method: "get", path: "/v1/clubs/{clubId}/team-life/trainings", security: bearerAuth, request: { params: clubIdParam, query: rangeQuery.omit({ kind: true }) }, responses: { 200: jsonResponse("Séances de la période (compteurs pour qui gère l'équipe)", TrainingOccurrenceListDtoSchema), ...errorResponses, ...validationResponses } });
+registry.registerPath({ method: "get", path: "/v1/clubs/{clubId}/team-life/planning", security: bearerAuth, request: { params: clubIdParam, query: rangeQuery }, responses: { 200: jsonResponse("Planning : matchs FFBB + entraînements", PlanningDtoSchema), ...errorResponses, ...validationResponses } });
+registry.registerPath({ method: "put", path: "/v1/public/clubs/{clubSlug}/team-life/trainings/{occurrenceId}/response", request: { params: pubOccurrenceParams, query: pubToken, body: jsonBody(PutTrainingResponseDtoSchema) }, responses: { 200: jsonResponse("Réponse enregistrée pour le licencié du lien", TrainingResponseResultDtoSchema), 403: jsonResponse("Pas dans cette équipe (NOT_IN_TEAM)", ErrorEnvelopeSchema), 409: jsonResponse("Séance annulée ou terminée", ErrorEnvelopeSchema), 401: jsonResponse("Lien invalide", ErrorEnvelopeSchema), 404: jsonResponse("Introuvable", ErrorEnvelopeSchema) } });
+registry.registerPath({ method: "post", path: "/v1/public/clubs/{clubSlug}/team-life/action-center", request: { params: clubSlugParam, body: jsonBody(ActionCenterRequestDtoSchema) }, responses: { 200: jsonResponse("Home « À faire » (liens de l'appareil fusionnés)", ActionCenterDtoSchema), 400: jsonResponse("Requête invalide", ErrorEnvelopeSchema), 404: jsonResponse("Introuvable", ErrorEnvelopeSchema) } });
+registry.registerPath({ method: "post", path: "/v1/public/clubs/{clubSlug}/team-life/planning", request: { params: clubSlugParam, query: z.object({ from: z.string().optional(), to: z.string().optional() }), body: jsonBody(ActionCenterRequestDtoSchema) }, responses: { 200: jsonResponse("Planning des équipes de l'appareil", PlanningDtoSchema), 400: jsonResponse("Requête invalide", ErrorEnvelopeSchema), 404: jsonResponse("Introuvable", ErrorEnvelopeSchema) } });
 
 export function generateOpenApiDocument() {
   const generator = new OpenApiGeneratorV3(registry.definitions);
