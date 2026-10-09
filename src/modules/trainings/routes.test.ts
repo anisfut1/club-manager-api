@@ -200,6 +200,10 @@ describe("Répondre et Home « À faire » (lien personnel)", () => {
     expect((await pub(`/trainings/${u15.id}`, { token: "token-lina" })).status).toBe(403);
     // Le coach planifie depuis l'espace public, seulement ses équipes.
     expect((await pub(`/teams/${U11M}/training-series`, { method: "POST", token: "token-coach-lic", body: WEEK })).status).toBe(403);
+    // Page « Entraînements » du coach : séances de son équipe avec compteurs ; jamais pour un parent.
+    const list = await json<{ trainings: Occ[] }>(await pub(`/teams/${U15F}/trainings`, { token: "token-coach-lic" }));
+    expect(list.trainings.find((t) => t.id === u15.id)?.counts).toMatchObject({ present: 1, total: 2 });
+    expect((await pub(`/teams/${U15F}/trainings`, { token: "token-lina" })).status).toBe(403);
   });
 
   it("planning : matchs FFBB + entraînements de l'équipe, dans une seule liste", async () => {

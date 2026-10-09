@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import type { DbClient } from "../../db/client.js";
-import { badRequest } from "../../api-error.js";
+import { badRequest, forbidden } from "../../api-error.js";
 import type { ActionCenterDto, PlanningEventDto, TrainingOccurrenceDto } from "../../contracts/trainings.js";
 import {
   ActionCenterRequestDtoSchema,
@@ -71,6 +71,13 @@ publicTrainingsRouter.get("/teams/:teamId/training-series", async (c) => c.json(
 publicTrainingsRouter.post("/teams/:teamId/training-series", async (c) => c.json({ series: await createSeries(await tokenCtx(c), param(c, "teamId"), await parse(CreateTrainingSeriesDtoSchema, c)) }, 201));
 publicTrainingsRouter.patch("/training-series/:seriesId", async (c) => c.json({ series: await updateSeries(await tokenCtx(c), param(c, "seriesId"), await parse(UpdateTrainingSeriesDtoSchema, c)) }));
 publicTrainingsRouter.delete("/training-series/:seriesId", async (c) => c.json({ series: await stopSeries(await tokenCtx(c), param(c, "seriesId"), c.req.query("from")) }));
+/** Séances d'une équipe gérée (page « Entraînements » du coach), avec les compteurs de réponses. */
+publicTrainingsRouter.get("/teams/:teamId/trainings", async (c) => {
+  const ctx = await tokenCtx(c);
+  const teamId = param(c, "teamId");
+  if (!canManageTeam(ctx.actor, teamId)) throw forbidden("Réservé aux coachs de cette équipe et aux administrateurs du club.", "TEAM_MANAGER_REQUIRED");
+  return c.json({ trainings: await listOccurrences(ctx, { teamIds: [teamId], ...rangeOf(c.req.query()) }) });
+});
 publicTrainingsRouter.get("/trainings/:occurrenceId", async (c) => c.json(await occurrenceDetail(await tokenCtx(c), param(c, "occurrenceId"))));
 publicTrainingsRouter.patch("/trainings/:occurrenceId", async (c) => c.json(await updateOccurrence(await tokenCtx(c), param(c, "occurrenceId"), await parse(UpdateTrainingOccurrenceDtoSchema, c))));
 publicTrainingsRouter.post("/trainings/:occurrenceId/cancel", async (c) => {

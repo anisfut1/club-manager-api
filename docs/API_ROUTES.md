@@ -1,7 +1,7 @@
 # Inventaire des routes de l'API
 
 > Fichier **généré** par `npm run docs:routes` (ops/docs/generate-routes-doc.ts) — ne pas modifier à la main.
-> 146 routes montées dans le code, 139 décrites dans le contrat OpenAPI (`/openapi.json`, `/docs`).
+> 147 routes montées dans le code, 140 décrites dans le contrat OpenAPI (`/openapi.json`, `/docs`).
 
 Accès : **Compte connecté** = JWT Supabase (`Authorization: Bearer`), droits vérifiés par club ; **Public** = sans compte ; **Public (lien perso si action)** = lecture libre, écriture avec le jeton du lien personnel ; **Secret cron** = `CRON_SECRET`.
 
@@ -314,6 +314,7 @@ Accès : **Compte connecté** = JWT Supabase (`Authorization: Bearer`), droits v
 | POST | `/v1/public/clubs/:clubSlug/team-life/planning` | Public (lien perso si action) | Planning des équipes de l'appareil |
 | GET | `/v1/public/clubs/:clubSlug/team-life/teams/:teamId/training-series` | Public (lien perso si action) | Créneaux d'entraînement en cours de l'équipe |
 | POST | `/v1/public/clubs/:clubSlug/team-life/teams/:teamId/training-series` | Public (lien perso si action) | Créneaux créés, séances générées |
+| GET | `/v1/public/clubs/:clubSlug/team-life/teams/:teamId/trainings` | Public (lien perso si action) | Séances d'une équipe gérée par le lien (compteurs de réponses) |
 | DELETE | `/v1/public/clubs/:clubSlug/team-life/training-series/:seriesId` | Public (lien perso si action) | Créneau arrêté à partir d'une date (séances avec réponses annulées) |
 | PATCH | `/v1/public/clubs/:clubSlug/team-life/training-series/:seriesId` | Public (lien perso si action) | Créneau modifié à partir d'une date (passé inchangé) |
 | GET | `/v1/public/clubs/:clubSlug/team-life/trainings/:occurrenceId` | Public (lien perso si action) | Séance + réponses nominatives (coach / admin) |

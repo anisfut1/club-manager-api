@@ -102,6 +102,7 @@ Espace club (Bearer) sous `/v1/clubs/{clubId}/team-life`, espace public
 | GET / PATCH | `/trainings/{occurrenceId}` | détail (coach) / modifier cette séance |
 | POST | `/trainings/{occurrenceId}/cancel`, `/restore` | annuler / rétablir |
 | GET | `/trainings`, `/planning` | (club) séances, planning |
+| GET | `/teams/{teamId}/trainings` | (public) séances d'une équipe gérée, avec compteurs |
 | PUT | `/trainings/{occurrenceId}/response` | (public) Présent / Absent / Incertain |
 | POST | `/action-center`, `/planning` | (public) Home, planning de l'appareil |
 
