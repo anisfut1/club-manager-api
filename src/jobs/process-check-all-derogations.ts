@@ -9,6 +9,8 @@ import { classifyFbiLoginStatus, FbiError } from "../integrations/fbi/errors.js"
 import { nextErrorBackoffSeconds } from "./backoff.js";
 import { getEnv } from "../config/env.js";
 import { currentSeasonStart } from "../season.js";
+import { derogationNotificationEvents, type DerogationSnapshot } from "../modules/derogations/notification-events.js";
+import { notifyFbiDerogationEvents } from "../modules/derogation-requests/notify.js";
 import { logError, logInfo } from "../logger.js";
 
 async function rescheduleJob(supabase: DbClient, job: FbiJobRow, delaySeconds: number, lastError: string | null): Promise<void> {
@@ -123,7 +125,7 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
     // faussant complètement la date/l'adversaire affichés.
     const { data: matches, error: matchesError } = await supabase
       .from("matches")
-      .select("id, numero, competition_id")
+      .select("id, numero, competition_id, is_home")
       .eq("club_id", job.club_id)
       .gte("match_datetime", currentSeasonStart().toISOString());
     if (matchesError) throw new Error(`Lecture des rencontres du club échouée : ${matchesError.message}`);
@@ -181,6 +183,8 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
       );
     }
 
+    const isHomeByMatchId = new Map((matches ?? []).map((m) => [m.id, m.is_home ?? null]));
+    const snapshots: DerogationSnapshot[] = [];
     const now = new Date().toISOString();
     let matched = 0;
     let unmatched = 0;
@@ -254,6 +258,21 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
       );
       if (upsertError) throw new Error(`Écriture du résultat de dérogation échouée : ${upsertError.message}`);
       matched += 1;
+      snapshots.push({
+        fbiRowKey,
+        etat: derogation.etat,
+        previousEtat: existing?.etat,
+        demandeur: derogation.demandeur ?? existing?.demandeur ?? null,
+        isHome: isHomeByMatchId.get(matchId) ?? null,
+        domicile: derogation.domicile,
+        visiteur: derogation.visiteur,
+        dateRencontre: derogation.dateRencontre,
+        heure: derogation.heure,
+        dateRencontreDemandee: derogation.dateRencontreDemandee ?? existing?.date_rencontre_demandee ?? null,
+        heureDemandee: derogation.heureDemandee ?? existing?.heure_demandee ?? null,
+        salleDemandee: ("salleDemandee" in derogation ? derogation.salleDemandee : null) ?? existing?.salle_demandee ?? null,
+        motif: derogation.motif ?? existing?.motif ?? null,
+      });
     }
 
     // PAS de suppression automatique des lignes "non retrouvées cette
@@ -294,7 +313,11 @@ export async function processCheckAllDerogationsJob(supabase: DbClient, job: Fbi
     // deux champs étaient devenus systématiquement `false`/`null` — le
     // diagnostic utile (état réellement sélectionné, lignes brutes vs
     // conservées) reste dans `passDiagnostics`.
+    // Emails aux coordinateurs : dérogations adverses à traiter, réponses reçues (une fois chacune).
+    const notificationsSent = await notifyFbiDerogationEvents(supabase, job.club_id, derogationNotificationEvents(snapshots));
+
     const result = {
+      notificationsSent,
       derogationsFound: derogations.length,
       matched,
       unmatched,

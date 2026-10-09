@@ -106,3 +106,64 @@ export function buildClaimRequestEmail(input: { club: ClubBranding; licencieName
   });
   return { subject, html, text };
 }
+
+/**
+ * Nouvelle demande de dérogation d'un coach (ou nouveau créneau reproposé) —
+ * retour du club, 2026-10-08 : « si c'est un coach qui fait une demande, ça
+ * envoie un mail au coordinateur, avec le lien pour gérer ça ».
+ */
+export function buildDerogationRequestEmail(input: {
+  club: ClubBranding;
+  kind: "created" | "reproposed";
+  requesterName: string;
+  matchLabel: string;
+  slotLabel: string;
+  comment: string | null;
+  link: string;
+}) {
+  const verb = input.kind === "created" ? "demande une dérogation" : "propose un nouveau créneau";
+  const subject = `${input.requesterName} ${verb} — ${input.matchLabel}`;
+  const { html, text } = renderEmail({
+    preheader: `Créneau demandé : ${input.slotLabel}.`,
+    eyebrow: input.club.name,
+    title: input.kind === "created" ? "Nouvelle demande de dérogation" : "Nouveau créneau proposé",
+    paragraphs: [
+      `${input.requesterName} ${verb} pour ${input.matchLabel}.`,
+      `Créneau demandé : ${input.slotLabel}.`,
+      ...(input.comment ? [`Son message : « ${input.comment} »`] : []),
+      "Ouvre la demande pour la prendre en charge, répondre ou indiquer que ce n'est pas possible.",
+    ],
+    button: { label: "Gérer la demande", href: input.link },
+    footer: [`Tu reçois cet email parce que tu es coordinateur des dérogations de ${input.club.name} sur ${PLATFORM_NAME}.`],
+    accentColor: input.club.accentColor,
+    logoUrl: input.club.logoUrl,
+  });
+  return { subject, html, text };
+}
+
+/**
+ * Dérogations FBI à traiter (retour du club, 2026-10-08) : demandes du club
+ * adverse qui attendent notre réponse, et réponses reçues sur nos propres
+ * demandes. Un seul email par vérification, même s'il y en a plusieurs.
+ */
+export function buildFbiDerogationDigestEmail(input: { club: ClubBranding; incoming: string[]; outcomes: string[]; link: string }) {
+  const parts: string[] = [];
+  if (input.incoming.length > 0) parts.push(input.incoming.length > 1 ? `${input.incoming.length} dérogations à traiter` : "1 dérogation à traiter");
+  if (input.outcomes.length > 0) parts.push(input.outcomes.length > 1 ? `${input.outcomes.length} réponses reçues` : "1 réponse reçue");
+  const subject = `FBI : ${parts.join(", ")} — ${input.club.name}`;
+  const { html, text } = renderEmail({
+    preheader: input.incoming.length > 0 ? "Un club adverse attend ta réponse sur FBI." : "Une dérogation a reçu une réponse sur FBI.",
+    eyebrow: input.club.name,
+    title: input.incoming.length > 0 ? "Dérogation à traiter" : "Réponse à une dérogation",
+    paragraphs: [
+      ...(input.incoming.length > 0 ? ["Le club adverse demande à déplacer un match, ta réponse est attendue :", ...input.incoming.map((line) => `• ${line}`)] : []),
+      ...(input.outcomes.length > 0 ? ["Réponse reçue sur FBI :", ...input.outcomes.map((line) => `• ${line}`)] : []),
+      ...(input.incoming.length > 0 ? ["Accepte ou refuse directement depuis Ball Manager : la réponse est transmise à la FFBB."] : []),
+    ],
+    button: { label: input.incoming.length > 0 ? "Répondre à la dérogation" : "Voir les dérogations", href: input.link },
+    footer: [`Tu reçois cet email parce que tu es coordinateur des dérogations de ${input.club.name} sur ${PLATFORM_NAME}. Vérification automatique sur FBI chaque jour.`],
+    accentColor: input.club.accentColor,
+    logoUrl: input.club.logoUrl,
+  });
+  return { subject, html, text };
+}

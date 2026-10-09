@@ -592,6 +592,11 @@ export interface Database {
         }
       >;
 
+      derogation_notifications: Table<
+        { id: string; club_id: string; kind: "fbi_incoming" | "fbi_outcome"; ref_key: string; created_at: string },
+        { id?: string; club_id: string; kind: "fbi_incoming" | "fbi_outcome"; ref_key: string; created_at?: string }
+      >;
+
       licence_import_runs: Table<
         {
           id: string;

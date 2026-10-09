@@ -528,3 +528,59 @@ describe("envoi officiel FBI depuis la demande (coordinateur)", () => {
     expect(officialMock.create).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ submittedBy: null }));
   });
 });
+
+describe("emails au coordinateur — retour du club, 2026-10-08 : « si c'est un coach qui fait une demande, ça envoie un mail au coordinateur, avec le lien »", () => {
+  let sent: { to: string[]; subject: string; text: string }[];
+
+  beforeEach(async () => {
+    const { resetEnvCacheForTests } = await import("../../config/env.js");
+    process.env.RESEND_API_KEY = "re_test_not_real";
+    resetEnvCacheForTests();
+    sent = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        if (url !== "https://api.resend.com/emails") throw new Error(`fetch inattendu : ${url}`);
+        sent.push(JSON.parse(String(init.body)));
+        return new Response(JSON.stringify({ id: "email-1" }), { status: 200 });
+      }),
+    );
+    // Coordinateur désigné depuis /joueurs (licencié sans compte, avec email) — cas réel du club.
+    state.licencies.push({ id: "lic-coord", club_id: CLUB_A.id, first_name: "Claire", last_name: "Coord", license_number: null, birth_date: null, email: "claire@club-a.test", phone: null, photo_url: null, active: true, public_coordinator: true });
+  });
+
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    delete process.env.RESEND_API_KEY;
+    (await import("../../config/env.js")).resetEnvCacheForTests();
+  });
+
+  it("nouvelle demande → un email au coordinateur avec le match, le créneau, le message et le lien vers la demande", async () => {
+    const created = await json<Detail>(await createRequest());
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.to).toEqual(["claire@club-a.test"]);
+    expect(sent[0]!.subject).toBe("Anis demande une dérogation — U15 (F) contre SAUVIAN SERIGNAN (samedi 3 octobre)");
+    expect(sent[0]!.text).toContain("dimanche 11 octobre à 15:00 — Gymnase B");
+    expect(sent[0]!.text).toContain("L'équipe adverse nous propose cette date.");
+    expect(sent[0]!.text).toContain(`/public/club-a/derogations/${created.id}`);
+  });
+
+  it("nouveau créneau reproposé après « pas possible » → nouvel email ; les réponses du coordinateur n'en envoient pas", async () => {
+    const created = await json<Detail>(await createRequest());
+    const path = `/derogation-requests/${created.id}`;
+    as("coord");
+    await request(`${path}/actions`, { method: "POST", body: { action: "REQUEST_CHANGE", message: "Pas possible ce jour-là." } });
+    expect(sent).toHaveLength(1);
+    as("coach-u15");
+    await request(`${path}/proposals`, { method: "POST", body: { requestedStartAt: "2026-10-10T17:00:00+02:00", requestedVenueId: VENUE_A } });
+    expect(sent).toHaveLength(2);
+    expect(sent[1]!.subject).toContain("Anis propose un nouveau créneau");
+    expect(sent[1]!.text).toContain("samedi 10 octobre à 17:00 — Gymnase A");
+  });
+
+  it("sans coordinateur avec email : les administrateurs licenciés sont prévenus à la place", async () => {
+    state.licencies = state.licencies.map((l) => (l.id === "lic-coord" ? { ...l, public_coordinator: false, public_admin: true } : l));
+    await createRequest();
+    expect(sent.map((m) => m.to[0])).toEqual(["claire@club-a.test"]);
+  });
+});

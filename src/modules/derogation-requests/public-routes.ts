@@ -38,7 +38,15 @@ async function publicContext(c: { get: (k: "supabase" | "publicClub") => unknown
   const actor = await loadLicencieActor(db, club.id, licencie.id);
   if (!hasDerogationRole(actor)) throw forbidden("Les demandes de dérogation sont réservées aux coachs et au coordinateur du club.", "DEROGATION_ROLE_REQUIRED");
   const name = licencie.first_name.trim() || licencie.last_name.trim() || "Coach";
-  return { db, actor, clubId: club.id, timezone: club.timezone, membershipId: null, identity: async () => ({ name, source: "LICENCIE" as const }) };
+  return {
+    db,
+    actor,
+    clubId: club.id,
+    timezone: club.timezone,
+    membershipId: null,
+    identity: async () => ({ name, source: "LICENCIE" as const }),
+    authorEmail: async () => ((await db.from("licencies").select("email").eq("id", licencie.id).eq("club_id", club.id).maybeSingle()).data?.email ?? null),
+  };
 }
 
 const body = async (c: { req: { json: () => Promise<unknown> } }) => c.req.json().catch(() => ({}));

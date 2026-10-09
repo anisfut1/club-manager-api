@@ -291,6 +291,7 @@ export interface FakeClubSupabaseState {
   matchDocuments: FakeMatchDocumentRow[];
   claimRequests: FakeRow[];
   licenceImportRuns: FakeRow[];
+  derogationNotifications: FakeRow[];
   isPlatformAdmin: boolean;
   /** Clés `${clubId}:${integration}` actuellement verrouillées (voir try_acquire_sync_lock/release_sync_lock). */
   syncLocks: Set<string>;
@@ -326,6 +327,7 @@ export function makeFakeClubSupabaseState(overrides: Partial<FakeClubSupabaseSta
     matchDocuments: [],
     claimRequests: [],
     licenceImportRuns: [],
+    derogationNotifications: [],
     isPlatformAdmin: false,
     syncLocks: new Set(),
     ...overrides,
@@ -1033,6 +1035,12 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
           return matchTableOfficialsTable;
         case "match_documents":
           return matchDocumentsTable;
+        case "derogation_notifications":
+          return mutableTable(
+            () => state.derogationNotifications,
+            (rows) => (state.derogationNotifications = rows),
+            { unique: (row, rows) => rows.some((r) => r.club_id === row.club_id && r.kind === row.kind && r.ref_key === row.ref_key) },
+          );
         case "licence_import_runs":
           return mutableTable(
             () => state.licenceImportRuns,

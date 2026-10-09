@@ -18,6 +18,7 @@ import { computeAvailability, validateRequestedSlot, type CandidateSlot, type Sl
 import { canCreateForTeam, canManageRequests, canPerformAction, canPropose, canCreateAny, canReadRequest, canSubmitOfficial, isAuthor, nextStatus, roleLabelFor, type Actor } from "./policy.js";
 import { CreateDerogationDtoSchema } from "../../contracts/derogations.js";
 import { createDerogationForClub } from "../derogations/create-derogation.js";
+import { notifyDerogationRequest } from "./notify.js";
 import {
   REQUEST_COLUMNS,
   buildDetail,
@@ -55,6 +56,30 @@ const service = (): DbClient => createServiceSupabaseClient();
 function formatSlot(startAt: Date, timezone: string, venueName: string | null): string {
   const day = startAt.toLocaleDateString("fr-FR", { timeZone: timezone, weekday: "long", day: "numeric", month: "long" });
   return `${day} à ${localTimeKey(startAt, timezone)}${venueName ? ` — ${venueName}` : ""}`;
+}
+
+/** « U13 M contre MEZE LOUPIAN (samedi 3 octobre) » pour l'email au coordinateur. */
+async function matchLabelFor(ctx: Ctx, match: MatchRow): Promise<string> {
+  const { teamName } = await loadMatchLabels(ctx.db, [match]);
+  const team = match.team_id ? (teamName.get(match.team_id) ?? null) : null;
+  const day = match.match_datetime ? new Date(match.match_datetime).toLocaleDateString("fr-FR", { timeZone: ctx.timezone, weekday: "long", day: "numeric", month: "long" }) : null;
+  const label = [team ?? "le match", match.opponent_name ? `contre ${match.opponent_name}` : null].filter(Boolean).join(" ");
+  return day ? `${label} (${day})` : label;
+}
+
+/** Prévient les coordinateurs (jamais bloquant, jamais l'auteur lui-même). */
+async function notifyCoordinators(ctx: Ctx, input: { requestId: string; kind: "created" | "reproposed"; requesterName: string; match: MatchRow; startAt: Date; venueName: string | null; comment: string | null }) {
+  const authorEmail = await ctx.authorEmail?.().catch(() => null);
+  await notifyDerogationRequest(ctx.db, {
+    clubId: ctx.clubId,
+    requestId: input.requestId,
+    kind: input.kind,
+    requesterName: input.requesterName,
+    matchLabel: await matchLabelFor(ctx, input.match),
+    slotLabel: formatSlot(input.startAt, ctx.timezone, input.venueName),
+    comment: input.comment,
+    excludeEmails: authorEmail ? [authorEmail] : [],
+  });
 }
 
 function conflictDto(conflict: SlotConflict, venues: readonly ClubVenueRow[]) {
@@ -164,6 +189,8 @@ export interface Ctx {
   membershipId: string | null;
   /** Nom affiché (« Demande formulée par ») et sa provenance. */
   identity: () => Promise<{ name: string; source: "LICENCIE" | "PROFILE" | "EMAIL" }>;
+  /** Adresse de l'auteur : il ne reçoit pas l'email de sa propre demande. */
+  authorEmail?: () => Promise<string | null>;
 }
 
 /** Colonnes d'auteur communes (compte OU licencié). */
@@ -176,7 +203,15 @@ async function context(c: { get: (k: "club" | "user") => unknown }): Promise<Ctx
   const user = c.get("user") as { id: string; email?: string | null };
   const db = service();
   const actor = await loadActor(db, club.membershipId, user.id);
-  return { db, actor, clubId: club.club.id, timezone: club.club.timezone, membershipId: club.membershipId, identity: () => resolveRequesterName(db, club.membershipId, user.id, user.email ?? null) };
+  return {
+    db,
+    actor,
+    clubId: club.club.id,
+    timezone: club.club.timezone,
+    membershipId: club.membershipId,
+    identity: () => resolveRequesterName(db, club.membershipId, user.id, user.email ?? null),
+    authorEmail: async () => user.email ?? null,
+  };
 }
 
 async function readableRequestOrThrow(ctx: Ctx, requestId: string): Promise<RequestRow> {
@@ -316,6 +351,7 @@ export async function handleCreate(ctx: Ctx, rawBody: unknown) {
   if (body.data.comment) {
     await insertMessage(ctx.db, { club_id: ctx.clubId, request_id: row.id, ...authorColumns(ctx), author_display_name: displayName, author_role_label: roleLabel, body: body.data.comment, message_type: "USER" });
   }
+  await notifyCoordinators(ctx, { requestId: row.id, kind: "created", requesterName: displayName, match, startAt, venueName, comment: body.data.comment ?? null });
 
   return buildDetail(ctx.db, row, ctx.actor, venues);
 }
@@ -416,6 +452,7 @@ export async function handlePropose(ctx: Ctx, requestId: string, rawBody: unknow
   if (body.data.message) {
     await insertMessage(ctx.db, { club_id: ctx.clubId, request_id: row.id, ...authorColumns(ctx), author_display_name: author.name, author_role_label: roleLabel, body: body.data.message, message_type: "USER" });
   }
+  await notifyCoordinators(ctx, { requestId: row.id, kind: "reproposed", requesterName: author.name, match, startAt, venueName, comment: body.data.message ?? null });
 
   const fresh = (await loadRequest(ctx.db, ctx.clubId, row.id)) as RequestRow;
   return buildDetail(ctx.db, fresh, ctx.actor, venues);
