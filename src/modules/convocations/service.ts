@@ -11,6 +11,7 @@ import type {
 import { formatTeamNameWithGender } from "../../util/team-name.js";
 import { canManageTeam, coachesTeam, type TrainingCtx } from "../trainings/service.js";
 import { audienceFor, renderConvocationMessage, type ConvocationAudience } from "./render.js";
+import { laundryDutiesFor, laundryOf } from "./laundry.js";
 
 /**
  * Vie d'équipe — Lot 2 : disponibilités des matchs et convocations (voir
@@ -22,7 +23,7 @@ import { audienceFor, renderConvocationMessage, type ConvocationAudience } from 
  * coach, sans jamais modifier en silence ce que les familles ont lu.
  */
 
-interface MatchRow {
+export interface MatchRow {
   id: string;
   club_id: string;
   team_id: string | null;
@@ -34,7 +35,7 @@ interface MatchRow {
   status: string;
 }
 
-interface ConvocationRow {
+export interface ConvocationRow {
   id: string;
   match_id: string;
   team_id: string;
@@ -52,7 +53,7 @@ interface ConvocationRow {
   sent_at: string | null;
 }
 
-interface RecipientRow {
+export interface RecipientRow {
   convocation_id: string;
   licencie_id: string;
   response: ConvocationResponseValue;
@@ -60,7 +61,7 @@ interface RecipientRow {
   removed_at: string | null;
 }
 
-interface RosterEntry {
+export interface RosterEntry {
   id: string;
   first_name: string;
   last_name: string;
@@ -77,7 +78,7 @@ export const COACH_MATCH_DAYS = 14;
 /** Disponibilités et convocations visibles des familles. */
 export const FAMILY_MATCH_DAYS = 21;
 
-function requireManage(ctx: TrainingCtx, teamId: string): void {
+export function requireManage(ctx: TrainingCtx, teamId: string): void {
   if (!canManageTeam(ctx.actor, teamId)) throw forbidden("Réservé aux coachs de cette équipe et aux administrateurs du club.", "TEAM_MANAGER_REQUIRED");
 }
 
@@ -95,7 +96,7 @@ async function loadMatches(ctx: TrainingCtx, ids: string[]): Promise<MatchRow[]>
   return (data ?? []) as MatchRow[];
 }
 
-async function loadMatch(ctx: TrainingCtx, matchId: string): Promise<MatchRow & { team_id: string }> {
+export async function loadMatch(ctx: TrainingCtx, matchId: string): Promise<MatchRow & { team_id: string }> {
   const [match] = await loadMatches(ctx, [matchId]);
   if (!match) throw notFound("Match introuvable pour ce club.");
   if (!match.team_id) throw conflict("Ce match n'est rattaché à aucune équipe du club.", "MATCH_WITHOUT_TEAM");
@@ -136,22 +137,22 @@ export async function toMatchDtos(ctx: TrainingCtx, matches: MatchRow[]): Promis
 }
 
 /** Effectif du match : joueurs de l'équipe, sans ceux qui la coachent (retour du club, 2026-10-10 : « le coach n'a pas besoin de confirmer sa dispo au match »). */
-async function roster(ctx: TrainingCtx, teamId: string): Promise<RosterEntry[]> {
+export async function roster(ctx: TrainingCtx, teamId: string): Promise<RosterEntry[]> {
   const { data } = await ctx.db.from("licencies").select("id, first_name, last_name, photo_url, birth_date, public_coach, coached_team_ids").eq("club_id", ctx.clubId).eq("active", true).eq("team_id", teamId);
   return ((data ?? []) as (RosterEntry & { public_coach?: boolean; coached_team_ids?: string[] })[]).filter((l) => !coachesTeam(l, teamId)).sort((a, b) => a.last_name.localeCompare(b.last_name, "fr") || a.first_name.localeCompare(b.first_name, "fr"));
 }
 
-async function availabilityRequest(ctx: TrainingCtx, matchId: string, teamId: string) {
+export async function availabilityRequest(ctx: TrainingCtx, matchId: string, teamId: string) {
   const { data } = await ctx.db.from("match_availability_requests").select("id, opened_at").eq("club_id", ctx.clubId).eq("match_id", matchId).eq("team_id", teamId).maybeSingle();
   return data as { id: string; opened_at: string } | null;
 }
 
-async function convocationOf(ctx: TrainingCtx, matchId: string, teamId: string): Promise<ConvocationRow | null> {
+export async function convocationOf(ctx: TrainingCtx, matchId: string, teamId: string): Promise<ConvocationRow | null> {
   const { data } = await ctx.db.from("match_convocations").select(CONVOCATION_COLUMNS).eq("club_id", ctx.clubId).eq("match_id", matchId).eq("team_id", teamId).maybeSingle();
   return (data as ConvocationRow | null) ?? null;
 }
 
-async function recipientsOf(ctx: TrainingCtx, convocationIds: string[]): Promise<RecipientRow[]> {
+export async function recipientsOf(ctx: TrainingCtx, convocationIds: string[]): Promise<RecipientRow[]> {
   if (convocationIds.length === 0) return [];
   const { data } = await ctx.db.from("match_convocation_recipients").select("convocation_id, licencie_id, response, responded_at, removed_at").eq("club_id", ctx.clubId).in("convocation_id", convocationIds);
   return (data ?? []) as RecipientRow[];
@@ -198,7 +199,7 @@ function effectiveMeetingPoint(draftPoint: string | null, match: TeamLifeMatchDt
   return match.isHome !== false ? match.venueName : null;
 }
 
-const licRef = (l: RosterEntry) => ({ id: l.id, firstName: l.first_name, lastName: l.last_name, photoUrl: l.photo_url ?? null });
+export const licRef = (l: RosterEntry) => ({ id: l.id, firstName: l.first_name, lastName: l.last_name, photoUrl: l.photo_url ?? null });
 
 // ─── Écran coach ─────────────────────────────────────────────────────────────
 
@@ -259,6 +260,7 @@ export async function matchTeamLife(ctx: TrainingCtx, matchId: string): Promise<
     match: dto,
     canManage: true,
     matchClosed: isMatchClosed(match),
+    laundry: await laundryOf(ctx, match),
     availability: {
       openedAt: request?.opened_at ?? null,
       counts: availabilityCounts(people.map((l) => l.id), new Map([...responses].map(([id, r]) => [id, r.response]))),
@@ -397,7 +399,7 @@ async function prepare(ctx: TrainingCtx, matchId: string): Promise<Prepared> {
   return { match, dto, convocation, selected, meetingAt: convocation.draft_meeting_at, meetingPoint, blockers, unavailableSelected };
 }
 
-function messageFor(ctx: TrainingCtx, p: { dto: TeamLifeMatchDto; meetingAt: string | null; meetingPoint: string | null; coachMessage: string | null }, player: RosterEntry, snapshot?: MatchSnapshotDto): { audience: ConvocationAudience; text: string } {
+function messageFor(ctx: TrainingCtx, p: { dto: TeamLifeMatchDto; meetingAt: string | null; meetingPoint: string | null; coachMessage: string | null; laundryLicencieId?: string | null }, player: RosterEntry, snapshot?: MatchSnapshotDto): { audience: ConvocationAudience; text: string } {
   const startsAt = snapshot?.startsAt ?? p.dto.startsAt ?? "";
   const audience = audienceFor(player.birth_date, startsAt || new Date().toISOString());
   const text = renderConvocationMessage({
@@ -412,6 +414,7 @@ function messageFor(ctx: TrainingCtx, p: { dto: TeamLifeMatchDto; meetingAt: str
     meetingPoint: p.meetingPoint,
     coachMessage: p.coachMessage,
     timezone: ctx.timezone,
+    laundry: Boolean(p.laundryLicencieId && p.laundryLicencieId === player.id),
   });
   return { audience, text };
 }
@@ -484,12 +487,14 @@ export async function sendConvocation(ctx: TrainingCtx, matchId: string): Promis
   const removed = [...existing.values()].filter((r) => !r.removed_at && !selectedIds.has(r.licencie_id)).map((r) => r.licencie_id);
   if (removed.length) await ctx.db.from("match_convocation_recipients").update({ removed_at: now, updated_at: now }).eq("convocation_id", previous.id).in("licencie_id", removed);
 
+  // Maillots attribués AVANT l'envoi : ligne ajoutée au message de la famille concernée seulement.
+  const laundryLicencieId = (await laundryOf(ctx, p.match)).assignee?.licencie.id ?? null;
   const dispatches = p.selected.map((player) => ({
     club_id: ctx.clubId,
     convocation_id: previous.id,
     licencie_id: player.id,
     revision,
-    rendered_message: messageFor(ctx, { dto: p.dto, meetingAt, meetingPoint: p.meetingPoint, coachMessage: previous.draft_coach_message }, player, snapshot).text,
+    rendered_message: messageFor(ctx, { dto: p.dto, meetingAt, meetingPoint: p.meetingPoint, coachMessage: previous.draft_coach_message, laundryLicencieId }, player, snapshot).text,
     sent_at: now,
   }));
   if (dispatches.length) await ctx.db.from("match_convocation_dispatches").insert(dispatches);
@@ -608,6 +613,8 @@ export async function matchHomeActions(ctx: TrainingCtx, people: HomePerson[], n
   }
 
   const coachUntil = now.getTime() + COACH_MATCH_DAYS * 86_400_000;
+  const { data: laundryRows } = await ctx.db.from("match_laundry_assignments").select("match_id, team_id").eq("club_id", ctx.clubId).in("match_id", ids);
+  const laundryAssigned = new Set(((laundryRows ?? []) as { match_id: string; team_id: string }[]).map((r) => `${r.match_id}:${r.team_id}`));
   const tables = await tableStatus(ctx, matches.filter((m) => m.is_home === true && m.team_id && coachTeams.includes(m.team_id)).map((m) => m.id));
   for (const teamId of coachTeams) {
     const coach = people.find((p) => p.coachTeams.includes(teamId));
@@ -620,14 +627,27 @@ export async function matchHomeActions(ctx: TrainingCtx, people: HomePerson[], n
       const request = requestOf.get(key);
       if (conv) {
         const active = recipients.filter((r) => r.convocation_id === conv.id && !r.removed_at);
-        actions.push({ type: "COACH_MATCH", coachLicencieId: coach.licencieId, match: dto, stage: "CONVOCATION_SENT", availabilityCounts: null, convocationCounts: convocationCounts(active), matchChanged: matchChangesSince(conv.match_snapshot, dto).length > 0, tables: tables.get(m.id) ?? null });
+        actions.push({ type: "COACH_MATCH", coachLicencieId: coach.licencieId, match: dto, stage: "CONVOCATION_SENT", availabilityCounts: null, convocationCounts: convocationCounts(active), matchChanged: matchChangesSince(conv.match_snapshot, dto).length > 0, tables: tables.get(m.id) ?? null, laundryAssigned: laundryAssigned.has(key) });
       } else if (request) {
         const responses = new Map(availability.filter((a) => a.request_id === request.id).map((a) => [a.licencie_id, a.response]));
-        actions.push({ type: "COACH_MATCH", coachLicencieId: coach.licencieId, match: dto, stage: "PREPARE_CONVOCATION", availabilityCounts: availabilityCounts(teamRoster, responses), convocationCounts: null, matchChanged: false, tables: tables.get(m.id) ?? null });
+        actions.push({ type: "COACH_MATCH", coachLicencieId: coach.licencieId, match: dto, stage: "PREPARE_CONVOCATION", availabilityCounts: availabilityCounts(teamRoster, responses), convocationCounts: null, matchChanged: false, tables: tables.get(m.id) ?? null, laundryAssigned: laundryAssigned.has(key) });
       } else {
-        actions.push({ type: "COACH_MATCH", coachLicencieId: coach.licencieId, match: dto, stage: "ASK_AVAILABILITY", availabilityCounts: null, convocationCounts: null, matchChanged: false, tables: tables.get(m.id) ?? null });
+        actions.push({ type: "COACH_MATCH", coachLicencieId: coach.licencieId, match: dto, stage: "ASK_AVAILABILITY", availabilityCounts: null, convocationCounts: null, matchChanged: false, tables: tables.get(m.id) ?? null, laundryAssigned: laundryAssigned.has(key) });
       }
     }
   }
   return actions;
+}
+
+/** Maillots sur la Home : du jour où c'est attribué jusqu'à 2 jours après le match (« après le match »). */
+export const LAUNDRY_AFTER_DAYS = 2;
+
+export async function laundryHomeActions(ctx: TrainingCtx, people: HomePerson[], now: Date = new Date()) {
+  const duties = await laundryDutiesFor(ctx, people.map((p) => p.licencieId));
+  if (duties.length === 0) return [];
+  const matches = (await loadMatches(ctx, [...new Set(duties.map((d) => d.match_id))])).filter((m) => m.match_datetime && new Date(m.match_datetime).getTime() >= now.getTime() - LAUNDRY_AFTER_DAYS * 86_400_000 && m.status !== "cancelled");
+  const dtos = await toMatchDtos(ctx, matches);
+  return duties
+    .filter((d) => dtos.has(d.match_id))
+    .map((d) => ({ type: "LAUNDRY_DUTY" as const, licencieId: d.licencie_id, firstName: people.find((p) => p.licencieId === d.licencie_id)?.firstName ?? "", match: dtos.get(d.match_id)!, seenAt: d.seen_at }));
 }

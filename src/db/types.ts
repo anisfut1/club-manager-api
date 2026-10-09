@@ -716,6 +716,35 @@ export interface Database {
         }
       >;
 
+      match_laundry_assignments: Table<
+        {
+          id: string;
+          club_id: string;
+          match_id: string;
+          team_id: string;
+          licencie_id: string;
+          assigned_at: string;
+          assigned_by_user_id: string | null;
+          assigned_by_licencie_id: string | null;
+          seen_at: string | null;
+          created_at: string;
+          updated_at: string;
+        },
+        {
+          id?: string;
+          club_id: string;
+          match_id: string;
+          team_id: string;
+          licencie_id: string;
+          assigned_at?: string;
+          assigned_by_user_id?: string | null;
+          assigned_by_licencie_id?: string | null;
+          seen_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        }
+      >;
+
       match_availability_requests: Table<
         { id: string; club_id: string; match_id: string; team_id: string; opened_at: string; opened_by_user_id: string | null; opened_by_licencie_id: string | null; created_at: string },
         { id?: string; club_id: string; match_id: string; team_id: string; opened_at?: string; opened_by_user_id?: string | null; opened_by_licencie_id?: string | null; created_at?: string }

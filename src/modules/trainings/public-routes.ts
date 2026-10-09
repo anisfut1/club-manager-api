@@ -16,8 +16,9 @@ import { resolvePublicClub, type PublicClub } from "../public/club-resolver.js";
 import { words } from "../public-tables/name-search.js";
 import { licencieFromToken } from "../public-tables/routes.js";
 import { actorFromLicencie } from "./actor.js";
-import { PutAvailabilityResponseDtoSchema, PutConvocationDraftDtoSchema, PutConvocationResponseDtoSchema } from "../../contracts/convocations.js";
-import { matchHomeActions, matchTeamLife, openAvailability, previewConvocation, respondAvailability, respondConvocation, saveDraft, sendConvocation } from "../convocations/service.js";
+import { assignLaundry, laundrySuggestions, markLaundrySeen, removeLaundry } from "../convocations/laundry.js";
+import { PutLaundryDtoSchema, PutAvailabilityResponseDtoSchema, PutConvocationDraftDtoSchema, PutConvocationResponseDtoSchema } from "../../contracts/convocations.js";
+import { laundryHomeActions, matchHomeActions, matchTeamLife, openAvailability, previewConvocation, respondAvailability, respondConvocation, saveDraft, sendConvocation } from "../convocations/service.js";
 import { parse, rangeOf } from "./routes.js";
 import {
   canManageTeam,
@@ -122,6 +123,19 @@ publicTrainingsRouter.put("/matches/:matchId/convocation/response", async (c) =>
   return c.json(await respondConvocation(ctx, param(c, "matchId"), ctx.licencie.id, body.response));
 });
 
+// ─── Lot 3 : lavage des maillots ─────────────────────────────────────────────
+publicTrainingsRouter.get("/matches/:matchId/laundry/suggestions", async (c) => c.json(await laundrySuggestions(await tokenCtx(c), param(c, "matchId"))));
+publicTrainingsRouter.put("/matches/:matchId/laundry", async (c) => {
+  const ctx = await tokenCtx(c);
+  return c.json(await assignLaundry(ctx, param(c, "matchId"), (await parse(PutLaundryDtoSchema, c)).licencieId));
+});
+publicTrainingsRouter.delete("/matches/:matchId/laundry", async (c) => c.json(await removeLaundry(await tokenCtx(c), param(c, "matchId"))));
+/** « J'ai vu » : seulement le licencié désigné (celui du lien). */
+publicTrainingsRouter.post("/matches/:matchId/laundry/seen", async (c) => {
+  const ctx = await tokenCtx(c);
+  return c.json(await markLaundrySeen(ctx, param(c, "matchId"), ctx.licencie.id));
+});
+
 interface Person {
   index: number;
   licencieId: string;
@@ -222,12 +236,15 @@ publicTrainingsRouter.post("/action-center", async (c) => {
     people.map((p) => ({ licencieId: p.licencieId, firstName: p.firstName, teamId: p.teamId, coachTeams: p.actor.coachTeamList })),
   )) as ActionCenterDto["actions"];
   actions.push(...matchActions);
+  // Maillots (Lot 3) : « Vous êtes en charge du lavage des maillots après le match ».
+  actions.push(...((await laundryHomeActions(ctx, people.map((p) => ({ licencieId: p.licencieId, firstName: p.firstName, teamId: p.teamId, coachTeams: p.actor.coachTeamList })))) as ActionCenterDto["actions"]));
 
   // Priorité (retour du club) : réponses attendues, puis convocations à confirmer, puis le coach, puis le reste ; chronologique.
   const rank = (a: ActionCenterDto["actions"][number]): number => {
     if (a.type === "TRAINING_RESPONSE") return a.currentResponse ? 3 : 0;
     if (a.type === "MATCH_AVAILABILITY") return a.currentResponse ? 3 : 0;
     if (a.type === "CONVOCATION_RESPONSE") return a.currentResponse === "PENDING" && !a.matchClosed ? 1 : 3;
+    if (a.type === "LAUNDRY_DUTY") return a.seenAt ? 3 : 1;
     return 2;
   };
   const when = (a: ActionCenterDto["actions"][number]): string => ("training" in a ? a.training.startsAt : (a.match.startsAt ?? ""));

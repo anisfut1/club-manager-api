@@ -10,7 +10,8 @@ import {
   UpdateTrainingOccurrenceDtoSchema,
   UpdateTrainingSeriesDtoSchema,
 } from "../../contracts/trainings.js";
-import { PutConvocationDraftDtoSchema } from "../../contracts/convocations.js";
+import { PutConvocationDraftDtoSchema, PutLaundryDtoSchema } from "../../contracts/convocations.js";
+import { assignLaundry, laundrySuggestions, removeLaundry } from "../convocations/laundry.js";
 import { matchTeamLife, openAvailability, previewConvocation, saveDraft, sendConvocation } from "../convocations/service.js";
 import { actorFromAccount } from "./actor.js";
 import { createSeries, markAttendance, listOccurrences, listSeries, occurrenceDetail, planning, setOccurrenceStatus, stopSeries, updateOccurrence, updateSeries, type TrainingCtx } from "./service.js";
@@ -112,3 +113,11 @@ trainingsRouter.put("/trainings/:occurrenceId/attendance/:licencieId", ...guard,
   const body = await parse(PutTrainingAttendanceDtoSchema, c);
   return c.json(await markAttendance(ctx, param(c, "occurrenceId"), param(c, "licencieId"), body.status));
 });
+
+// ─── Lot 3 : lavage des maillots (le logiciel suggère, le coach décide) ─────
+trainingsRouter.get("/matches/:matchId/laundry/suggestions", ...guard, async (c) => c.json(await laundrySuggestions(await ctxOf(c), param(c, "matchId"))));
+trainingsRouter.put("/matches/:matchId/laundry", ...guard, async (c) => {
+  const body = await parse(PutLaundryDtoSchema, c);
+  return c.json(await assignLaundry(await ctxOf(c), param(c, "matchId"), body.licencieId));
+});
+trainingsRouter.delete("/matches/:matchId/laundry", ...guard, async (c) => c.json(await removeLaundry(await ctxOf(c), param(c, "matchId"))));

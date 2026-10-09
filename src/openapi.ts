@@ -128,6 +128,9 @@ import {
   PutAvailabilityResponseDtoSchema,
   PutConvocationDraftDtoSchema,
   PutConvocationResponseDtoSchema,
+  LaundryDtoSchema,
+  LaundrySuggestionsDtoSchema,
+  PutLaundryDtoSchema,
 } from "./contracts/convocations.js";
 const registry = new OpenAPIRegistry();
 
@@ -1297,6 +1300,17 @@ for (const space of ["club", "public"] as const) {
   registry.registerPath({ method: "post", path: `${base}/matches/{matchId}/convocation/preview`, security, request: { params, ...auth }, responses: { 200: jsonResponse("Aperçu : ce que recevront un parent et un joueur", ConvocationPreviewDtoSchema), ...errorResponses } });
   registry.registerPath({ method: "post", path: `${base}/matches/{matchId}/convocation/send`, security, request: { params, ...auth }, responses: { 200: jsonResponse("Convocation envoyée (ou mise à jour envoyée)", MatchTeamLifeDtoSchema), ...errorResponses, ...validationResponses } });
 }
+// Lot 3 : lavage des maillots.
+for (const space of ["club", "public"] as const) {
+  const base = space === "club" ? "/v1/clubs/{clubId}/team-life" : "/v1/public/clubs/{clubSlug}/team-life";
+  const security = space === "club" ? bearerAuth : undefined;
+  const auth = space === "club" ? {} : { query: pubToken };
+  const params = space === "club" ? tlMatchParams : pubTlMatchParams;
+  registry.registerPath({ method: "get", path: `${base}/matches/{matchId}/laundry/suggestions`, security, request: { params, ...auth }, responses: { 200: jsonResponse("Suggestions (lecture seule, aucune affectation créée)", LaundrySuggestionsDtoSchema), ...errorResponses } });
+  registry.registerPath({ method: "put", path: `${base}/matches/{matchId}/laundry`, security, request: { params, ...auth, body: jsonBody(PutLaundryDtoSchema) }, responses: { 200: jsonResponse("Lavage attribué par le coach", LaundryDtoSchema), ...errorResponses, ...validationResponses } });
+  registry.registerPath({ method: "delete", path: `${base}/matches/{matchId}/laundry`, security, request: { params, ...auth }, responses: { 200: jsonResponse("Affectation retirée", LaundryDtoSchema), ...errorResponses } });
+}
+registry.registerPath({ method: "post", path: "/v1/public/clubs/{clubSlug}/team-life/matches/{matchId}/laundry/seen", request: { params: pubTlMatchParams, query: pubToken }, responses: { 200: jsonResponse("« J'ai vu » (licencié désigné)", z.object({ matchId: z.string(), seenAt: z.string() })), ...errorResponses } });
 registry.registerPath({ method: "put", path: "/v1/public/clubs/{clubSlug}/team-life/matches/{matchId}/availability/response", request: { params: pubTlMatchParams, query: pubToken, body: jsonBody(PutAvailabilityResponseDtoSchema) }, responses: { 200: jsonResponse("Disponibilité du licencié du lien", AvailabilityResponseResultDtoSchema), ...errorResponses, ...validationResponses } });
 registry.registerPath({ method: "put", path: "/v1/public/clubs/{clubSlug}/team-life/matches/{matchId}/convocation/response", request: { params: pubTlMatchParams, query: pubToken, body: jsonBody(PutConvocationResponseDtoSchema) }, responses: { 200: jsonResponse("Confirmation / refus du convoqué du lien", ConvocationResponseResultDtoSchema), ...errorResponses, ...validationResponses } });
 

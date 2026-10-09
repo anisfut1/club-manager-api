@@ -74,4 +74,10 @@ describe("renderConvocationMessage", () => {
     expect(audienceFor("2008-10-11", base.matchStartsAt)).toBe("GUARDIAN");
     expect(audienceFor(null, base.matchStartsAt)).toBe("GUARDIAN");
   });
+
+  it("maillots : la ligne n'apparaît que pour la famille concernée", () => {
+    const common = { ...base, audience: "GUARDIAN" as const, isHome: true, matchVenue: { name: "Maurice Clavel", address: null }, meetingAt: null, meetingPoint: "Maurice Clavel" };
+    expect(renderConvocationMessage({ ...common, laundry: true })).toContain("Maillots :\nVous êtes en charge du lavage des maillots après le match.");
+    expect(renderConvocationMessage(common)).not.toContain("Maillots");
+  });
 });

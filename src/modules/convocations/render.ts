@@ -24,6 +24,8 @@ export interface ConvocationRenderInput {
   meetingPoint: string | null;
   coachMessage: string | null;
   timezone: string;
+  /** Ce destinataire lave les maillots après le match (ligne ajoutée pour LUI seul). */
+  laundry?: boolean;
 }
 
 function dayAndTime(iso: string, timezone: string): string {
@@ -75,6 +77,8 @@ export function renderConvocationMessage(input: ConvocationRenderInput): string 
   if (showVenue) lines.push("", "Lieu du match :", ...venueLines);
 
   if (input.coachMessage?.trim()) lines.push("", "Message du coach :", `« ${input.coachMessage.trim()} »`);
+
+  if (input.laundry) lines.push("", "Maillots :", input.audience === "GUARDIAN" ? "Vous êtes en charge du lavage des maillots après le match." : "Tu es en charge du lavage des maillots après le match.");
 
   lines.push("", input.audience === "GUARDIAN" ? `Merci de confirmer la présence de ${name}.` : "Merci de confirmer ta présence.");
   return lines.join("\n");

@@ -1,5 +1,5 @@
 import { z } from "./zod.js";
-import { CoachMatchActionSchema, ConvocationResponseActionSchema, MatchAvailabilityActionSchema } from "./convocations.js";
+import { CoachMatchActionSchema, ConvocationResponseActionSchema, LaundryDutyActionSchema, MatchAvailabilityActionSchema } from "./convocations.js";
 
 /**
  * Vie d'équipe — entraînements (Lot 1, retour du club 2026-10-09). Voir
@@ -168,6 +168,7 @@ export const ActionCenterActionDtoSchema = z
     MatchAvailabilityActionSchema,
     ConvocationResponseActionSchema,
     CoachMatchActionSchema,
+    LaundryDutyActionSchema,
   ])
   .openapi("ActionCenterActionDto");
 

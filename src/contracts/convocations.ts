@@ -53,6 +53,33 @@ export const ConvocationDraftDtoSchema = z
   })
   .openapi("ConvocationDraftDto");
 
+
+/** Lot 3 : lavage des maillots. */
+export const LaundryCandidateDtoSchema = z
+  .object({
+    licencie: LicencieRef,
+    /** « Parent de Lina Martin » (mineur) ou « Anis Abed » (majeur) — jamais de nom de famille inventé. */
+    label: z.string(),
+    /** Lavages RÉELS cette saison (jamais les suggestions). */
+    seasonCount: z.number(),
+    status: z.enum(["CONFIRMED", "CONVOKED", "AVAILABLE", "UNCERTAIN", "NO_RESPONSE", "NOT_CONVOKED", "DECLINED", "UNAVAILABLE"]),
+    /** A lavé les maillots du match précédent de l'équipe (critère secondaire). */
+    repeat: z.boolean(),
+    suggested: z.boolean(),
+  })
+  .openapi("LaundryCandidateDto");
+export type LaundryCandidateDto = z.infer<typeof LaundryCandidateDtoSchema>;
+
+export const LaundryDtoSchema = z
+  .object({
+    assignee: z.object({ licencie: LicencieRef, label: z.string(), seasonCount: z.number(), seenAt: z.string().nullable() }).nullable(),
+  })
+  .openapi("LaundryDto");
+export type LaundryDto = z.infer<typeof LaundryDtoSchema>;
+
+export const LaundrySuggestionsDtoSchema = z.object({ candidates: z.array(LaundryCandidateDtoSchema) }).openapi("LaundrySuggestionsDto");
+export const PutLaundryDtoSchema = z.object({ licencieId: z.string().uuid() }).openapi("PutLaundryDto");
+
 /** Écran coach d'un match : disponibilités puis convocation (brouillon et version envoyée). */
 export const MatchTeamLifeDtoSchema = z
   .object({
@@ -65,6 +92,7 @@ export const MatchTeamLifeDtoSchema = z
       counts: AvailabilityCountsDtoSchema,
       roster: z.array(z.object({ licencie: LicencieRef, response: MatchAvailabilityValueSchema.nullable(), respondedAt: z.string().nullable() })),
     }),
+    laundry: LaundryDtoSchema,
     convocation: z
       .object({
         id: z.string(),
@@ -151,6 +179,17 @@ export const CoachMatchActionSchema = z.object({
   availabilityCounts: AvailabilityCountsDtoSchema.nullable(),
   convocationCounts: ConvocationCountsDtoSchema.nullable(),
   matchChanged: z.boolean(),
+  /** Maillots : quelqu'un est désigné pour le lavage. */
+  laundryAssigned: z.boolean(),
   /** Table de marque (domicile uniquement) : postes pourvus / à pourvoir ; `null` à l'extérieur. */
   tables: z.object({ filled: z.number(), total: z.number() }).nullable(),
+});
+
+export const LaundryDutyActionSchema = z.object({
+  type: z.literal("LAUNDRY_DUTY"),
+  licencieId: z.string(),
+  firstName: z.string(),
+  match: TeamLifeMatchDtoSchema,
+  /** « J'ai vu » déjà cliqué. */
+  seenAt: z.string().nullable(),
 });

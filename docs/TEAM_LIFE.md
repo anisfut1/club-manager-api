@@ -8,7 +8,7 @@ chat, sondages, cotisations, SMS, push…). Livré par lots testables :
 |---|---|---|
 | 1 | Entraînements (créneaux récurrents, séances, annuler / modifier une séance), Planning (matchs FFBB + entraînements), réponses Présent / Absent / Incertain, Home « À faire » | ✅ |
 | 2 | Disponibilités match, convocations (message personnalisé, snapshot, confirmations), changement FFBB après envoi | ✅ |
-| 3 | Lavage des maillots (suggestions équitables, le coach décide) | à faire |
+| 3 | Lavage des maillots (suggestions équitables, le coach décide) | ✅ |
 
 ## Identité : le lien personnel (décision du club, 2026-10-09)
 
@@ -161,6 +161,29 @@ de ses équipes dans les 14 jours : `ASK_AVAILABILITY`,
 des 21 prochains jours. Tri : réponses attendues, convocations à confirmer,
 coach, le reste ; chronologique.
 
+## Lavage des maillots (Lot 3)
+
+SEULE tâche gérée (pas de gestionnaire de tâches générique), matchs
+officiels uniquement. Même philosophie que les tables de marque : **le
+logiciel suggère, le coach décide** — lire les suggestions n'écrit jamais
+rien (`match_laundry_assignments`, une affectation par match et équipe).
+
+- **Suggestions** (`GET …/matches/{id}/laundry/suggestions`) : d'abord les
+  personnes réellement concernées (convocation confirmée, convoquées, ou
+  disponibles si pas encore de convocation), puis le reste ; jamais en tête
+  un non-convoqué, un refus ou un indisponible. À situation égale : moins de
+  lavages RÉELS cette saison d'abord (jamais les suggestions comptées), puis
+  éviter la personne du match précédent (critère secondaire).
+- **Libellé** : « Parent de Lina Martin » (mineur ou âge inconnu) ou
+  « Anis Abed » (majeur) — jamais de nom de famille inventé.
+- **Convocation** : si l'affectation existe AVANT l'envoi, la ligne
+  « Maillots : Vous êtes en charge du lavage des maillots après le match »
+  est ajoutée au message de la famille concernée SEULEMENT.
+- **Home** : `LAUNDRY_DUTY` pour la personne désignée (jusqu'à 2 jours après
+  le match), bouton « J'ai vu » (`POST …/laundry/seen`, licencié du lien
+  uniquement). Pas de workflow lavé / rendu en V1. Coach : `COACH_MATCH`
+  indique `laundryAssigned`.
+
 ## Routes
 
 Espace club (Bearer) sous `/v1/clubs/{clubId}/team-life`, espace public
@@ -182,6 +205,9 @@ Espace club (Bearer) sous `/v1/clubs/{clubId}/team-life`, espace public
 | PUT | `/matches/{matchId}/convocation/draft` | brouillon : sélection, rendez-vous, message |
 | POST | `/matches/{matchId}/convocation/preview`, `/send` | aperçu, envoi / mise à jour |
 | PUT | `/matches/{matchId}/availability/response`, `/convocation/response` | (public) réponse du licencié du lien |
+| GET | `/matches/{matchId}/laundry/suggestions` | maillots : suggestions (lecture seule) |
+| PUT / DELETE | `/matches/{matchId}/laundry` | maillots : le coach attribue / retire |
+| POST | `/matches/{matchId}/laundry/seen` | (public) « J'ai vu » |
 
 ## Limites V1
 
