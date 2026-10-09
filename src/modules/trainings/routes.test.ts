@@ -76,7 +76,7 @@ beforeEach(() => {
       lic("lina", "Lina", U15F),
       lic("sarah", "Sarah", U15F),
       lic("mathis", "Mathis", U11M),
-      lic("coach-lic", "Claire", null, { public_coach: true, coached_team_ids: [U15F] }),
+      lic("coach-lic", "Claire", null, { last_name: "DURAND", public_coach: true, coached_team_ids: [U15F] }),
     ],
   });
   state.publicTokens = ["lina", "mathis", "coach-lic"].map((id) => ({ id: `tok-${id}`, club_id: CLUB_A.id, licencie_id: id, token_hash: hashPublicToken(`token-${id}`), email: null, created_at: "2026-10-01T00:00:00Z", revoked_at: null, revoked_by: null }));
@@ -191,7 +191,11 @@ describe("Répondre et Home « À faire » (lien personnel)", () => {
   it("coach (lien personnel) : résumé des réponses de son équipe sur la Home, détail nominatif ; un parent n'a pas accès au détail", async () => {
     const u15 = state.trainingOccurrences.filter((o) => o.team_id === U15F).sort((a, b) => String(a.starts_at).localeCompare(String(b.starts_at)))[0]!;
     await pub(`/trainings/${u15.id}/response`, { method: "PUT", token: "token-lina", body: { response: "PRESENT" } });
-    const home = await json<{ actions: { type: string; training: { id: string; counts: unknown } }[] }>(await pub("/action-center", { method: "POST", body: { tokens: ["token-coach-lic"] } }));
+    const home = await json<{ canAddRelative: boolean; actions: { type: string; training: { id: string; counts: unknown } }[] }>(await pub("/action-center", { method: "POST", body: { tokens: ["token-coach-lic"] } }));
+    // Personne d'autre ne s'appelle DURAND : pas de « Ajouter un enfant ».
+    expect(home.canAddRelative).toBe(false);
+    // Lina seule sur l'appareil, d'autres MARTIN au club (fratrie probable) : le bouton est proposé.
+    expect((await json<{ canAddRelative: boolean }>(await pub("/action-center", { method: "POST", body: { tokens: ["token-lina"] } }))).canAddRelative).toBe(true);
     const summary = home.actions.find((a) => a.type === "COACH_TRAINING_SUMMARY")!;
     expect(summary.training).toMatchObject({ id: u15.id, counts: { present: 1, absent: 0, uncertain: 0, noResponse: 1, total: 2 } });
 

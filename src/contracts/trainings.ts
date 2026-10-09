@@ -160,6 +160,12 @@ export const ActionCenterActionDtoSchema = z
 export const ActionCenterDtoSchema = z
   .object({
     people: z.array(ActionCenterPersonDtoSchema),
+    /**
+     * « Ajouter un enfant » utile ici : plusieurs personnes déjà sur l'appareil,
+     * ou un autre licencié actif du club porte le même nom de famille (fratrie
+     * probable). Un booléen seulement : jamais le nom de l'autre licencié.
+     */
+    canAddRelative: z.boolean(),
     /** Liens invalides ou révoqués (à oublier sur cet appareil). */
     invalidTokenIndexes: z.array(z.number()),
     actions: z.array(ActionCenterActionDtoSchema),

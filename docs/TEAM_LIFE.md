@@ -86,6 +86,15 @@ renvoie, sur 14 jours :
 3. `upcoming` : matchs + entraînements des équipes concernées, avec les
    prénoms concernés.
 
+`canAddRelative` : afficher « Ajouter un enfant » seulement si plusieurs
+personnes sont déjà sur l'appareil ou si un autre licencié actif du club
+porte le même nom de famille (fratrie probable, retour du club 2026-10-09 :
+« sinon ça sert à rien de l'afficher à tout le monde »). Booléen seul,
+jamais le nom de l'autre licencié.
+
+L'accueil public mêle les entraînements de `upcoming` à « Mon agenda »
+(matchs du coach et du joueur), au lieu d'un planning séparé.
+
 Tri : réponses attendues (chronologique), puis résumés coach, puis réponses
 déjà données. Liens invalides signalés (`invalidTokenIndexes`) pour être
 oubliés par l'appareil, jamais bloquants.

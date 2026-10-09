@@ -12,6 +12,7 @@ import {
 } from "../../contracts/trainings.js";
 import { formatTeamNameWithGender } from "../../util/team-name.js";
 import { resolvePublicClub, type PublicClub } from "../public/club-resolver.js";
+import { words } from "../public-tables/name-search.js";
 import { licencieFromToken } from "../public-tables/routes.js";
 import { actorFromLicencie } from "./actor.js";
 import { parse, rangeOf } from "./routes.js";
@@ -122,6 +123,15 @@ async function peopleOf(db: DbClient, club: PublicClub, tokens: string[]): Promi
   return { people: [...unique.values()], invalid: invalid.sort((a, b) => a - b) };
 }
 
+/** Un autre licencié actif du club porte-t-il le même nom de famille (accents, casse et tirets ignorés) ? */
+async function hasNamesake(db: DbClient, clubId: string, people: Person[]): Promise<boolean> {
+  const keys = new Set(people.map((p) => words(p.lastName).join(" ")).filter(Boolean));
+  if (keys.size === 0) return false;
+  const ids = new Set(people.map((p) => p.licencieId));
+  const { data } = await db.from("licencies").select("id, last_name").eq("club_id", clubId).eq("active", true);
+  return (data ?? []).some((l) => !ids.has(l.id) && keys.has(words(l.last_name ?? "").join(" ")));
+}
+
 /** Droits fusionnés de l'appareil (une famille) : admin si l'un l'est, équipes coachées réunies. */
 function mergedActor(people: Person[]): TrainingActor {
   return {
@@ -195,6 +205,7 @@ publicTrainingsRouter.post("/action-center", async (c) => {
       team: p.teamId ? { id: p.teamId, name: teamName.get(p.teamId) ?? "Équipe" } : null,
       coachTeams: p.actor.coachTeamList.filter((id) => teamName.has(id)).map((id) => ({ id, name: teamName.get(id)! })),
     })),
+    canAddRelative: people.length > 1 || (await hasNamesake(db, club.id, people)),
     invalidTokenIndexes: invalid,
     actions,
     upcoming,
