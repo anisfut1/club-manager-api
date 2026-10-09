@@ -16,6 +16,7 @@ import { resolvePublicClub, type PublicClub } from "../public/club-resolver.js";
 import { words } from "../public-tables/name-search.js";
 import { licencieFromToken } from "../public-tables/routes.js";
 import { actorFromLicencie } from "./actor.js";
+import { teamOverview } from "./team-overview.js";
 import { assignLaundry, laundrySuggestions, markLaundrySeen, removeLaundry } from "../convocations/laundry.js";
 import { PutLaundryDtoSchema, PutAvailabilityResponseDtoSchema, PutConvocationDraftDtoSchema, PutConvocationResponseDtoSchema } from "../../contracts/convocations.js";
 import { laundryHomeActions, matchHomeActions, matchTeamLife, openAvailability, previewConvocation, respondAvailability, respondConvocation, saveDraft, sendConvocation } from "../convocations/service.js";
@@ -134,6 +135,13 @@ publicTrainingsRouter.delete("/matches/:matchId/laundry", async (c) => c.json(aw
 publicTrainingsRouter.post("/matches/:matchId/laundry/seen", async (c) => {
   const ctx = await tokenCtx(c);
   return c.json(await markLaundrySeen(ctx, param(c, "matchId"), ctx.licencie.id));
+});
+
+// ─── Lot 4 : page Équipe (joueurs de l'équipe et ceux qui la gèrent) ─────────
+publicTrainingsRouter.get("/teams/:teamId/overview", async (c) => {
+  const ctx = await tokenCtx(c);
+  const actor = ctx.actor as typeof ctx.actor & { teamId?: string | null };
+  return c.json(await teamOverview(ctx, param(c, "teamId"), { memberTeamIds: actor.teamId ? [actor.teamId] : [] }));
 });
 
 interface Person {
@@ -280,7 +288,10 @@ publicTrainingsRouter.post("/planning", async (c) => {
   const club = c.get("publicClub");
   const { people } = await peopleOf(db, club, body.tokens);
   const ctx: TrainingCtx = { db, clubId: club.id, timezone: club.timezone, actor: mergedActor(people) };
-  const teamIds = [...new Set(people.flatMap((p) => [p.teamId, ...p.actor.coachTeamList]).filter((id): id is string => Boolean(id)))];
+  const deviceTeams = [...new Set(people.flatMap((p) => [p.teamId, ...p.actor.coachTeamList]).filter((id): id is string => Boolean(id)))];
+  // `teamId` (page Équipe) : seulement une équipe de l'appareil, jamais une autre.
+  const only = c.req.query("teamId");
+  const teamIds = only ? deviceTeams.filter((id) => id === only) : deviceTeams;
   const range = rangeOf(c.req.query());
   return c.json({ ...range, events: await planning(ctx, { teamIds, ...range }) });
 });

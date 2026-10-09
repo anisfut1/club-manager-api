@@ -1,7 +1,7 @@
 # Inventaire des routes de l'API
 
 > Fichier **généré** par `npm run docs:routes` (ops/docs/generate-routes-doc.ts) — ne pas modifier à la main.
-> 168 routes montées dans le code, 161 décrites dans le contrat OpenAPI (`/openapi.json`, `/docs`).
+> 170 routes montées dans le code, 163 décrites dans le contrat OpenAPI (`/openapi.json`, `/docs`).
 
 Accès : **Compte connecté** = JWT Supabase (`Authorization: Bearer`), droits vérifiés par club ; **Public** = sans compte ; **Public (lien perso si action)** = lecture libre, écriture avec le jeton du lien personnel ; **Secret cron** = `CRON_SECRET`.
 
@@ -149,6 +149,7 @@ Accès : **Compte connecté** = JWT Supabase (`Authorization: Bearer`), droits v
 | PUT | `/v1/clubs/:clubId/team-life/matches/:matchId/laundry` | Compte connecté | Lavage attribué par le coach |
 | GET | `/v1/clubs/:clubId/team-life/matches/:matchId/laundry/suggestions` | Compte connecté | Suggestions (lecture seule, aucune affectation créée) |
 | GET | `/v1/clubs/:clubId/team-life/planning` | Compte connecté | Planning : matchs FFBB + entraînements |
+| GET | `/v1/clubs/:clubId/team-life/teams/:teamId/overview` | Compte connecté | Vue d'ensemble de l'équipe (prochain match, entraînement, effectif) |
 | GET | `/v1/clubs/:clubId/team-life/teams/:teamId/training-series` | Compte connecté | Créneaux d'entraînement en cours de l'équipe |
 | POST | `/v1/clubs/:clubId/team-life/teams/:teamId/training-series` | Compte connecté | Créneaux créés, séances générées |
 | DELETE | `/v1/clubs/:clubId/team-life/training-series/:seriesId` | Compte connecté | Créneau arrêté à partir d'une date (séances avec réponses annulées) |
@@ -332,6 +333,7 @@ Accès : **Compte connecté** = JWT Supabase (`Authorization: Bearer`), droits v
 | POST | `/v1/public/clubs/:clubSlug/team-life/matches/:matchId/laundry/seen` | Public (lien perso si action) | « J'ai vu » (licencié désigné) |
 | GET | `/v1/public/clubs/:clubSlug/team-life/matches/:matchId/laundry/suggestions` | Public (lien perso si action) | Suggestions (lecture seule, aucune affectation créée) |
 | POST | `/v1/public/clubs/:clubSlug/team-life/planning` | Public (lien perso si action) | Planning des équipes de l'appareil |
+| GET | `/v1/public/clubs/:clubSlug/team-life/teams/:teamId/overview` | Public (lien perso si action) | Vue d'ensemble (joueurs de l'équipe, coach / admin) |
 | GET | `/v1/public/clubs/:clubSlug/team-life/teams/:teamId/training-series` | Public (lien perso si action) | Créneaux d'entraînement en cours de l'équipe |
 | POST | `/v1/public/clubs/:clubSlug/team-life/teams/:teamId/training-series` | Public (lien perso si action) | Créneaux créés, séances générées |
 | GET | `/v1/public/clubs/:clubSlug/team-life/teams/:teamId/trainings` | Public (lien perso si action) | Séances d'une équipe gérée par le lien (compteurs de réponses) |

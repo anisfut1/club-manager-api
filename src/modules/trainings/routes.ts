@@ -14,6 +14,7 @@ import { PutConvocationDraftDtoSchema, PutLaundryDtoSchema } from "../../contrac
 import { assignLaundry, laundrySuggestions, removeLaundry } from "../convocations/laundry.js";
 import { matchTeamLife, openAvailability, previewConvocation, saveDraft, sendConvocation } from "../convocations/service.js";
 import { actorFromAccount } from "./actor.js";
+import { teamOverview } from "./team-overview.js";
 import { createSeries, markAttendance, listOccurrences, listSeries, occurrenceDetail, planning, setOccurrenceStatus, stopSeries, updateOccurrence, updateSeries, type TrainingCtx } from "./service.js";
 
 /**
@@ -121,3 +122,6 @@ trainingsRouter.put("/matches/:matchId/laundry", ...guard, async (c) => {
   return c.json(await assignLaundry(await ctxOf(c), param(c, "matchId"), body.licencieId));
 });
 trainingsRouter.delete("/matches/:matchId/laundry", ...guard, async (c) => c.json(await removeLaundry(await ctxOf(c), param(c, "matchId"))));
+
+// ─── Lot 4 : page Équipe ──────────────────────────────────────────────────────
+trainingsRouter.get("/teams/:teamId/overview", ...guard, async (c) => c.json(await teamOverview(await ctxOf(c), param(c, "teamId"))));

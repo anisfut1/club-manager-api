@@ -257,3 +257,21 @@ describe("Présence réelle aux séances passées (retour du club, 2026-10-10)",
     expect(past.trainings.find((t) => t.id === first.id)?.attendance).toEqual({ late: 1, absent: 1, recorded: true });
   });
 });
+
+describe("Page Équipe (Lot 4)", () => {
+  it("vue d'ensemble : prochain entraînement et effectif ; public réservé aux joueurs de l'équipe et à ceux qui la gèrent", async () => {
+    await club(`/teams/${U15F}/training-series`, { method: "POST", body: WEEK });
+    const view = await json<{ team: { name: string }; canManage: boolean; nextTraining: { id: string } | null; roster: { licencie: { firstName: string }; hasPersonalLink: boolean | null }[] }>(await club(`/teams/${U15F}/overview`));
+    expect(view.team.name).toBe("U15 (F)");
+    expect(view.canManage).toBe(true);
+    expect(view.nextTraining).not.toBeNull();
+    expect(view.roster.map((r) => r.licencie.firstName).sort()).toEqual(["Lina", "Sarah"]);
+    expect(view.roster.find((r) => r.licencie.firstName === "Lina")?.hasPersonalLink).toBe(true);
+
+    // Lina (U15) voit son équipe, sans le statut des liens des autres ; Mathis (U11) non.
+    const lina = await json<{ canManage: boolean; roster: { hasPersonalLink: boolean | null }[] }>(await pub(`/teams/${U15F}/overview`, { token: "token-lina" }));
+    expect(lina.canManage).toBe(false);
+    expect(lina.roster.every((r) => r.hasPersonalLink === null)).toBe(true);
+    expect((await pub(`/teams/${U15F}/overview`, { token: "token-mathis" })).status).toBe(403);
+  });
+});

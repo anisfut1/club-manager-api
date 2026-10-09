@@ -115,6 +115,7 @@ import {
   TrainingOccurrenceDtoSchema,
   TrainingOccurrenceListDtoSchema,
   PutTrainingAttendanceDtoSchema,
+  TeamOverviewDtoSchema,
   TrainingResponseResultDtoSchema,
   TrainingSeriesListDtoSchema,
   UpdateTrainingOccurrenceDtoSchema,
@@ -1300,6 +1301,9 @@ for (const space of ["club", "public"] as const) {
   registry.registerPath({ method: "post", path: `${base}/matches/{matchId}/convocation/preview`, security, request: { params, ...auth }, responses: { 200: jsonResponse("Aperçu : ce que recevront un parent et un joueur", ConvocationPreviewDtoSchema), ...errorResponses } });
   registry.registerPath({ method: "post", path: `${base}/matches/{matchId}/convocation/send`, security, request: { params, ...auth }, responses: { 200: jsonResponse("Convocation envoyée (ou mise à jour envoyée)", MatchTeamLifeDtoSchema), ...errorResponses, ...validationResponses } });
 }
+// Lot 4 : page Équipe.
+registry.registerPath({ method: "get", path: "/v1/clubs/{clubId}/team-life/teams/{teamId}/overview", security: bearerAuth, request: { params: teamIdParams }, responses: { 200: jsonResponse("Vue d'ensemble de l'équipe (prochain match, entraînement, effectif)", TeamOverviewDtoSchema), ...errorResponses } });
+registry.registerPath({ method: "get", path: "/v1/public/clubs/{clubSlug}/team-life/teams/{teamId}/overview", request: { params: pubTeamParams, query: pubToken }, responses: { 200: jsonResponse("Vue d'ensemble (joueurs de l'équipe, coach / admin)", TeamOverviewDtoSchema), ...errorResponses } });
 // Lot 3 : lavage des maillots.
 for (const space of ["club", "public"] as const) {
   const base = space === "club" ? "/v1/clubs/{clubId}/team-life" : "/v1/public/clubs/{clubSlug}/team-life";

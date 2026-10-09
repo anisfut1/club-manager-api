@@ -188,3 +188,34 @@ export const ActionCenterDtoSchema = z
   })
   .openapi("ActionCenterDto");
 export type ActionCenterDto = z.infer<typeof ActionCenterDtoSchema>;
+
+/** Lot 4 : page Équipe (Vue d'ensemble / Planning / Effectif). */
+export const TeamOverviewDtoSchema = z
+  .object({
+    team: z.object({ id: z.string(), name: z.string() }),
+    canManage: z.boolean(),
+    nextMatch: z
+      .object({
+        id: z.string(),
+        startsAt: z.string().nullable(),
+        isHome: z.boolean().nullable(),
+        opponent: z.string().nullable(),
+        venueName: z.string().nullable(),
+        /** Coach / admin : état de la convocation (null sinon). */
+        convocation: z.object({ sent: z.boolean(), convoked: z.number(), confirmed: z.number(), declined: z.number(), pending: z.number() }).nullable(),
+        /** Coach / admin : disponibilités demandées et sans réponse (null sinon). */
+        availability: z.object({ open: z.boolean(), noResponse: z.number() }).nullable(),
+      })
+      .nullable(),
+    nextTraining: TrainingOccurrenceDtoSchema.nullable(),
+    roster: z.array(
+      z.object({
+        licencie: z.object({ id: z.string(), firstName: z.string(), lastName: z.string(), photoUrl: z.string().nullable() }),
+        isCoach: z.boolean(),
+        /** Coach / admin : lien personnel actif (statut « compte »), null sinon. */
+        hasPersonalLink: z.boolean().nullable(),
+      }),
+    ),
+  })
+  .openapi("TeamOverviewDto");
+export type TeamOverviewDto = z.infer<typeof TeamOverviewDtoSchema>;

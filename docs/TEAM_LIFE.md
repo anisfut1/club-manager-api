@@ -9,6 +9,7 @@ chat, sondages, cotisations, SMS, push…). Livré par lots testables :
 | 1 | Entraînements (créneaux récurrents, séances, annuler / modifier une séance), Planning (matchs FFBB + entraînements), réponses Présent / Absent / Incertain, Home « À faire » | ✅ |
 | 2 | Disponibilités match, convocations (message personnalisé, snapshot, confirmations), changement FFBB après envoi | ✅ |
 | 3 | Lavage des maillots (suggestions équitables, le coach décide) | ✅ |
+| 4 | Page Équipe : Vue d'ensemble / Planning / Effectif | ✅ |
 
 ## Identité : le lien personnel (décision du club, 2026-10-09)
 
@@ -184,6 +185,16 @@ rien (`match_laundry_assignments`, une affectation par match et équipe).
   uniquement). Pas de workflow lavé / rendu en V1. Coach : `COACH_MATCH`
   indique `laundryAssigned`.
 
+## Page Équipe (Lot 4)
+
+`GET …/teams/{teamId}/overview` : prochain match (coach / admin : état de la
+convocation et disponibilités sans réponse), prochain entraînement,
+effectif (coach repéré ; statut « lien personnel actif » pour coach / admin
+seulement). Pas un CRM. Espace club : tout membre ; espace public : joueurs
+de l'équipe et ceux qui la gèrent (403 `TEAM_MEMBER_REQUIRED` sinon —
+jamais un annuaire ouvert). Le planning de la page réutilise `/planning`
+(`teamId`, limité aux équipes de l'appareil dans l'espace public).
+
 ## Routes
 
 Espace club (Bearer) sous `/v1/clubs/{clubId}/team-life`, espace public
@@ -208,6 +219,7 @@ Espace club (Bearer) sous `/v1/clubs/{clubId}/team-life`, espace public
 | GET | `/matches/{matchId}/laundry/suggestions` | maillots : suggestions (lecture seule) |
 | PUT / DELETE | `/matches/{matchId}/laundry` | maillots : le coach attribue / retire |
 | POST | `/matches/{matchId}/laundry/seen` | (public) « J'ai vu » |
+| GET | `/teams/{teamId}/overview` | page Équipe : vue d'ensemble et effectif |
 
 ## Limites V1
 
