@@ -151,4 +151,6 @@ export const CoachMatchActionSchema = z.object({
   availabilityCounts: AvailabilityCountsDtoSchema.nullable(),
   convocationCounts: ConvocationCountsDtoSchema.nullable(),
   matchChanged: z.boolean(),
+  /** Table de marque (domicile uniquement) : postes pourvus / à pourvoir ; `null` à l'extérieur. */
+  tables: z.object({ filled: z.number(), total: z.number() }).nullable(),
 });

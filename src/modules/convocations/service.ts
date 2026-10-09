@@ -513,6 +513,27 @@ export async function respondConvocation(ctx: TrainingCtx, matchId: string, lice
   return { matchId: match.id, licencieId, response, respondedAt: now };
 }
 
+/**
+ * Table de marque des matchs à domicile (retour du club, 2026-10-10 : « table
+ * prévue pour le match, 1/4 postes définis ») : postes pourvus / postes à
+ * pourvoir (4, ou 3 sans arbitre club).
+ */
+async function tableStatus(ctx: TrainingCtx, homeMatchIds: string[]): Promise<Map<string, { filled: number; total: number }>> {
+  const out = new Map<string, { filled: number; total: number }>();
+  if (homeMatchIds.length === 0) return out;
+  const [{ data: rows }, { data: overrides }] = await Promise.all([
+    ctx.db.from("table_assignments").select("match_id, role").eq("club_id", ctx.clubId).in("match_id", homeMatchIds),
+    ctx.db.from("match_referee_overrides").select("match_id, no_referee_needed").eq("club_id", ctx.clubId).in("match_id", homeMatchIds),
+  ]);
+  const noReferee = new Set(((overrides ?? []) as { match_id: string; no_referee_needed: boolean }[]).filter((o) => o.no_referee_needed).map((o) => o.match_id));
+  for (const id of homeMatchIds) {
+    const roles = new Set(((rows ?? []) as { match_id: string; role: string }[]).filter((r) => r.match_id === id).map((r) => r.role));
+    if (noReferee.has(id)) roles.delete("REFEREE");
+    out.set(id, { filled: roles.size, total: noReferee.has(id) ? 3 : 4 });
+  }
+  return out;
+}
+
 // ─── Home « À faire » ────────────────────────────────────────────────────────
 
 export interface HomePerson {
@@ -587,6 +608,7 @@ export async function matchHomeActions(ctx: TrainingCtx, people: HomePerson[], n
   }
 
   const coachUntil = now.getTime() + COACH_MATCH_DAYS * 86_400_000;
+  const tables = await tableStatus(ctx, matches.filter((m) => m.is_home === true && m.team_id && coachTeams.includes(m.team_id)).map((m) => m.id));
   for (const teamId of coachTeams) {
     const coach = people.find((p) => p.coachTeams.includes(teamId));
     if (!coach) continue;
@@ -598,12 +620,12 @@ export async function matchHomeActions(ctx: TrainingCtx, people: HomePerson[], n
       const request = requestOf.get(key);
       if (conv) {
         const active = recipients.filter((r) => r.convocation_id === conv.id && !r.removed_at);
-        actions.push({ type: "COACH_MATCH", coachLicencieId: coach.licencieId, match: dto, stage: "CONVOCATION_SENT", availabilityCounts: null, convocationCounts: convocationCounts(active), matchChanged: matchChangesSince(conv.match_snapshot, dto).length > 0 });
+        actions.push({ type: "COACH_MATCH", coachLicencieId: coach.licencieId, match: dto, stage: "CONVOCATION_SENT", availabilityCounts: null, convocationCounts: convocationCounts(active), matchChanged: matchChangesSince(conv.match_snapshot, dto).length > 0, tables: tables.get(m.id) ?? null });
       } else if (request) {
         const responses = new Map(availability.filter((a) => a.request_id === request.id).map((a) => [a.licencie_id, a.response]));
-        actions.push({ type: "COACH_MATCH", coachLicencieId: coach.licencieId, match: dto, stage: "PREPARE_CONVOCATION", availabilityCounts: availabilityCounts(teamRoster, responses), convocationCounts: null, matchChanged: false });
+        actions.push({ type: "COACH_MATCH", coachLicencieId: coach.licencieId, match: dto, stage: "PREPARE_CONVOCATION", availabilityCounts: availabilityCounts(teamRoster, responses), convocationCounts: null, matchChanged: false, tables: tables.get(m.id) ?? null });
       } else {
-        actions.push({ type: "COACH_MATCH", coachLicencieId: coach.licencieId, match: dto, stage: "ASK_AVAILABILITY", availabilityCounts: null, convocationCounts: null, matchChanged: false });
+        actions.push({ type: "COACH_MATCH", coachLicencieId: coach.licencieId, match: dto, stage: "ASK_AVAILABILITY", availabilityCounts: null, convocationCounts: null, matchChanged: false, tables: tables.get(m.id) ?? null });
       }
     }
   }

@@ -277,3 +277,13 @@ describe("Coach qui joue dans l'équipe qu'il coache (retour du club, 2026-10-10
     expect(view.availability.roster.map((r) => r.licencie.firstName)).not.toContain("Clément");
   });
 });
+
+describe("Accueil coach : table de marque des matchs à domicile (retour du club, 2026-10-10)", () => {
+  it("postes pourvus / à pourvoir ; 3 postes sans arbitre club ; rien à l'extérieur", async () => {
+    state.tableAssignments.push({ id: "ta1", club_id: CLUB_A.id, match_id: HOME, licencie_id: ID.sarah, role: "SCORER", created_by: null } as never);
+    const home = await json<{ actions: { type: string; match?: { id: string }; tables?: { filled: number; total: number } | null }[] }>(await pub("/action-center", { method: "POST", body: { tokens: ["token-coach"] } }));
+    const byMatch = Object.fromEntries(home.actions.filter((a) => a.type === "COACH_MATCH").map((a) => [a.match!.id, a.tables]));
+    expect(byMatch[HOME]).toEqual({ filled: 1, total: 4 });
+    expect(byMatch[AWAY]).toBeNull();
+  });
+});
