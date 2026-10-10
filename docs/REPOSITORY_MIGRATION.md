@@ -47,3 +47,11 @@ git remote add origin https://github.com/anisfut1/ball-manager-app.git
 ## OpenAPI
 
 `ball-manager-back` publie `/openapi.json`. C'est la source de vérité. Le web et l'app génèrent chacun leurs types (`npm run api:generate`).
+
+## Vérifications après renommage (2026-10-10)
+
+- **Remotes locaux** mis à jour et vérifiés (`git fetch` OK) : `https://github.com/anisfut1/ball-manager-web`, `https://github.com/anisfut1/ball-manager-back`.
+- **Liaison Vercel ↔ GitHub conservée.** Les commits poussés **après** le renommage ont reçu un déploiement Vercel sur les deux dépôts (statut `Vercel` publié sur le commit).
+  - `ball-manager-back` : déploiement de prévisualisation **réussi**.
+  - `ball-manager-web` : prévisualisation **en échec**, mais **avant** le renommage déjà. Toutes les prévisualisations hors branche de production échouent depuis le 2026-10-06 (`fix/next-security`, `refactor/migration-back`, `claude/fervent-brahmagupta-pu78c4`, `claude/ios-app`). La branche de production, elle, déploie sans erreur. Cause probable, non vérifiée faute d'accès aux journaux Vercel : des variables d'environnement définies seulement pour « Production ». Le renommage n'en est pas la cause.
+- **Production** (`www.ball-manager.fr`, `club-manager-api-two.vercel.app`) : non testable depuis l'environnement de travail (réseau sortant restreint).
