@@ -33,7 +33,7 @@ const envSchema = z.object({
   RESEND_FROM: z.string().min(1).optional(),
   // Adresse de réponse (boîte réellement lue) — un email sans réponse possible est moins bien classé.
   RESEND_REPLY_TO: z.string().email().optional(),
-  // URL publique du frontend SCSB utilisée dans les liens envoyés par email
+  // URL publique du frontend ball-manager-web utilisée dans les liens envoyés par email
   // quand l'origine de la requête n'est pas exploitable (voir public-tables).
   PUBLIC_APP_URL: z.string().url().optional(),
   // App iOS / sécurité des liens (docs/MOBILE_AUTH.md) : « 1 » = les emails de

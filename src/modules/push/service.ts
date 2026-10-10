@@ -4,7 +4,7 @@ import { apnsConfig, createApnsSender, type PushEnvironment, type PushSender } f
 
 /**
  * Notifications push : jetons d'appareil, file d'envoi (`notification_outbox`)
- * et envoi. Voir SCSB/docs/IOS_PUSH.md.
+ * et envoi. Voir ball-manager-web/docs/IOS_PUSH.md.
  *
  * Destinataires = des LICENCIÉS. Les appareils sont résolus au moment de
  * l'envoi : session d'appareil active, droit encore adossé à un lien

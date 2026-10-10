@@ -1349,7 +1349,7 @@ export function generateOpenApiDocument() {
   return generator.generateDocument({
     openapi: "3.0.0",
     info: {
-      title: "club-manager-api",
+      title: "ball-manager-back",
       version: "0.2.0",
       description: "Backend REST du SaaS multi-clubs (FFBB/FBI/e-Marque). Voir docs/API.md.",
     },

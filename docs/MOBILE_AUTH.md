@@ -1,6 +1,6 @@
 # Authentification de l'app iOS (et liens)
 
-L'audit et la décision d'architecture sont dans `SCSB/docs/IOS_AUDIT.md`. La sécurité est détaillée dans `SCSB/docs/IOS_SECURITY.md`.
+L'audit et la décision d'architecture sont dans `ball-manager-web/docs/IOS_AUDIT.md`. La sécurité est détaillée dans `ball-manager-web/docs/IOS_SECURITY.md`.
 
 ## Une seule identité
 
@@ -11,7 +11,7 @@ L'app reçoit une **session d'appareil** (`device_sessions`) : c'est une preuve 
 | | Lien personnel (web) | Session d'appareil (app) |
 |---|---|---|
 | Transport | `X-Personal-Link-Token` (recommandé) ou `?token=` | `Authorization: Bearer bmd_…` et `X-BM-As: <licencieId>` |
-| Stockage | cookie `bm_session` HttpOnly chiffré (SCSB) | Keychain iOS (`AfterFirstUnlockThisDeviceOnly`) |
+| Stockage | cookie `bm_session` HttpOnly chiffré (ball-manager-web) | Keychain iOS (`AfterFirstUnlockThisDeviceOnly`) |
 | Durée | jusqu'à révocation ou rotation | 180 jours **glissants** |
 | Révocation | réinitialisation admin, ou nouveau lien | déconnexion, réinitialisation admin du lien, ou expiration |
 
@@ -33,7 +33,7 @@ Pour l'accueil (« À faire ») et le planning, l'app envoie `tokens: ["as:<lice
 | `DELETE /session` | Déconnexion de cet appareil. |
 | `POST /session/people` `{ tokens }` | Ajouter un enfant (son lien le prouve). |
 | `DELETE /session/people/{licencieId}` | Retirer une personne de l'appareil. |
-| `PUT /session/push-token` `{ token, environment, appVersion? }` | Jeton APNs de cet iPhone pour cette session (voir `SCSB/docs/IOS_PUSH.md`). |
+| `PUT /session/push-token` `{ token, environment, appVersion? }` | Jeton APNs de cet iPhone pour cette session (voir `ball-manager-web/docs/IOS_PUSH.md`). |
 | `DELETE /session/push-token` | Plus de notifications de ce club sur cet appareil. |
 | `POST /codes` `{ tokens, codeChallenge, codeChallengeMethod: "S256", redirectPath? }` | Page web `/public/{slug}/auth/app`, déjà identifiée : code de **5 min**, **usage unique**, lié au PKCE de l'app. |
 | `POST /token` `{ code, codeVerifier?, platform }` | Échange d'un code. `ios` → session d'appareil ; `web` (lien de connexion par email) → liens personnels pour `bm_session`. |
@@ -52,7 +52,7 @@ Plus `GET /v1/public/clubs`, la liste des clubs actifs (nom, slug, logo) pour le
 
 ### Préchargement par les scanners d'emails
 
-Aucune route GET ne consomme un code ni ne crée de session. Le lien de connexion `GET /public/{slug}/connexion/code/{code}` (SCSB) affiche une page ; c'est le bouton « Continuer » qui fait le `POST /auth/token`. L'app, elle, fait le POST elle-même après ouverture par Universal Link.
+Aucune route GET ne consomme un code ni ne crée de session. Le lien de connexion `GET /public/{slug}/connexion/code/{code}` (ball-manager-web) affiche une page ; c'est le bouton « Continuer » qui fait le `POST /auth/token`. L'app, elle, fait le POST elle-même après ouverture par Universal Link.
 
 ## Liens de connexion à usage unique (`AUTH_LINK_CODES`)
 
@@ -61,7 +61,7 @@ Aucune route GET ne consomme un code ni ne crée de session. Le lien de connexio
   - Le jeton reste émis et chiffré : le web en a besoin pour sa session, et l'admin peut réafficher le lien.
   - **Transition** : les anciens liens `?token=` et `#token=` restent valables partout, sur le web comme dans l'app.
   - **Effet visible** : un lien déjà utilisé affiche « Ce lien a déjà été utilisé. Demande un nouveau lien. » Un clic suffit pour en recevoir un autre.
-  - À activer après le déploiement de la page SCSB `/public/{slug}/connexion/code/{code}`.
+  - À activer après le déploiement de la page ball-manager-web `/public/{slug}/connexion/code/{code}`.
 
 ## Liens : `BallManagerLinkService` (`src/links/links.ts`)
 

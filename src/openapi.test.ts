@@ -4,7 +4,7 @@ import { generateOpenApiDocument } from "./openapi.js";
 /**
  * §26 de la demande : garantit que toute route/DTO nouvellement ajoutée
  * est RÉELLEMENT présente dans le document généré — jamais un endpoint qui
- * existe côté handler mais pas dans le contrat que SCSB génère avec
+ * existe côté handler mais pas dans le contrat que ball-manager-web génère avec
  * `npm run api:generate`.
  */
 describe("generateOpenApiDocument", () => {
@@ -146,7 +146,7 @@ describe("generateOpenApiDocument", () => {
 
   it("génère un document valide (openapi 3.0.0, titre, au moins 15 routes)", () => {
     expect(doc.openapi).toBe("3.0.0");
-    expect(doc.info.title).toBe("club-manager-api");
+    expect(doc.info.title).toBe("ball-manager-back");
     expect(Object.keys(doc.paths).length).toBeGreaterThanOrEqual(15);
   });
 

@@ -4,7 +4,7 @@ import { getEnv } from "../../config/env.js";
 
 /**
  * Envoi APNs direct (HTTP/2 + jeton JWT ES256 signé avec la clé .p8), sans
- * service tiers. Voir SCSB/docs/IOS_PUSH.md.
+ * service tiers. Voir ball-manager-web/docs/IOS_PUSH.md.
  */
 
 export type PushEnvironment = "development" | "production";

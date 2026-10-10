@@ -1,4 +1,4 @@
--- Club de DÉMONSTRATION pour la revue App Store (SCSB/docs/APP_STORE.md).
+-- Club de DÉMONSTRATION pour la revue App Store (ball-manager-web/docs/APP_STORE.md).
 -- PRÉPARÉ, NON APPLIQUÉ. Données 100 % fictives. Idempotent.
 --
 -- Après application : dans l'espace club (admin plateforme), donner une
