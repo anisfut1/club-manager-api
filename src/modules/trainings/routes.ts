@@ -12,7 +12,7 @@ import {
 } from "../../contracts/trainings.js";
 import { PutConvocationDraftDtoSchema, PutLaundryDtoSchema } from "../../contracts/convocations.js";
 import { assignLaundry, laundrySuggestions, removeLaundry } from "../convocations/laundry.js";
-import { matchTeamLife, openAvailability, previewConvocation, saveDraft, sendConvocation } from "../convocations/service.js";
+import { matchTeamLife, openAvailability, remindNoResponse, previewConvocation, saveDraft, sendConvocation } from "../convocations/service.js";
 import { actorFromAccount } from "./actor.js";
 import { teamOverview } from "./team-overview.js";
 import { createSeries, markAttendance, listOccurrences, listSeries, occurrenceDetail, planning, setOccurrenceStatus, stopSeries, updateOccurrence, updateSeries, type TrainingCtx } from "./service.js";
@@ -101,6 +101,7 @@ trainingsRouter.get("/planning", ...guard, async (c) => {
 
 trainingsRouter.get("/matches/:matchId", ...guard, async (c) => c.json(await matchTeamLife(await ctxOf(c), param(c, "matchId"))));
 trainingsRouter.post("/matches/:matchId/availability/open", ...guard, async (c) => c.json(await openAvailability(await ctxOf(c), param(c, "matchId"))));
+trainingsRouter.post("/matches/:matchId/remind", ...guard, async (c) => c.json(await remindNoResponse(await ctxOf(c), param(c, "matchId"))));
 trainingsRouter.put("/matches/:matchId/convocation/draft", ...guard, async (c) => {
   const body = await parse(PutConvocationDraftDtoSchema, c);
   return c.json(await saveDraft(await ctxOf(c), param(c, "matchId"), body));

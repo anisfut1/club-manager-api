@@ -214,6 +214,8 @@ export const TeamOverviewDtoSchema = z
         isCoach: z.boolean(),
         /** Coach / admin : lien personnel actif (statut « compte »), null sinon. */
         hasPersonalLink: z.boolean().nullable(),
+        /** Coach / admin : absences et retards sur les `sessions` dernières séances relevées (null sinon). */
+        attendance: z.object({ sessions: z.number(), absent: z.number(), late: z.number() }).nullable(),
       }),
     ),
   })

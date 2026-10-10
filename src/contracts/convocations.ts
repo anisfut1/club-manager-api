@@ -89,6 +89,8 @@ export const MatchTeamLifeDtoSchema = z
     matchClosed: z.boolean(),
     availability: z.object({
       openedAt: z.string().nullable(),
+      /** Dernière relance des sans réponse (null = jamais). */
+      remindedAt: z.string().nullable(),
       counts: AvailabilityCountsDtoSchema,
       roster: z.array(z.object({ licencie: LicencieRef, response: MatchAvailabilityValueSchema.nullable(), respondedAt: z.string().nullable() })),
     }),
@@ -102,6 +104,8 @@ export const MatchTeamLifeDtoSchema = z
         sent: z.object({ meetingAt: z.string().nullable(), meetingPoint: z.string().nullable(), coachMessage: z.string().nullable(), matchSnapshot: MatchSnapshotDtoSchema }).nullable(),
         /** Le brouillon diffère de ce qui a été envoyé (« Envoyer la mise à jour »). */
         hasUnsentChanges: z.boolean(),
+        /** Dernière relance des « en attente » depuis le dernier envoi (null = jamais). */
+        remindedAt: z.string().nullable(),
         /** Le match FFBB a changé depuis l'envoi (date / heure, lieu) : jamais corrigé en silence. */
         matchChanges: z.array(z.enum(["DATE", "VENUE", "STATUS"])),
         counts: ConvocationCountsDtoSchema,
@@ -149,6 +153,8 @@ export const MatchAvailabilityActionSchema = z.object({
   firstName: z.string(),
   match: TeamLifeMatchDtoSchema,
   currentResponse: MatchAvailabilityValueSchema.nullable(),
+  /** Le coach a relancé les sans réponse (« Le coach attend ta réponse »). */
+  reminded: z.boolean(),
 });
 
 export const ConvocationResponseActionSchema = z.object({
@@ -168,6 +174,8 @@ export const ConvocationResponseActionSchema = z.object({
   currentResponse: ConvocationResponseValueSchema,
   /** Match annulé / reporté : plus de confirmation possible. */
   matchClosed: z.boolean(),
+  /** Le coach a relancé les « en attente » depuis le dernier envoi. */
+  reminded: z.boolean(),
 });
 
 export const CoachMatchActionSchema = z.object({

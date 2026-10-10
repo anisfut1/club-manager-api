@@ -19,7 +19,7 @@ import { actorFromLicencie } from "./actor.js";
 import { teamOverview } from "./team-overview.js";
 import { assignLaundry, laundrySuggestions, markLaundrySeen, removeLaundry } from "../convocations/laundry.js";
 import { PutLaundryDtoSchema, PutAvailabilityResponseDtoSchema, PutConvocationDraftDtoSchema, PutConvocationResponseDtoSchema } from "../../contracts/convocations.js";
-import { laundryHomeActions, matchHomeActions, matchTeamLife, openAvailability, previewConvocation, respondAvailability, respondConvocation, saveDraft, sendConvocation } from "../convocations/service.js";
+import { laundryHomeActions, matchHomeActions, matchTeamLife, openAvailability, remindNoResponse, previewConvocation, respondAvailability, respondConvocation, saveDraft, sendConvocation } from "../convocations/service.js";
 import { parse, rangeOf } from "./routes.js";
 import {
   canManageTeam,
@@ -105,6 +105,7 @@ publicTrainingsRouter.put("/trainings/:occurrenceId/response", async (c) => {
 // Coach / admin du club (mêmes règles que l'espace club).
 publicTrainingsRouter.get("/matches/:matchId", async (c) => c.json(await matchTeamLife(await tokenCtx(c), param(c, "matchId"))));
 publicTrainingsRouter.post("/matches/:matchId/availability/open", async (c) => c.json(await openAvailability(await tokenCtx(c), param(c, "matchId"))));
+publicTrainingsRouter.post("/matches/:matchId/remind", async (c) => c.json(await remindNoResponse(await tokenCtx(c), param(c, "matchId"))));
 publicTrainingsRouter.put("/matches/:matchId/convocation/draft", async (c) => {
   const ctx = await tokenCtx(c);
   return c.json(await saveDraft(ctx, param(c, "matchId"), await parse(PutConvocationDraftDtoSchema, c)));

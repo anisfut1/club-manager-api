@@ -51,6 +51,8 @@ export interface ConvocationRow {
   coach_message: string | null;
   match_snapshot: MatchSnapshotDto | null;
   sent_at: string | null;
+  /** Dernière relance des « en attente » (affichée aux familles concernées). */
+  reminded_at?: string | null;
 }
 
 export interface RecipientRow {
@@ -71,7 +73,7 @@ export interface RosterEntry {
 
 const MATCH_COLUMNS = "id, club_id, team_id, match_datetime, is_home, opponent_name, venue_id, venue_raw_label, status";
 const CONVOCATION_COLUMNS =
-  "id, match_id, team_id, draft_licencie_ids, draft_meeting_at, draft_meeting_point, draft_meeting_venue_id, draft_coach_message, revision, meeting_at, meeting_point, meeting_venue_id, coach_message, match_snapshot, sent_at";
+  "id, match_id, team_id, draft_licencie_ids, draft_meeting_at, draft_meeting_point, draft_meeting_venue_id, draft_coach_message, revision, meeting_at, meeting_point, meeting_venue_id, coach_message, match_snapshot, sent_at, reminded_at";
 
 /** Matchs proposés au coach sur la Home (demander / préparer / suivre). */
 export const COACH_MATCH_DAYS = 14;
@@ -143,8 +145,8 @@ export async function roster(ctx: TrainingCtx, teamId: string): Promise<RosterEn
 }
 
 export async function availabilityRequest(ctx: TrainingCtx, matchId: string, teamId: string) {
-  const { data } = await ctx.db.from("match_availability_requests").select("id, opened_at").eq("club_id", ctx.clubId).eq("match_id", matchId).eq("team_id", teamId).maybeSingle();
-  return data as { id: string; opened_at: string } | null;
+  const { data } = await ctx.db.from("match_availability_requests").select("id, opened_at, reminded_at").eq("club_id", ctx.clubId).eq("match_id", matchId).eq("team_id", teamId).maybeSingle();
+  return data as { id: string; opened_at: string; reminded_at?: string | null } | null;
 }
 
 export async function convocationOf(ctx: TrainingCtx, matchId: string, teamId: string): Promise<ConvocationRow | null> {
@@ -247,6 +249,7 @@ export async function matchTeamLife(ctx: TrainingCtx, matchId: string): Promise<
       draft: { licencieIds: [...draftIds], meetingAt: convocation.draft_meeting_at, meetingPoint: convocation.draft_meeting_point, meetingVenueId: convocation.draft_meeting_venue_id, coachMessage: convocation.draft_coach_message },
       sent: convocation.revision > 0 && convocation.match_snapshot ? { meetingAt: convocation.meeting_at, meetingPoint: convocation.meeting_point, coachMessage: convocation.coach_message, matchSnapshot: convocation.match_snapshot } : null,
       hasUnsentChanges,
+      remindedAt: remindedSince(convocation.reminded_at, convocation.sent_at),
       matchChanges: convocation.revision > 0 ? matchChangesSince(convocation.match_snapshot, dto) : [],
       counts: convocationCounts(recipients),
       recipients: recipients
@@ -263,6 +266,7 @@ export async function matchTeamLife(ctx: TrainingCtx, matchId: string): Promise<
     laundry: await laundryOf(ctx, match),
     availability: {
       openedAt: request?.opened_at ?? null,
+      remindedAt: request?.reminded_at ?? null,
       counts: availabilityCounts(people.map((l) => l.id), new Map([...responses].map(([id, r]) => [id, r.response]))),
       roster: availabilityRoster,
     },
@@ -280,6 +284,36 @@ export async function openAvailability(ctx: TrainingCtx, matchId: string): Promi
   await ctx.db
     .from("match_availability_requests")
     .upsert({ club_id: ctx.clubId, match_id: match.id, team_id: match.team_id, opened_by_user_id: ctx.actor.userId, opened_by_licencie_id: ctx.actor.licencieId }, { onConflict: "match_id,team_id", ignoreDuplicates: true });
+  return matchTeamLife(ctx, matchId);
+}
+
+/** Une relance antérieure au dernier envoi ne compte plus (la mise à jour remet tout le monde « en attente »). */
+function remindedSince(remindedAt: string | null | undefined, sentAt: string | null): string | null {
+  if (!remindedAt) return null;
+  return sentAt && remindedAt < sentAt ? null : remindedAt;
+}
+
+/**
+ * Relance en un clic des « sans réponse » (retour du club, 2026-10-10) :
+ * convocation envoyée → les « en attente » ; sinon disponibilités demandées
+ * → les sans réponse. Marque la relance (Home des familles concernées :
+ * « Le coach attend ta réponse ») — aucun email / SMS / push en V1.
+ */
+export async function remindNoResponse(ctx: TrainingCtx, matchId: string): Promise<MatchTeamLifeDto> {
+  const match = await loadMatch(ctx, matchId);
+  requireManage(ctx, match.team_id);
+  if (isMatchClosed(match)) throw conflict("Ce match est passé, annulé ou reporté.", "MATCH_CLOSED");
+  const current = await matchTeamLife(ctx, matchId);
+  const now = new Date().toISOString();
+  if (current.convocation?.sent) {
+    if (current.convocation.counts.pending === 0) throw conflict("Tous les convoqués ont déjà répondu.", "NOTHING_TO_REMIND");
+    await ctx.db.from("match_convocations").update({ reminded_at: now }).eq("club_id", ctx.clubId).eq("id", current.convocation.id);
+  } else if (current.availability.openedAt) {
+    if (current.availability.counts.noResponse === 0) throw conflict("Tout le monde a déjà répondu.", "NOTHING_TO_REMIND");
+    await ctx.db.from("match_availability_requests").update({ reminded_at: now }).eq("club_id", ctx.clubId).eq("match_id", match.id).eq("team_id", match.team_id);
+  } else {
+    throw conflict("Aucune demande en cours : demande d'abord les disponibilités.", "NOTHING_TO_REMIND");
+  }
   return matchTeamLife(ctx, matchId);
 }
 
@@ -566,10 +600,10 @@ export async function matchHomeActions(ctx: TrainingCtx, people: HomePerson[], n
   const dtos = await toMatchDtos(ctx, matches);
 
   const [{ data: requests }, { data: convs }] = await Promise.all([
-    ctx.db.from("match_availability_requests").select("id, match_id, team_id").eq("club_id", ctx.clubId).in("match_id", ids),
+    ctx.db.from("match_availability_requests").select("id, match_id, team_id, reminded_at").eq("club_id", ctx.clubId).in("match_id", ids),
     ctx.db.from("match_convocations").select(CONVOCATION_COLUMNS).eq("club_id", ctx.clubId).in("match_id", ids),
   ]);
-  const requestOf = new Map(((requests ?? []) as { id: string; match_id: string; team_id: string }[]).map((r) => [`${r.match_id}:${r.team_id}`, r]));
+  const requestOf = new Map(((requests ?? []) as { id: string; match_id: string; team_id: string; reminded_at?: string | null }[]).map((r) => [`${r.match_id}:${r.team_id}`, r]));
   const convOf = new Map(((convs ?? []) as ConvocationRow[]).filter((c) => c.revision > 0).map((c) => [`${c.match_id}:${c.team_id}`, c]));
   const requestIds = [...requestOf.values()].map((r) => r.id);
   const { data: avail } = requestIds.length ? await ctx.db.from("match_availability_responses").select("request_id, licencie_id, response").eq("club_id", ctx.clubId).in("request_id", requestIds) : { data: [] };
@@ -599,6 +633,7 @@ export async function matchHomeActions(ctx: TrainingCtx, people: HomePerson[], n
           convocation: { revision: conv.revision, meetingAt: conv.meeting_at, meetingPoint: conv.meeting_point, coachMessage: conv.coach_message, matchSnapshot: conv.match_snapshot, message: sent?.rendered_message ?? "" },
           currentResponse: recipient.response,
           matchClosed: isMatchClosed(m, now),
+          reminded: recipient.response === "PENDING" && remindedSince(conv.reminded_at, conv.sent_at) !== null,
         });
         continue;
       }
@@ -607,7 +642,7 @@ export async function matchHomeActions(ctx: TrainingCtx, people: HomePerson[], n
       const request = requestOf.get(key);
       if (request && !isMatchClosed(m, now)) {
         const r = availability.find((a) => a.request_id === request.id && a.licencie_id === person.licencieId);
-        actions.push({ type: "MATCH_AVAILABILITY", licencieId: person.licencieId, firstName: person.firstName, match: dto, currentResponse: r?.response ?? null });
+        actions.push({ type: "MATCH_AVAILABILITY", licencieId: person.licencieId, firstName: person.firstName, match: dto, currentResponse: r?.response ?? null, reminded: !r && Boolean(request.reminded_at) });
       }
     }
   }

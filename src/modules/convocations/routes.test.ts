@@ -59,7 +59,7 @@ interface TeamLife {
   };
 }
 interface Home {
-  actions: { type: string; licencieId?: string; firstName?: string; currentResponse?: string | null; stage?: string; match?: { id: string }; convocation?: { message: string; meetingPoint: string } }[];
+  actions: { type: string; licencieId?: string; firstName?: string; currentResponse?: string | null; reminded?: boolean; stage?: string; match?: { id: string }; convocation?: { message: string; meetingPoint: string } }[];
 }
 
 beforeEach(() => {
@@ -285,5 +285,44 @@ describe("Accueil coach : table de marque des matchs à domicile (retour du club
     const byMatch = Object.fromEntries(home.actions.filter((a) => a.type === "COACH_MATCH").map((a) => [a.match!.id, a.tables]));
     expect(byMatch[HOME]).toEqual({ filled: 1, total: 4 });
     expect(byMatch[AWAY]).toBeNull();
+  });
+});
+
+describe("Relance des sans réponse (retour du club, 2026-10-10)", () => {
+  it("disponibilités : la relance est marquée et seuls les sans réponse voient « relancé » sur leur Home", async () => {
+    expect((await club(`/matches/${AWAY}/remind`, { method: "POST" })).status).toBe(409);
+    await club(`/matches/${AWAY}/availability/open`, { method: "POST" });
+    await pub(`/matches/${AWAY}/availability/response`, { method: "PUT", token: "token-sarah", body: { response: "AVAILABLE" } });
+    const reminded = await json<TeamLife & { availability: { remindedAt: string | null } }>(await club(`/matches/${AWAY}/remind`, { method: "POST" }));
+    expect(reminded.availability.remindedAt).not.toBeNull();
+
+    const lina = await json<Home>(await pub("/action-center", { method: "POST", body: { tokens: ["token-lina"] } }));
+    expect(lina.actions.find((a) => a.type === "MATCH_AVAILABILITY")?.reminded).toBe(true);
+    const sarah = await json<Home>(await pub("/action-center", { method: "POST", body: { tokens: ["token-sarah"] } }));
+    expect(sarah.actions.find((a) => a.type === "MATCH_AVAILABILITY")?.reminded).toBe(false);
+    // Jamais un parent : réservé à qui gère l'équipe.
+    expect((await pub(`/matches/${AWAY}/remind`, { method: "POST", token: "token-lina" })).status).toBe(403);
+  });
+
+  it("convocation : relance des « en attente » ; un nouvel envoi efface la relance ; rien à relancer si tout le monde a répondu", async () => {
+    await prepareAway([ID.sarah, ID.lina]);
+    await club(`/matches/${AWAY}/convocation/send`, { method: "POST" });
+    await pub(`/matches/${AWAY}/convocation/response`, { method: "PUT", token: "token-sarah", body: { response: "CONFIRMED" } });
+    const view = await json<{ convocation: { remindedAt: string | null } }>(await club(`/matches/${AWAY}/remind`, { method: "POST" }));
+    expect(view.convocation.remindedAt).not.toBeNull();
+    const lina = await json<{ actions: { type: string; reminded?: boolean }[] }>(await pub("/action-center", { method: "POST", body: { tokens: ["token-lina"] } }));
+    expect(lina.actions.find((a) => a.type === "CONVOCATION_RESPONSE")?.reminded).toBe(true);
+
+    // Mise à jour envoyée plus tard : tout le monde « en attente », la relance précédente ne compte plus.
+    vi.setSystemTime(new Date("2026-10-06T08:00:00.000Z"));
+    await club(`/matches/${AWAY}/convocation/draft`, { method: "PUT", body: { meetingAt: "2026-10-10T14:00:00.000Z" } });
+    const resent = await json<{ convocation: { remindedAt: string | null } }>(await club(`/matches/${AWAY}/convocation/send`, { method: "POST" }));
+    expect(resent.convocation.remindedAt).toBeNull();
+
+    await pub(`/matches/${AWAY}/convocation/response`, { method: "PUT", token: "token-sarah", body: { response: "CONFIRMED" } });
+    await pub(`/matches/${AWAY}/convocation/response`, { method: "PUT", token: "token-lina", body: { response: "DECLINED" } });
+    const none = await club(`/matches/${AWAY}/remind`, { method: "POST" });
+    expect(none.status).toBe(409);
+    expect((await json<{ error: { code: string } }>(none)).error.code).toBe("NOTHING_TO_REMIND");
   });
 });

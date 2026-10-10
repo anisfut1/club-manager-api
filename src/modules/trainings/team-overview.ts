@@ -43,6 +43,7 @@ export async function teamOverview(ctx: TrainingCtx, teamId: string, opts: { mem
   const roster = ((people ?? []) as { id: string; first_name: string; last_name: string; photo_url: string | null; public_coach: boolean; coached_team_ids: string[] | null }[]).sort(
     (a, b) => a.last_name.localeCompare(b.last_name, "fr") || a.first_name.localeCompare(b.first_name, "fr"),
   );
+  const attendance = manage ? await recentAttendance(ctx, teamId) : null;
   let linked = new Set<string>();
   if (manage && roster.length) {
     const { data: tokens } = await ctx.db.from("licencie_public_tokens").select("licencie_id").eq("club_id", ctx.clubId).in("licencie_id", roster.map((l) => l.id)).is("revoked_at", null);
@@ -58,6 +59,42 @@ export async function teamOverview(ctx: TrainingCtx, teamId: string, opts: { mem
       licencie: { id: l.id, firstName: l.first_name, lastName: l.last_name, photoUrl: l.photo_url ?? null },
       isCoach: coachesTeam(l, teamId),
       hasPersonalLink: manage ? linked.has(l.id) : null,
+      attendance: attendance ? { sessions: attendance.sessions, absent: attendance.absent.get(l.id) ?? 0, late: attendance.late.get(l.id) ?? 0 } : null,
     })),
   };
+}
+
+/** Nombre de séances prises en compte pour l'assiduité (retour du club, 2026-10-10). */
+export const ATTENDANCE_WINDOW = 8;
+
+/**
+ * Assiduité simple (coach / admin) : absences et retards sur les
+ * ATTENDANCE_WINDOW dernières séances RELEVÉES (au moins un relevé : même
+ * règle que « Présence non relevée » côté Entraînements). Une séance sans relevé n'est pas comptée : on ne
+ * suppose pas que tout le monde était là si le coach n'a rien noté.
+ */
+async function recentAttendance(ctx: TrainingCtx, teamId: string): Promise<{ sessions: number; absent: Map<string, number>; late: Map<string, number> }> {
+  const { data: past } = await ctx.db
+    .from("training_occurrences")
+    .select("id, starts_at")
+    .eq("club_id", ctx.clubId)
+    .eq("team_id", teamId)
+    .eq("status", "scheduled")
+    .lte("starts_at", new Date().toISOString())
+    .order("starts_at", { ascending: false })
+    .limit(40);
+  const ids = ((past ?? []) as { id: string }[]).map((o) => o.id);
+  const absent = new Map<string, number>();
+  const late = new Map<string, number>();
+  if (!ids.length) return { sessions: 0, absent, late };
+  const { data: marks } = await ctx.db.from("training_attendance").select("occurrence_id, licencie_id, status").eq("club_id", ctx.clubId).in("occurrence_id", ids);
+  const rows = (marks ?? []) as { occurrence_id: string; licencie_id: string; status: string }[];
+  const recorded = new Set(rows.map((m) => m.occurrence_id));
+  const kept = new Set(ids.filter((id) => recorded.has(id)).slice(0, ATTENDANCE_WINDOW));
+  for (const m of rows) {
+    if (!kept.has(m.occurrence_id)) continue;
+    const bucket = m.status === "ABSENT" ? absent : m.status === "LATE" ? late : null;
+    bucket?.set(m.licencie_id, (bucket.get(m.licencie_id) ?? 0) + 1);
+  }
+  return { sessions: kept.size, absent, late };
 }

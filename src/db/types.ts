@@ -746,8 +746,8 @@ export interface Database {
       >;
 
       match_availability_requests: Table<
-        { id: string; club_id: string; match_id: string; team_id: string; opened_at: string; opened_by_user_id: string | null; opened_by_licencie_id: string | null; created_at: string },
-        { id?: string; club_id: string; match_id: string; team_id: string; opened_at?: string; opened_by_user_id?: string | null; opened_by_licencie_id?: string | null; created_at?: string }
+        { id: string; club_id: string; match_id: string; team_id: string; opened_at: string; opened_by_user_id: string | null; opened_by_licencie_id: string | null; created_at: string; reminded_at: string | null },
+        { id?: string; club_id: string; match_id: string; team_id: string; opened_at?: string; opened_by_user_id?: string | null; opened_by_licencie_id?: string | null; created_at?: string; reminded_at?: string | null }
       >;
 
       match_availability_responses: Table<
@@ -798,6 +798,7 @@ export interface Database {
           sent_by_user_id: string | null;
           sent_by_licencie_id: string | null;
           created_at: string;
+          reminded_at: string | null;
           updated_at: string;
         },
         {
@@ -820,6 +821,7 @@ export interface Database {
           sent_by_user_id?: string | null;
           sent_by_licencie_id?: string | null;
           created_at?: string;
+          reminded_at?: string | null;
           updated_at?: string;
         }
       >;

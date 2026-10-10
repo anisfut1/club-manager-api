@@ -275,3 +275,24 @@ describe("Page Équipe (Lot 4)", () => {
     expect((await pub(`/teams/${U15F}/overview`, { token: "token-mathis" })).status).toBe(403);
   });
 });
+
+describe("Assiduité simple (retour du club, 2026-10-10)", () => {
+  it("absences et retards sur les dernières séances RELEVÉES ; une séance sans relevé ne compte pas ; jamais pour un parent", async () => {
+    await club(`/teams/${U15F}/training-series`, { method: "POST", body: WEEK });
+    const occ = state.trainingOccurrences.filter((o) => o.team_id === U15F).sort((a, b) => String(a.starts_at).localeCompare(String(b.starts_at)));
+    vi.setSystemTime(new Date(String(occ[2]!.ends_at)));
+    await club(`/trainings/${occ[0]!.id}/attendance/lina`, { method: "PUT", body: { status: "ABSENT" } });
+    await club(`/trainings/${occ[1]!.id}/attendance/lina`, { method: "PUT", body: { status: "ABSENT" } });
+    await club(`/trainings/${occ[1]!.id}/attendance/sarah`, { method: "PUT", body: { status: "LATE" } });
+    // occ[2] : rien de relevé → pas comptée.
+
+    type View = { roster: { licencie: { firstName: string }; attendance: { sessions: number; absent: number; late: number } | null }[] };
+    const view = await json<View>(await club(`/teams/${U15F}/overview`));
+    expect(Object.fromEntries(view.roster.map((r) => [r.licencie.firstName, r.attendance]))).toEqual({
+      Lina: { sessions: 2, absent: 2, late: 0 },
+      Sarah: { sessions: 2, absent: 0, late: 1 },
+    });
+    const parent = await json<View>(await pub(`/teams/${U15F}/overview`, { token: "token-lina" }));
+    expect(parent.roster.every((r) => r.attendance === null)).toBe(true);
+  });
+});

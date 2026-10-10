@@ -195,6 +195,22 @@ de l'équipe et ceux qui la gèrent (403 `TEAM_MEMBER_REQUIRED` sinon —
 jamais un annuaire ouvert). Le planning de la page réutilise `/planning`
 (`teamId`, limité aux équipes de l'appareil dans l'espace public).
 
+## Améliorations d'usage (retour du club, 2026-10-10)
+
+- **Assiduité simple** (page Équipe → Effectif, coach / admin seulement) :
+  absences et retards de chaque joueur sur les 8 dernières séances
+  **relevées** (au moins un relevé : même règle que « Présence non
+  relevée »). Une séance sans relevé n'est pas comptée — on ne suppose pas
+  que tout le monde était là. Pas de pourcentage ni de classement.
+- **Relance des sans réponse** (`POST …/matches/{id}/remind`, coach /
+  admin) : convocation envoyée → les « en attente » ; sinon disponibilités
+  demandées → les sans réponse. Marque `reminded_at` ; la Home des
+  personnes concernées affiche « Le coach attend ta réponse »
+  (`reminded` sur `MATCH_AVAILABILITY` / `CONVOCATION_RESPONSE`). Un nouvel
+  envoi de convocation efface la relance. Aucun email / push en V1 : le
+  coach peut en plus partager le texte de relance (WhatsApp…) depuis son
+  téléphone. 409 `NOTHING_TO_REMIND` s'il n'y a personne à relancer.
+
 ## Routes
 
 Espace club (Bearer) sous `/v1/clubs/{clubId}/team-life`, espace public
@@ -219,7 +235,8 @@ Espace club (Bearer) sous `/v1/clubs/{clubId}/team-life`, espace public
 | GET | `/matches/{matchId}/laundry/suggestions` | maillots : suggestions (lecture seule) |
 | PUT / DELETE | `/matches/{matchId}/laundry` | maillots : le coach attribue / retire |
 | POST | `/matches/{matchId}/laundry/seen` | (public) « J'ai vu » |
-| GET | `/teams/{teamId}/overview` | page Équipe : vue d'ensemble et effectif |
+| GET | `/teams/{teamId}/overview` | page Équipe : vue d'ensemble et effectif (assiduité pour coach / admin) |
+| POST | `/matches/{matchId}/remind` | relancer les sans réponse (coach / admin) |
 
 ## Limites V1
 
