@@ -1166,11 +1166,21 @@ registry.registerPath({
 });
 
 /**
+ * Identité de l'espace public (src/modules/public/credential.ts) : lien
+ * personnel en `?token=` (web historique) OU en-tête `X-Personal-Link-Token`
+ * OU session d'appareil (`Authorization: Bearer bmd_…` + `X-BM-As`, apps
+ * mobiles). Le paramètre est donc FACULTATIF dans le contrat.
+ */
+const personalTokenQuery = z.object({
+  token: z.string().min(1).optional().openapi({ description: "Lien personnel (web). Facultatif avec l'en-tête X-Personal-Link-Token ou une session d'appareil (Authorization: Bearer bmd_… + X-BM-As)." }),
+});
+
+/**
  * Mêmes demandes depuis l'ESPACE PUBLIC sans compte : licencié reconnu par
  * son lien personnel (`?token=` sur chaque requête), rôles posés depuis
  * /joueurs (`public_coach`, `public_coordinator`, `public_admin`).
  */
-const publicTokenQuery = z.object({ token: z.string().min(1) });
+const publicTokenQuery = personalTokenQuery;
 const publicDerogationErrors = {
   400: jsonResponse("Requête invalide / lien manquant", ErrorEnvelopeSchema),
   401: jsonResponse("Lien personnel invalide ou révoqué", ErrorEnvelopeSchema),
@@ -1194,7 +1204,7 @@ registry.registerPath({
   method: "get",
   path: "/v1/public/clubs/{clubSlug}/home",
   // Accueil personnel (lien personnel) : équipes jouées/coachées, agenda, résultats, tables de marque.
-  request: { params: clubSlugParam, query: z.object({ token: z.string().min(1) }) },
+  request: { params: clubSlugParam, query: personalTokenQuery },
   responses: { 200: jsonResponse("Accueil personnel", PublicHomeDtoSchema), 400: jsonResponse("Lien manquant", ErrorEnvelopeSchema), 401: jsonResponse("Lien invalide ou révoqué", ErrorEnvelopeSchema), 404: jsonResponse("Introuvable", ErrorEnvelopeSchema) },
 });
 
@@ -1267,7 +1277,7 @@ const teamIdParams = clubIdParam.extend({ teamId: z.string().uuid() });
 const seriesParams = clubIdParam.extend({ seriesId: z.string().uuid() });
 const occurrenceParams = clubIdParam.extend({ occurrenceId: z.string().uuid() });
 const rangeQuery = z.object({ from: z.string().optional(), to: z.string().optional(), teamId: z.string().uuid().optional(), kind: z.enum(["MATCH", "TRAINING"]).optional() });
-const pubToken = z.object({ token: z.string() });
+const pubToken = personalTokenQuery;
 const pubTeamParams = clubSlugParam.extend({ teamId: z.string().uuid() });
 const pubSeriesParams = clubSlugParam.extend({ seriesId: z.string().uuid() });
 const pubOccurrenceParams = clubSlugParam.extend({ occurrenceId: z.string().uuid() });
