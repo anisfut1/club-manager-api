@@ -36,6 +36,10 @@ const envSchema = z.object({
   // URL publique du frontend SCSB utilisée dans les liens envoyés par email
   // quand l'origine de la requête n'est pas exploitable (voir public-tables).
   PUBLIC_APP_URL: z.string().url().optional(),
+  // App iOS / sécurité des liens (docs/MOBILE_AUTH.md) : « 1 » = les emails de
+  // lien personnel portent un code de connexion à usage unique (48 h) au lieu
+  // du jeton permanent. Absent = comportement actuel inchangé.
+  AUTH_LINK_CODES: z.enum(["0", "1"]).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

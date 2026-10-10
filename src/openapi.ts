@@ -1,4 +1,5 @@
 import { OpenAPIRegistry, OpenApiGeneratorV3 } from "@asteasolutions/zod-to-openapi";
+import { AddSessionPeopleDtoSchema, AuthCodeDtoSchema, CreateAuthCodeDtoSchema, CreateDeviceSessionDtoSchema, DeviceSessionDtoSchema, ExchangeAuthCodeDtoSchema, PublicClubListDtoSchema, SessionInfoDtoSchema, WebExchangeDtoSchema } from "./contracts/device-auth.js";
 import { z } from "./contracts/zod.js";
 import { ClubDtoSchema, TeamDtoSchema, UpdateClubDtoSchema, CreateTeamDtoSchema, UpdateTeamDtoSchema } from "./contracts/clubs.js";
 import { MatchListItemDtoSchema, MatchDetailsDtoSchema, MatchesQueryDtoSchema, MatchesPaginationDtoSchema } from "./contracts/matches.js";
@@ -1301,6 +1302,19 @@ for (const space of ["club", "public"] as const) {
   registry.registerPath({ method: "put", path: `${base}/matches/{matchId}/convocation/draft`, security, request: { params, ...auth, body: jsonBody(PutConvocationDraftDtoSchema) }, responses: { 200: jsonResponse("Brouillon enregistré (jamais visible des familles)", MatchTeamLifeDtoSchema), ...errorResponses, ...validationResponses } });
   registry.registerPath({ method: "post", path: `${base}/matches/{matchId}/convocation/preview`, security, request: { params, ...auth }, responses: { 200: jsonResponse("Aperçu : ce que recevront un parent et un joueur", ConvocationPreviewDtoSchema), ...errorResponses } });
   registry.registerPath({ method: "post", path: `${base}/matches/{matchId}/convocation/send`, security, request: { params, ...auth }, responses: { 200: jsonResponse("Convocation envoyée (ou mise à jour envoyée)", MatchTeamLifeDtoSchema), ...errorResponses, ...validationResponses } });
+}
+// App iOS : sessions d'appareil et codes d'autorisation PKCE (docs/MOBILE_AUTH.md).
+{
+  const base = "/v1/public/clubs/{clubSlug}/auth";
+  const deviceBearer = [{ BearerAuth: [] }];
+  registry.registerPath({ method: "get", path: "/v1/public/clubs", responses: { 200: jsonResponse("Clubs actifs (nom, slug, logo) — choix du club dans l'app", PublicClubListDtoSchema) } });
+  registry.registerPath({ method: "post", path: `${base}/device-sessions`, request: { params: clubSlugParam, body: jsonBody(CreateDeviceSessionDtoSchema) }, responses: { 201: jsonResponse("Session d'appareil (secret affiché une seule fois)", DeviceSessionDtoSchema), ...errorResponses } });
+  registry.registerPath({ method: "get", path: `${base}/session`, security: deviceBearer, request: { params: clubSlugParam }, responses: { 200: jsonResponse("Personnes de la session d'appareil", SessionInfoDtoSchema), ...errorResponses } });
+  registry.registerPath({ method: "delete", path: `${base}/session`, security: deviceBearer, request: { params: clubSlugParam }, responses: { 204: { description: "Session révoquée" }, ...errorResponses } });
+  registry.registerPath({ method: "post", path: `${base}/session/people`, security: deviceBearer, request: { params: clubSlugParam, body: jsonBody(AddSessionPeopleDtoSchema) }, responses: { 200: jsonResponse("Personne ajoutée à l'appareil", SessionInfoDtoSchema), ...errorResponses } });
+  registry.registerPath({ method: "delete", path: `${base}/session/people/{licencieId}`, security: deviceBearer, request: { params: clubSlugParam.extend({ licencieId: z.string().uuid() }) }, responses: { 204: { description: "Personne retirée de l'appareil" }, ...errorResponses } });
+  registry.registerPath({ method: "post", path: `${base}/codes`, request: { params: clubSlugParam, body: jsonBody(CreateAuthCodeDtoSchema) }, responses: { 201: jsonResponse("Code d'autorisation (5 min, usage unique, lié au PKCE)", AuthCodeDtoSchema), ...errorResponses } });
+  registry.registerPath({ method: "post", path: `${base}/token`, request: { params: clubSlugParam, body: jsonBody(ExchangeAuthCodeDtoSchema) }, responses: { 201: jsonResponse("Session d'appareil (ios)", DeviceSessionDtoSchema), 200: jsonResponse("Liens personnels pour la session web (web, lien de connexion)", WebExchangeDtoSchema), ...errorResponses } });
 }
 // Lot 4 : page Équipe.
 registry.registerPath({ method: "get", path: "/v1/clubs/{clubId}/team-life/teams/{teamId}/overview", security: bearerAuth, request: { params: teamIdParams }, responses: { 200: jsonResponse("Vue d'ensemble de l'équipe (prochain match, entraînement, effectif)", TeamOverviewDtoSchema), ...errorResponses } });

@@ -303,6 +303,10 @@ export interface FakeClubSupabaseState {
   convocationRecipients: FakeRow[];
   convocationDispatches: FakeRow[];
   venues: FakeRow[];
+  /** App iOS : sessions d'appareil, droits et codes d'autorisation (docs/MOBILE_AUTH.md). */
+  deviceSessions: FakeRow[];
+  deviceSessionGrants: FakeRow[];
+  authCodes: FakeRow[];
   isPlatformAdmin: boolean;
   /** Clés `${clubId}:${integration}` actuellement verrouillées (voir try_acquire_sync_lock/release_sync_lock). */
   syncLocks: Set<string>;
@@ -350,6 +354,9 @@ export function makeFakeClubSupabaseState(overrides: Partial<FakeClubSupabaseSta
     convocationRecipients: [],
     convocationDispatches: [],
     venues: [],
+    deviceSessions: [],
+    deviceSessionGrants: [],
+    authCodes: [],
     isPlatformAdmin: false,
     syncLocks: new Set(),
     ...overrides,
@@ -403,6 +410,11 @@ function mutableTable(getRows: () => FakeRow[], setRows: (rows: FakeRow[]) => vo
       };
       const api = {
         eq(col: string, value: unknown) {
+          filters.push({ col, value, op: "eq" });
+          return api;
+        },
+        // `.is(col, null)` : mise à jour conditionnelle (ex. code d'autorisation à usage unique).
+        is(col: string, value: null) {
           filters.push({ col, value, op: "eq" });
           return api;
         },
@@ -465,7 +477,9 @@ function mutableTable(getRows: () => FakeRow[], setRows: (rows: FakeRow[]) => vo
 }
 
 function matchClub(row: FakeClubRow, col: string, value: string): boolean {
-  return col === "id" ? row.id === value : row.slug === value;
+  if (col === "id") return row.id === value;
+  if (col === "slug") return row.slug === value;
+  return (row as unknown as Record<string, unknown>)[col] === value;
 }
 
 /** Petit constructeur de requête chaînable `.eq()/.gte()/.lte()/.in()` générique sur un tableau en mémoire — suffisant pour les filtres réellement utilisés par les routes testées, pas un moteur de requête complet. */
@@ -563,6 +577,10 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
         single() {
           const row = state.clubs.find((c) => filters.every((f) => matchClub(c, f.col, f.value)));
           return row ? Promise.resolve({ data: row, error: null }) : Promise.resolve({ data: null, error: { message: "not found" } });
+        },
+        // Liste (ex. GET /v1/public/clubs) : toutes les lignes qui passent les filtres.
+        then(onFulfilled: (value: { data: FakeClubRow[]; error: null }) => unknown) {
+          return Promise.resolve({ data: state.clubs.filter((c) => filters.every((f) => matchClub(c, f.col, f.value))), error: null }).then(onFulfilled);
         },
       };
       return api;
@@ -1072,6 +1090,12 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
               unique: (row, rows) => row.series_id != null && rows.some((r) => r.series_id === row.series_id && r.series_date === row.series_date),
             },
           );
+        case "device_sessions":
+          return mutableTable(() => state.deviceSessions, (rows) => (state.deviceSessions = rows), { defaults: () => ({ revoked_at: null, app_version: null, device_label: null }) });
+        case "device_session_grants":
+          return mutableTable(() => state.deviceSessionGrants, (rows) => (state.deviceSessionGrants = rows));
+        case "auth_codes":
+          return mutableTable(() => state.authCodes, (rows) => (state.authCodes = rows), { defaults: () => ({ used_at: null, code_challenge: null, redirect_path: null }) });
         case "match_laundry_assignments":
           return mutableTable(() => state.laundry, (rows) => (state.laundry = rows), { defaults: () => ({ seen_at: null, updated_at: fakeNow() }) });
         case "training_attendance":
