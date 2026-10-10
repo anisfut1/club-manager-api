@@ -33,6 +33,8 @@ Pour l'accueil (« À faire ») et le planning, l'app envoie `tokens: ["as:<lice
 | `DELETE /session` | Déconnexion de cet appareil. |
 | `POST /session/people` `{ tokens }` | Ajouter un enfant (son lien le prouve). |
 | `DELETE /session/people/{licencieId}` | Retirer une personne de l'appareil. |
+| `PUT /session/push-token` `{ token, environment, appVersion? }` | Jeton APNs de cet iPhone pour cette session (voir `SCSB/docs/IOS_PUSH.md`). |
+| `DELETE /session/push-token` | Plus de notifications de ce club sur cet appareil. |
 | `POST /codes` `{ tokens, codeChallenge, codeChallengeMethod: "S256", redirectPath? }` | Page web `/public/{slug}/auth/app`, déjà identifiée : code de **5 min**, **usage unique**, lié au PKCE de l'app. |
 | `POST /token` `{ code, codeVerifier?, platform }` | Échange d'un code. `ios` → session d'appareil ; `web` (lien de connexion par email) → liens personnels pour `bm_session`. |
 
@@ -83,4 +85,11 @@ Générateurs migrés :
 
 ## Migration SQL
 
-`supabase/migrations/20261011090000_device_sessions.sql`. Elle est additive : `device_sessions`, `device_session_grants`, `auth_codes`, avec RLS activée et aucune policy (accès par l'API seulement).
+- `supabase/migrations/20261011090000_device_sessions.sql` : `device_sessions`, `device_session_grants`, `auth_codes`.
+- `supabase/migrations/20261011120000_push_notifications.sql` : `device_push_tokens`, `notification_outbox`.
+
+Elles sont additives, avec RLS activée et aucune policy (accès par l'API seulement). Les deux sont appliquées.
+
+## Pas de suppression de compte dans l'app
+
+L'app ne crée aucun compte : l'accès vient d'un lien émis par le club. « Se déconnecter » révoque la session et son jeton push. La suppression des données passe par le club.

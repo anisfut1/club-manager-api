@@ -307,6 +307,8 @@ export interface FakeClubSupabaseState {
   deviceSessions: FakeRow[];
   deviceSessionGrants: FakeRow[];
   authCodes: FakeRow[];
+  devicePushTokens: FakeRow[];
+  notificationOutbox: FakeRow[];
   isPlatformAdmin: boolean;
   /** Clés `${clubId}:${integration}` actuellement verrouillées (voir try_acquire_sync_lock/release_sync_lock). */
   syncLocks: Set<string>;
@@ -357,6 +359,8 @@ export function makeFakeClubSupabaseState(overrides: Partial<FakeClubSupabaseSta
     deviceSessions: [],
     deviceSessionGrants: [],
     authCodes: [],
+    devicePushTokens: [],
+    notificationOutbox: [],
     isPlatformAdmin: false,
     syncLocks: new Set(),
     ...overrides,
@@ -377,8 +381,8 @@ function fakeNow(): string {
  */
 function mutableTable(getRows: () => FakeRow[], setRows: (rows: FakeRow[]) => void, options: { defaults?: (row: FakeRow) => FakeRow; unique?: (row: FakeRow, rows: FakeRow[]) => boolean } = {}) {
   const withDefaults = (row: FakeRow): FakeRow => ({ id: randomUUID(), created_at: fakeNow(), ...(options.defaults ? options.defaults(row) : {}), ...row });
-  const match = (row: FakeRow, filters: { col: string; value: unknown; op: "eq" | "in" }[]) =>
-    filters.every((f) => (f.op === "in" ? (f.value as unknown[]).includes(row[f.col]) : row[f.col] === f.value));
+  const match = (row: FakeRow, filters: { col: string; value: unknown; op: "eq" | "in" | "lt" }[]) =>
+    filters.every((f) => (f.op === "in" ? (f.value as unknown[]).includes(row[f.col]) : f.op === "lt" ? (row[f.col] as string) < (f.value as string) : row[f.col] === f.value));
 
   return {
     select: (_cols?: string) => queryable(getRows()),
@@ -402,7 +406,7 @@ function mutableTable(getRows: () => FakeRow[], setRows: (rows: FakeRow[]) => vo
       };
     },
     update(patch: FakeRow) {
-      const filters: { col: string; value: unknown; op: "eq" | "in" }[] = [];
+      const filters: { col: string; value: unknown; op: "eq" | "in" | "lt" }[] = [];
       const apply = () => {
         const rows = getRows().filter((row) => match(row, filters));
         rows.forEach((row) => Object.assign(row, patch));
@@ -420,6 +424,10 @@ function mutableTable(getRows: () => FakeRow[], setRows: (rows: FakeRow[]) => vo
         },
         in(col: string, values: unknown[]) {
           filters.push({ col, value: values, op: "in" });
+          return api;
+        },
+        lt(col: string, value: string) {
+          filters.push({ col, value, op: "lt" });
           return api;
         },
         select: () => ({
@@ -469,7 +477,10 @@ function mutableTable(getRows: () => FakeRow[], setRows: (rows: FakeRow[]) => vo
       }
       const result = { data: out, error: null };
       return {
-        select: () => ({ single: () => Promise.resolve({ data: out[0], error: null }) }),
+        select: () => ({
+          single: () => Promise.resolve({ data: out[0], error: null }),
+          then: (onFulfilled: (value: typeof result) => unknown) => Promise.resolve(result).then(onFulfilled),
+        }),
         then: (onFulfilled: (value: typeof result) => unknown) => Promise.resolve(result).then(onFulfilled),
       };
     },
@@ -1096,6 +1107,12 @@ export function buildFakeClubSupabase(state: FakeClubSupabaseState): any {
           return mutableTable(() => state.deviceSessionGrants, (rows) => (state.deviceSessionGrants = rows));
         case "auth_codes":
           return mutableTable(() => state.authCodes, (rows) => (state.authCodes = rows), { defaults: () => ({ used_at: null, code_challenge: null, redirect_path: null }) });
+        case "device_push_tokens":
+          return mutableTable(() => state.devicePushTokens, (rows) => (state.devicePushTokens = rows), { defaults: () => ({ revoked_at: null, revoked_reason: null, platform: "ios" }) });
+        case "notification_outbox":
+          return mutableTable(() => state.notificationOutbox, (rows) => (state.notificationOutbox = rows), {
+            defaults: () => ({ status: "pending", attempts: 0, last_error: null, devices_sent: 0, created_at: new Date().toISOString(), next_attempt_at: new Date().toISOString(), sent_at: null }),
+          });
         case "match_laundry_assignments":
           return mutableTable(() => state.laundry, (rows) => (state.laundry = rows), { defaults: () => ({ seen_at: null, updated_at: fakeNow() }) });
         case "training_attendance":

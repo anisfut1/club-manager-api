@@ -58,3 +58,12 @@ export const WebExchangeDtoSchema = z.object({ tokens: z.array(z.string()), redi
 export const PublicClubListDtoSchema = z
   .object({ clubs: z.array(z.object({ slug: z.string(), name: z.string(), logoUrl: z.string().nullable() })) })
   .openapi("PublicClubListDto");
+
+/** Jeton APNs de cet iPhone, rattaché à la session d'appareil (un club = une session). */
+export const PutPushTokenDtoSchema = z
+  .object({
+    token: z.string().regex(/^[0-9a-fA-F]{64,200}$/, "Jeton APNs invalide."),
+    environment: z.enum(["development", "production"]),
+    appVersion: z.string().trim().max(32).optional(),
+  })
+  .openapi("PutPushTokenDto");

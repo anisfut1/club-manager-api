@@ -137,9 +137,10 @@ export async function removeGrant(db: DbClient, session: ResolvedDeviceSession, 
   await db.from("device_session_grants").delete().eq("session_id", session.id).eq("licencie_id", licencieId);
 }
 
-/** Déconnexion : la session et ses jetons push (si la table existe) ne servent plus. */
+/** Déconnexion : la session et son jeton push ne servent plus. */
 export async function revokeDeviceSession(db: DbClient, sessionId: string, now: Date = new Date()): Promise<void> {
   await db.from("device_sessions").update({ revoked_at: now.toISOString() }).eq("id", sessionId);
+  await db.from("device_push_tokens").update({ revoked_at: now.toISOString(), revoked_reason: "logout" }).eq("session_id", sessionId).is("revoked_at", null);
 }
 
 /**

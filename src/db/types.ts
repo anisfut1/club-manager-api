@@ -744,6 +744,72 @@ export interface Database {
         }
       >;
 
+      device_push_tokens: Table<
+        {
+          id: string;
+          session_id: string;
+          club_id: string;
+          token: string;
+          platform: "ios";
+          environment: "development" | "production";
+          app_version: string | null;
+          created_at: string;
+          last_seen_at: string;
+          revoked_at: string | null;
+          revoked_reason: string | null;
+        },
+        {
+          id?: string;
+          session_id: string;
+          club_id: string;
+          token: string;
+          platform?: "ios";
+          environment: "development" | "production";
+          app_version?: string | null;
+          created_at?: string;
+          last_seen_at?: string;
+          revoked_at?: string | null;
+          revoked_reason?: string | null;
+        }
+      >;
+
+      notification_outbox: Table<
+        {
+          id: string;
+          club_id: string;
+          kind: string;
+          dedupe_key: string;
+          licencie_ids: string[];
+          title: string;
+          body: string;
+          path: string;
+          status: "pending" | "sending" | "sent" | "failed" | "expired";
+          attempts: number;
+          last_error: string | null;
+          devices_sent: number;
+          created_at: string;
+          next_attempt_at: string;
+          sent_at: string | null;
+        },
+        {
+          id?: string;
+          club_id: string;
+          kind: string;
+          dedupe_key: string;
+          licencie_ids: string[];
+          title: string;
+          body: string;
+          path: string;
+          status?: "pending" | "sending" | "sent" | "failed" | "expired";
+          attempts?: number;
+          last_error?: string | null;
+          devices_sent?: number;
+          created_at?: string;
+          next_attempt_at?: string;
+          sent_at?: string | null;
+        }
+      >;
+
       device_session_grants: Table<
         { session_id: string; club_id: string; licencie_id: string; token_id: string; created_at: string },
         { session_id: string; club_id: string; licencie_id: string; token_id: string; created_at?: string }

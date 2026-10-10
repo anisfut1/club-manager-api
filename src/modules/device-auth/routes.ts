@@ -7,7 +7,8 @@ import { clientIp, hitRateLimit } from "../../security/rate-limit.js";
 import { parse } from "../trainings/routes.js";
 import { decryptPublicToken } from "../public-tables/personal-link.js";
 import type { EncryptedPayload } from "../../security/crypto.js";
-import { AddSessionPeopleDtoSchema, CreateAuthCodeDtoSchema, CreateDeviceSessionDtoSchema, ExchangeAuthCodeDtoSchema } from "../../contracts/device-auth.js";
+import { AddSessionPeopleDtoSchema, CreateAuthCodeDtoSchema, CreateDeviceSessionDtoSchema, ExchangeAuthCodeDtoSchema, PutPushTokenDtoSchema } from "../../contracts/device-auth.js";
+import { registerPushToken, removePushToken } from "../push/service.js";
 import {
   addGrants,
   consumeAuthCode,
@@ -101,6 +102,26 @@ deviceAuthRouter.post("/session/people", async (c) => {
 deviceAuthRouter.delete("/session/people/:licencieId", async (c) => {
   const session = await requireSession(c);
   await removeGrant(c.get("supabase"), session, c.req.param("licencieId"));
+  return c.body(null, 204);
+});
+
+/**
+ * PUT …/auth/session/push-token — jeton APNs de cet iPhone, demandé APRÈS la
+ * connexion et l'explication (jamais au lancement). Un jeton par session :
+ * la déconnexion ou la réinitialisation du lien coupe aussi les notifications.
+ */
+deviceAuthRouter.put("/session/push-token", async (c) => {
+  limit(c, "push", 20);
+  const session = await requireSession(c);
+  const body = await parse(PutPushTokenDtoSchema, c);
+  await registerPushToken(c.get("supabase"), session, body);
+  return c.body(null, 204);
+});
+
+/** DELETE …/auth/session/push-token — plus de notifications de ce club sur cet appareil. */
+deviceAuthRouter.delete("/session/push-token", async (c) => {
+  const session = await requireSession(c);
+  await removePushToken(c.get("supabase"), session.id);
   return c.body(null, 204);
 });
 

@@ -40,6 +40,13 @@ const envSchema = z.object({
   // lien personnel portent un code de connexion à usage unique (48 h) au lieu
   // du jeton permanent. Absent = comportement actuel inchangé.
   AUTH_LINK_CODES: z.enum(["0", "1"]).optional(),
+  // Notifications push iOS (APNs direct, clé .p8 « Apple Push Notifications
+  // service »). Toutes absentes = push désactivé : rien n'est mis en file.
+  APNS_TEAM_ID: z.string().regex(/^[A-Z0-9]{10}$/).optional(),
+  APNS_KEY_ID: z.string().regex(/^[A-Z0-9]{10}$/).optional(),
+  APNS_BUNDLE_ID: z.string().min(1).optional().default("fr.ballmanager.app"),
+  // Contenu PEM de la clé .p8 (les retours à la ligne peuvent être écrits « \n »).
+  APNS_PRIVATE_KEY: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
